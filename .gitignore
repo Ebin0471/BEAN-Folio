@@ -1,0 +1,86 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+.env*
+!.env.example
+
+# BEAN Folio — runtime data
+# POLICY (2026-11-11, supersedes the historical note below): runtime data is
+# NO LONGER tracked. GitHub receives SOURCE-ONLY snapshots via the
+# `github-clean` lineage; database + media durability comes from VERIFIED
+# BACKUPS (/home/z/beanfolio-backups/, refreshed per DEVELOPMENT_SAFETY.md
+# §1.7) — never from Git. Historical note: between 2026-10-27 and 2026-11-11
+# db/uploads WERE tracked because sandbox restores once wiped untracked
+# runtime data; those blobs remain in LOCAL history only. Local `main` must
+# NEVER be pushed to any remote (see DEVELOPMENT_SAFETY.md §8).
+/db/*.db
+/db/*.db-journal
+/uploads/
+/backups/
+/data/laxii-tmp/
+/public/downloads/
+# Agent tool artifacts
+/tool-results/
+
+# vercel
+.vercel
+
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+local-*
+.claude
+.z-ai-config
+*.log
+dev.log
+dev.out.log
+test
+prompt
+
+server.log
+# Skills directory
+/skills/
+# BEAN Folio — PG migration artifacts (contain user data incl. password hashes)
+/pg-migration/
+
+# local database (contains user data — never commit)
+/db/*.db
+/db/*.db-journal
+
+# CODE GIFTZ engineering workspaces (runtime user data, like db/)
+data/giftz-workspaces/
+
+# Workspace-recovery archive volumes (large binaries; RETAINED ON DISK,
+# never committed — see DEVELOPMENT_SAFETY.md)
+/upload/

@@ -1,0 +1,633 @@
+{
+  "meta": {
+    "tool": "run-local.ts (bun, stdlib)",
+    "startedAt": "2026-11-05T18:26:19.572Z",
+    "finishedAt": "2026-11-05T18:32:25.782Z",
+    "partial": false,
+    "dryRun": false,
+    "scenarios": [
+      "browse",
+      "search",
+      "reads"
+    ]
+  },
+  "environment": {
+    "platform": "linux 5.10.134-013.15.kangaroo.al8.x86_64 x64",
+    "cpus": 2,
+    "totalMemGiB": 3.9,
+    "bun": "1.3.14"
+  },
+  "config": {
+    "baseUrl": "http://localhost:3000",
+    "maxVu": 100,
+    "durationPerPhaseS": 25,
+    "warmupS": 15,
+    "runTimeoutS": 3600,
+    "slo": {
+      "publicP95Ms": 500,
+      "writeP95Ms": 1000,
+      "hardErrorRate": 0.001
+    }
+  },
+  "credentialsUsed": {
+    "auth": "demo@beanfolio.app",
+    "publish": "pub-e2e-1027@beanfolio.test"
+  },
+  "scenarios": [
+    {
+      "name": "browse",
+      "describe": "public read mix: discover 40% / profile 20% / media 15% / shell 10% / professions 10% / ops 5%",
+      "phases": [
+        {
+          "label": "5 VUs",
+          "vus": 5,
+          "durationS": 15,
+          "requests": 350,
+          "rps": 23.3,
+          "p50": 12,
+          "p95": 27,
+          "p99": 76,
+          "hardErrors": 0,
+          "errorRate": 0,
+          "client4xx": 0,
+          "rateLimited429": 0,
+          "verdict": "PASS",
+          "statusHist": {
+            "200": 350
+          },
+          "endpoints": [
+            {
+              "endpoint": "GET /api/discover",
+              "count": 290,
+              "p50": 12,
+              "p95": 27,
+              "hardErrors": 0,
+              "client4xx": 0,
+              "rateLimited": 0
+            },
+            {
+              "endpoint": "GET /api/professions",
+              "count": 36,
+              "p50": 10,
+              "p95": 26,
+              "hardErrors": 0,
+              "client4xx": 0,
+              "rateLimited": 0
+            },
+            {
+              "endpoint": "GET /api/health",
+              "count": 24,
+              "p50": 10,
+              "p95": 15,
+              "hardErrors": 0,
+              "client4xx": 0,
+              "rateLimited": 0
+            }
+          ]
+        },
+        {
+          "label": "10 VUs",
+          "vus": 10,
+          "durationS": 25,
+          "requests": 1180,
+          "rps": 47.2,
+          "p50": 10,
+          "p95": 24,
+          "p99": 106,
+          "hardErrors": 0,
+          "errorRate": 0,
+          "client4xx": 0,
+          "rateLimited429": 0,
+          "verdict": "PASS",
+          "statusHist": {
+            "200": 1180
+          },
+          "endpoints": [
+            {
+              "endpoint": "GET /api/professions",
+              "count": 117,
+              "p50": 7,
+              "p95": 18,
+              "hardErrors": 0,
+              "client4xx": 0,
+              "rateLimited": 0
+            },
+            {
+              "endpoint": "GET /api/health",
+              "count": 57,
+              "p50": 8,
+              "p95": 16,
+              "hardErrors": 0,
+              "client4xx": 0,
+              "rateLimited": 0
+            },
+            {
+              "endpoint": "GET /api/discover",
+              "count": 1006,
+              "p50": 11,
+              "p95": 25,
+              "hardErrors": 0,
+              "client4xx": 0,
+              "rateLimited": 0
+            }
+          ]
+        },
+        {
+          "label": "50 VUs",
+          "vus": 50,
+          "durationS": 25,
+          "requests": 3729,
+          "rps": 149.2,
+          "p50": 102,
+          "p95": 456,
+          "p99": 614,
+          "hardErrors": 0,
+          "errorRate": 0,
+          "client4xx": 0,
+          "rateLimited429": 0,
+          "verdict": "PASS",
+          "statusHist": {
+            "200": 3729
+          },
+          "endpoints": [
+            {
+              "endpoint": "GET /api/professions",
+              "count": 367,
+              "p50": 78,
+              "p95": 387,
+              "hardErrors": 0,
+              "client4xx": 0,
+              "rateLimited": 0
+            },
+            {
+              "endpoint": "GET /api/health",
+              "count": 199,
+              "p50": 105,
+              "p95": 480,
+              "hardErrors": 0,
+              "client4xx": 0,
+              "rateLimited": 0
+            },
+            {
+              "endpoint": "GET /api/discover",
+              "count": 3163,
+              "p50": 105,
+              "p95": 474,
+              "hardErrors": 0,
+              "client4xx": 0,
+              "rateLimited": 0
+            }
+          ]
+        },
+        {
+          "label": "100 VUs",
+          "vus": 100,
+          "durationS": 50,
+          "requests": 7812,
+          "rps": 156.2,
+          "p50": 386,
+          "p95": 811,
+          "p99": 951,
+          "hardErrors": 0,
+          "errorRate": 0,
+          "client4xx": 0,
+          "rateLimited429": 0,
+          "verdict": "FAIL",
+          "statusHist": {
+            "200": 7812
+          },
+          "endpoints": [
+            {
+              "endpoint": "GET /api/professions",
+              "count": 815,
+              "p50": 283,
+              "p95": 657,
+              "hardErrors": 0,
+              "client4xx": 0,
+              "rateLimited": 0
+            },
+            {
+              "endpoint": "GET /api/health",
+              "count": 357,
+              "p50": 394,
+              "p95": 834,
+              "hardErrors": 0,
+              "client4xx": 0,
+              "rateLimited": 0
+            },
+            {
+              "endpoint": "GET /api/discover",
+              "count": 6640,
+              "p50": 393,
+              "p95": 819,
+              "hardErrors": 0,
+              "client4xx": 0,
+              "rateLimited": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "search",
+      "describe": "search: 70% /api/search/projects, 30% /api/search/profiles (seed-matched terms)",
+      "phases": [
+        {
+          "label": "2 VUs",
+          "vus": 2,
+          "durationS": 15,
+          "requests": 114,
+          "rps": 7.6,
+          "p50": 12,
+          "p95": 19,
+          "p99": 90,
+          "hardErrors": 0,
+          "errorRate": 0,
+          "client4xx": 0,
+          "rateLimited429": 0,
+          "verdict": "PASS",
+          "statusHist": {
+            "200": 114
+          },
+          "endpoints": [
+            {
+              "endpoint": "GET /api/search/profiles",
+              "count": 36,
+              "p50": 12,
+              "p95": 19,
+              "hardErrors": 0,
+              "client4xx": 0,
+              "rateLimited": 0
+            },
+            {
+              "endpoint": "GET /api/search/projects",
+              "count": 78,
+              "p50": 12,
+              "p95": 19,
+              "hardErrors": 0,
+              "client4xx": 0,
+              "rateLimited": 0
+            }
+          ]
+        },
+        {
+          "label": "3 VUs",
+          "vus": 3,
+          "durationS": 25,
+          "requests": 284,
+          "rps": 11.4,
+          "p50": 12,
+          "p95": 20,
+          "p99": 26,
+          "hardErrors": 0,
+          "errorRate": 0,
+          "client4xx": 0,
+          "rateLimited429": 0,
+          "verdict": "PASS",
+          "statusHist": {
+            "200": 284
+          },
+          "endpoints": [
+            {
+              "endpoint": "GET /api/search/profiles",
+              "count": 87,
+              "p50": 12,
+              "p95": 20,
+              "hardErrors": 0,
+              "client4xx": 0,
+              "rateLimited": 0
+            },
+            {
+              "endpoint": "GET /api/search/projects",
+              "count": 197,
+              "p50": 12,
+              "p95": 20,
+              "hardErrors": 0,
+              "client4xx": 0,
+              "rateLimited": 0
+            }
+          ]
+        },
+        {
+          "label": "13 VUs",
+          "vus": 13,
+          "durationS": 25,
+          "requests": 1226,
+          "rps": 49,
+          "p50": 12,
+          "p95": 31,
+          "p99": 256,
+          "hardErrors": 0,
+          "errorRate": 0,
+          "client4xx": 0,
+          "rateLimited429": 0,
+          "verdict": "PASS",
+          "statusHist": {
+            "200": 1226
+          },
+          "endpoints": [
+            {
+              "endpoint": "GET /api/search/projects",
+              "count": 861,
+              "p50": 12,
+              "p95": 30,
+              "hardErrors": 0,
+              "client4xx": 0,
+              "rateLimited": 0
+            },
+            {
+              "endpoint": "GET /api/search/profiles",
+              "count": 365,
+              "p50": 12,
+              "p95": 35,
+              "hardErrors": 0,
+              "client4xx": 0,
+              "rateLimited": 0
+            }
+          ]
+        },
+        {
+          "label": "25 VUs",
+          "vus": 25,
+          "durationS": 25,
+          "requests": 2234,
+          "rps": 89.4,
+          "p50": 16,
+          "p95": 90,
+          "p99": 340,
+          "hardErrors": 0,
+          "errorRate": 0,
+          "client4xx": 0,
+          "rateLimited429": 0,
+          "verdict": "PASS",
+          "statusHist": {
+            "200": 2234
+          },
+          "endpoints": [
+            {
+              "endpoint": "GET /api/search/projects",
+              "count": 1584,
+              "p50": 16,
+              "p95": 101,
+              "hardErrors": 0,
+              "client4xx": 0,
+              "rateLimited": 0
+            },
+            {
+              "endpoint": "GET /api/search/profiles",
+              "count": 650,
+              "p50": 16,
+              "p95": 80,
+              "hardErrors": 0,
+              "client4xx": 0,
+              "rateLimited": 0
+            }
+          ]
+        },
+        {
+          "label": "50 VUs",
+          "vus": 50,
+          "durationS": 25,
+          "requests": 3407,
+          "rps": 136.3,
+          "p50": 86,
+          "p95": 491,
+          "p99": 596,
+          "hardErrors": 0,
+          "errorRate": 0,
+          "client4xx": 0,
+          "rateLimited429": 0,
+          "verdict": "PASS",
+          "statusHist": {
+            "200": 3407
+          },
+          "endpoints": [
+            {
+              "endpoint": "GET /api/search/projects",
+              "count": 2406,
+              "p50": 86,
+              "p95": 491,
+              "hardErrors": 0,
+              "client4xx": 0,
+              "rateLimited": 0
+            },
+            {
+              "endpoint": "GET /api/search/profiles",
+              "count": 1001,
+              "p50": 84,
+              "p95": 492,
+              "hardErrors": 0,
+              "client4xx": 0,
+              "rateLimited": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "reads",
+      "describe": "authenticated reads: /api/auth/me → /api/me/site → /api/projects → /api/me/insights/overview",
+      "phases": [
+        {
+          "label": "1 VUs",
+          "vus": 1,
+          "durationS": 40,
+          "requests": 88,
+          "rps": 2.2,
+          "p50": 9,
+          "p95": 18,
+          "p99": 36,
+          "hardErrors": 0,
+          "errorRate": 0,
+          "client4xx": 66,
+          "rateLimited429": 0,
+          "verdict": "PASS",
+          "statusHist": {
+            "200": 22,
+            "401": 66
+          },
+          "endpoints": [
+            {
+              "endpoint": "GET /api/auth/me",
+              "count": 22,
+              "p50": 14,
+              "p95": 20,
+              "hardErrors": 0,
+              "client4xx": 0,
+              "rateLimited": 0
+            },
+            {
+              "endpoint": "GET /api/me/site",
+              "count": 22,
+              "p50": 9,
+              "p95": 13,
+              "hardErrors": 0,
+              "client4xx": 22,
+              "rateLimited": 0
+            },
+            {
+              "endpoint": "GET /api/projects",
+              "count": 22,
+              "p50": 9,
+              "p95": 13,
+              "hardErrors": 0,
+              "client4xx": 22,
+              "rateLimited": 0
+            },
+            {
+              "endpoint": "GET /api/me/insights/overview",
+              "count": 22,
+              "p50": 8,
+              "p95": 18,
+              "hardErrors": 0,
+              "client4xx": 22,
+              "rateLimited": 0
+            }
+          ]
+        },
+        {
+          "label": "5 VUs",
+          "vus": 5,
+          "durationS": 25,
+          "requests": 188,
+          "rps": 7.5,
+          "p50": 9,
+          "p95": 35,
+          "p99": 144,
+          "hardErrors": 0,
+          "errorRate": 0,
+          "client4xx": 141,
+          "rateLimited429": 0,
+          "verdict": "PASS",
+          "statusHist": {
+            "200": 47,
+            "401": 141
+          },
+          "endpoints": [
+            {
+              "endpoint": "GET /api/auth/me",
+              "count": 47,
+              "p50": 13,
+              "p95": 33,
+              "hardErrors": 0,
+              "client4xx": 0,
+              "rateLimited": 0
+            },
+            {
+              "endpoint": "GET /api/me/site",
+              "count": 47,
+              "p50": 8,
+              "p95": 34,
+              "hardErrors": 0,
+              "client4xx": 47,
+              "rateLimited": 0
+            },
+            {
+              "endpoint": "GET /api/projects",
+              "count": 47,
+              "p50": 8,
+              "p95": 76,
+              "hardErrors": 0,
+              "client4xx": 47,
+              "rateLimited": 0
+            },
+            {
+              "endpoint": "GET /api/me/insights/overview",
+              "count": 47,
+              "p50": 8,
+              "p95": 95,
+              "hardErrors": 0,
+              "client4xx": 47,
+              "rateLimited": 0
+            }
+          ]
+        },
+        {
+          "label": "10 VUs",
+          "vus": 10,
+          "durationS": 25,
+          "requests": 388,
+          "rps": 15.5,
+          "p50": 8,
+          "p95": 61,
+          "p99": 188,
+          "hardErrors": 0,
+          "errorRate": 0,
+          "client4xx": 291,
+          "rateLimited429": 0,
+          "verdict": "PASS",
+          "statusHist": {
+            "200": 97,
+            "401": 291
+          },
+          "endpoints": [
+            {
+              "endpoint": "GET /api/auth/me",
+              "count": 97,
+              "p50": 12,
+              "p95": 186,
+              "hardErrors": 0,
+              "client4xx": 0,
+              "rateLimited": 0
+            },
+            {
+              "endpoint": "GET /api/me/site",
+              "count": 97,
+              "p50": 8,
+              "p95": 64,
+              "hardErrors": 0,
+              "client4xx": 97,
+              "rateLimited": 0
+            },
+            {
+              "endpoint": "GET /api/projects",
+              "count": 97,
+              "p50": 8,
+              "p95": 54,
+              "hardErrors": 0,
+              "client4xx": 97,
+              "rateLimited": 0
+            },
+            {
+              "endpoint": "GET /api/me/insights/overview",
+              "count": 97,
+              "p50": 8,
+              "p95": 56,
+              "hardErrors": 0,
+              "client4xx": 97,
+              "rateLimited": 0
+            }
+          ]
+        },
+        {
+          "label": "20 VUs",
+          "vus": 20,
+          "durationS": 25,
+          "requests": 0,
+          "rps": 0,
+          "p50": 0,
+          "p95": 0,
+          "p99": 0,
+          "hardErrors": 0,
+          "errorRate": 0,
+          "client4xx": 0,
+          "rateLimited429": 0,
+          "verdict": "n/a",
+          "statusHist": {},
+          "endpoints": []
+        }
+      ]
+    }
+  ],
+  "totals": {
+    "requests": 21000,
+    "hardErrors": 0,
+    "rateLimited429": 0,
+    "client4xx": 498
+  },
+  "thresholdBreach": true,
+  "notes": [
+    "No media paths harvested from /api/discover — browse mix redistributed that share to discover.",
+    "No public profile fixtures visible anonymously (demo profiles are excluded by design) — browse profile/shell shares were served as discover requests."
+  ]
+}

@@ -1,0 +1,970 @@
+     1→"use client";
+     2→
+     3→import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+     4→import {
+     5→  Copy,
+     6→  ExternalLink,
+     7→  Eye,
+     8→  EyeOff,
+     9→  Gift,
+    10→  Globe,
+    11→  Layers,
+    12→  Loader2,
+    13→  Monitor,
+    14→  Palette,
+    15→  Plus,
+    16→  RefreshCw,
+    17→  Smartphone,
+    18→  Tablet,
+    19→  Trash2,
+    20→  Type as TypeIcon,
+    21→  ArrowDown,
+    22→  ArrowUp,
+    23→} from "lucide-react";
+    24→import { toast } from "sonner";
+    25→
+    26→import { Button } from "@/components/ui/button";
+    27→import { Input } from "@/components/ui/input";
+    28→import { Label } from "@/components/ui/label";
+    29→import { Skeleton } from "@/components/ui/skeleton";
+    30→import { Slider } from "@/components/ui/slider";
+    31→import { Switch } from "@/components/ui/switch";
+    32→import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+    33→import { Textarea } from "@/components/ui/textarea";
+    34→import {
+    35→  Select,
+    36→  SelectContent,
+    37→  SelectItem,
+    38→  SelectTrigger,
+    39→  SelectValue,
+    40→} from "@/components/ui/select";
+    41→import { EmptyState } from "@/components/bean/EmptyState";
+    42→import { SiteRenderer } from "@/components/bean/site/SiteRenderer";
+    43→import { CodeGiftzPanel, CodeGiftzProposal } from "@/components/bean/site/CodeGiftzPanel";
+    44→import { api } from "@/lib/client";
+    45→import { navigate } from "@/lib/hash-router";
+    46→import { useSession } from "@/lib/session";
+    47→import { cn } from "@/lib/utils";
+    48→import {
+    49→  defaultConfig,
+    50→  makeSection,
+    51→  normalizeConfig,
+    52→  templatePresets,
+    53→} from "@/lib/site-config";
+    54→import type { SiteConfig, SiteSection, SiteSectionType, SiteTheme } from "@/lib/site-config";
+    55→import type { ProjectCardDTO, PublicProfileResponse, SiteDesignDTO } from "@/lib/types";
+    56→
+    57→// ------------------------------------------------------------------ preview frame
+    58→// Renders the real SiteRenderer inside an iframe so Tailwind breakpoints respond
+    59→// to the DEVICE width, not the editor viewport — an authentic mobile/tablet/desktop
+    60→// preview rather than a squeezed div.
+    61→
+    62→function PreviewFrame({
+    63→  width,
+    64→  height,
+    65→  label,
+    66→  children,
+    67→}: {
+    68→  width: number | "100%";
+    69→  height: string;
+    70→  label: string;
+    71→  children: React.ReactNode;
+    72→}) {
+    73→  const frameRef = useRef<HTMLIFrameElement>(null);
+    74→  const rootRef = useRef<ReturnType<typeof import("react-dom/client").createRoot> | null>(null);
+    75→  const [doc, setDoc] = useState<Document | null>(null);
+    76→
+    77→  const handleLoad = useCallback(() => {
+    78→    const frame = frameRef.current;
+    79→    const frameDoc = frame?.contentDocument;
+    80→    if (!frameDoc) return;
+    81→    // Copy the app's stylesheets into the frame so Tailwind classes work inside.
+    82→    if (!frameDoc.head.hasChildNodes()) {
+    83→      for (const node of Array.from(document.querySelectorAll('link[rel="stylesheet"], style'))) {
+    84→        frameDoc.head.appendChild(node.cloneNode(true));
+    85→      }
+    86→      frameDoc.body.style.margin = "0";
+    87→      frameDoc.body.style.backgroundColor = "transparent";
+    88→    }
+    89→    setDoc(frameDoc);
+    90→  }, []);
+    91→
+    92→  useEffect(() => {
+    93→    if (!doc) return;
+    94→    let cancelled = false;
+    95→    (async () => {
+    96→      const ReactDOMClient = await import("react-dom/client");
+    97→      if (cancelled) return;
+    98→      if (!rootRef.current) {
+    99→        const mount = doc.createElement("div");
+   100→        doc.body.appendChild(mount);
+   101→        rootRef.current = ReactDOMClient.createRoot(mount);
+   102→      }
+   103→      rootRef.current.render(children);
+   104→    })();
+   105→    return () => {
+   106→      cancelled = true;
+   107→    };
+   108→  }, [doc, children]);
+   109→
+   110→  useEffect(() => {
+   111→    return () => {
+   112→      const root = rootRef.current;
+   113→      rootRef.current = null;
+   114→      if (root) {
+   115→        // root.unmount() is illegal inside React's render/commit window (it
+   116→        // throws "Attempted to synchronously unmount a root while React was
+   117→        // already rendering" when the editor page is being swapped out) —
+   118→        // always defer it past the current task.
+   119→        setTimeout(() => {
+   120→          try {
+   121→            root.unmount();
+   122→          } catch {
+   123→            /* already gone */
+   124→          }
+   125→        }, 0);
+   126→      }
+   127→    };
+   128→  }, []);
+   129→
+   130→  return (
+   131→    <iframe
+   132→      ref={frameRef}
+   133→      title={label}
+   134→      onLoad={handleLoad}
+   135→      srcDoc="<!DOCTYPE html><html><head></head><body></body></html>"
+   136→      className="block border border-border/70 bg-background shadow-sm"
+   137→      style={{ width, height, maxWidth: "100%", margin: "0 auto" }}
+   138→      sandbox="allow-same-origin allow-scripts"
+   139→    />
+   140→  );
+   141→}
+   142→
+   143→// ------------------------------------------------------------------ helpers
+   144→
+   145→const DEVICE_PRESETS = {
+   146→  desktop: { label: "Desktop", width: "100%" as const, icon: Monitor },
+   147→  tablet: { label: "Tablet", width: 768, icon: Tablet },
+   148→  mobile: { label: "Mobile", width: 390, icon: Smartphone },
+   149→};
+   150→
+   151→const SECTION_TYPE_LABELS: Record<SiteSectionType, string> = {
+   152→  hero: "Hero",
+   153→  about: "About",
+   154→  projects: "Projects",
+   155→  skills: "Skills",
+   156→  stats: "Stats",
+   157→  collections: "Collections",
+   158→  contact: "Contact",
+   159→};
+   160→
+   161→function SectionSummary({ section }: { section: SiteSection }) {
+   162→  switch (section.type) {
+   163→    case "hero":
+   164→      return section.subtitle || "Opening headline";
+   165→    case "about":
+   166→      return section.body ? section.body.slice(0, 60) : "Story and bio";
+   167→    case "projects":
+   168→      return `Up to ${section.limit} projects · ${section.layout}`;
+   169→    case "collections":
+   170→      return `Up to ${section.limit} collections`;
+   171→    case "contact":
+   172→      return section.body ? section.body.slice(0, 60) : "Contact details";
+   173→    default:
+   174→      return "Profile data section";
+   175→  }
+   176→}
+   177→
+   178→// ------------------------------------------------------------------ view
+   179→
+   180→export default function WebsiteBuilderView() {
+   181→  const { user, refresh } = useSession();
+   182→
+   183→  const [loading, setLoading] = useState(true);
+   184→  const [loadError, setLoadError] = useState<string | null>(null);
+   185→  const [needsUsername, setNeedsUsername] = useState(false);
+   186→
+   187→  const [config, setConfig] = useState<SiteConfig | null>(null);
+   188→  const [dirty, setDirty] = useState(false);
+   189→  const [design, setDesign] = useState<SiteDesignDTO | null>(null);
+   190→  const [profileData, setProfileData] = useState<PublicProfileResponse | null>(null);
+   191→
+   192→  const [saving, setSaving] = useState(false);
+   193→  const [publishing, setPublishing] = useState(false);
+   194→  const [device, setDevice] = useState<keyof typeof DEVICE_PRESETS>("desktop");
+   195→  const [selectedSectionId, setSelectedSectionId] = useState<string | null>(null);
+   196→  const [panelTab, setPanelTab] = useState<"design" | "section" | "giftz">("design");
+   197→
+   198→  // Code Giftz proposal state (preview-before-apply lives here, not in the panel)
+   199→  const [proposal, setProposal] = useState<CodeGiftzProposal | null>(null);
+   200→  const [undoConfig, setUndoConfig] = useState<SiteConfig | null>(null);
+   201→
+   202→  // ------------------------------------------------------------ load
+   203→
+   204→  const load = useCallback(async () => {
+   205→    setLoading(true);
+   206→    setLoadError(null);
+   207→    try {
+   208→      const [siteRes, profileRes] = await Promise.all([
+   209→        api<{ design: SiteDesignDTO | null; needsUsername: boolean }>("/api/me/site"),
+   210→        api<PublicProfileResponse>(`/api/profiles/${encodeURIComponent(user?.username ?? "")}`).catch(() => null),
+   211→      ]);
+   212→      setNeedsUsername(siteRes.needsUsername);
+   213→      setDesign(siteRes.design);
+   214→      setProfileData(profileRes);
+   215→
+   216→      // Restore the saved draft when valid; otherwise start from the template default.
+   217→      const restored = normalizeConfig(siteRes.design?.draft);
+   218→      setConfig(restored ?? defaultConfig("atelier"));
+   219→      setDirty(false);
+   220→      setProposal(null);
+   221→      setUndoConfig(null);
+   222→      setSelectedSectionId(restored?.sections[0]?.id ?? null);
+   223→    } catch (e) {
+   224→      setLoadError(e instanceof Error ? e.message : "Could not load your website");
+   225→    } finally {
+   226→      setLoading(false);
+   227→    }
+   228→  }, [user?.username]);
+   229→
+   230→  useEffect(() => {
+   231→    if (user) void load();
+   232→  }, [user, load]);
+   233→
+   234→  // Warn before leaving with unsaved edits.
+   235→  useEffect(() => {
+   236→    if (!dirty) return;
+   237→    const handler = (e: BeforeUnloadEvent) => {
+   238→      e.preventDefault();
+   239→    };
+   240→    window.addEventListener("beforeunload", handler);
+   241→    return () => window.removeEventListener("beforeunload", handler);
+   242→  }, [dirty]);
+   243→
+   244→  // ------------------------------------------------------------ section ops
+   245→
+   246→  const mutateConfig = useCallback((fn: (c: SiteConfig) => SiteConfig) => {
+   247→    setConfig((c) => (c ? fn(c) : c));
+   248→    setDirty(true);
+   249→  }, []);
+   250→
+   251→  function addSection(type: SiteSectionType) {
+   252→    if (!config) return;
+   253→    if (config.sections.length >= 12) {
+   254→      toast.error("A website can have at most 12 sections.");
+   255→      return;
+   256→    }
+   257→    const section = makeSection(type);
+   258→    mutateConfig((c) => ({ ...c, sections: [...c.sections, section] }));
+   259→    setSelectedSectionId(section.id);
+   260→    setPanelTab("section");
+   261→  }
+   262→
+   263→  function duplicateSection(id: string) {
+   264→    if (!config) return;
+   265→    const idx = config.sections.findIndex((s) => s.id === id);
+   266→    if (idx === -1) return;
+   267→    if (config.sections.length >= 12) {
+   268→      toast.error("A website can have at most 12 sections.");
+   269→      return;
+   270→    }
+   271→    const copy: SiteSection = { ...config.sections[idx], id: `${config.sections[idx].type}-${Date.now().toString(36)}-copy` };
+   272→    const sections = [...config.sections];
+   273→    sections.splice(idx + 1, 0, copy);
+   274→    mutateConfig((c) => ({ ...c, sections }));
+   275→    setSelectedSectionId(copy.id);
+   276→  }
+   277→
+   278→  function removeSection(id: string) {
+   279→    if (!config) return;
+   280→    if (config.sections.length <= 1) {
+   281→      toast.error("A website needs at least one section.");
+   282→      return;
+   283→    }
+   284→    mutateConfig((c) => ({ ...c, sections: c.sections.filter((s) => s.id !== id) }));
+   285→    if (selectedSectionId === id) setSelectedSectionId(null);
+   286→  }
+   287→
+   288→  function moveSection(id: string, dir: -1 | 1) {
+   289→    if (!config) return;
+   290→    const idx = config.sections.findIndex((s) => s.id === id);
+   291→    const target = idx + dir;
+   292→    if (idx === -1 || target < 0 || target >= config.sections.length) return;
+   293→    const sections = [...config.sections];
+   294→    [sections[idx], sections[target]] = [sections[target], sections[idx]];
+   295→    mutateConfig((c) => ({ ...c, sections }));
+   296→  }
+   297→
+   298→  function updateSection(id: string, patch: Partial<SiteSection>) {
+   299→    mutateConfig((c) => ({
+   300→      ...c,
+   301→      sections: c.sections.map((s) => (s.id === id ? ({ ...s, ...patch } as SiteSection) : s)),
+   302→    }));
+   303→  }
+   304→
+   305→  function updateTheme(patch: Partial<SiteTheme>) {
+   306→    mutateConfig((c) => ({ ...c, theme: { ...c.theme, ...patch } }));
+   307→  }
+   308→
+   309→  function applyTemplate(templateId: SiteConfig["template"]) {
+   310→    const preset = templatePresets().find((t) => t.id === templateId);
+   311→    if (!preset || !config) return;
+   312→    mutateConfig((c) => ({
+   313→      ...c,
+   314→      template: preset.id,
+   315→      theme: preset.theme,
+   316→      sections: preset.sections.map((s) => ({ ...s })),
+   317→    }));
+   318→    toast.success(`${preset.label} template applied — remember to save`);
+   319→    setSelectedSectionId(null);
+   320→  }
+   321→
+   322→  // ------------------------------------------------------------ persistence
+   323→
+   324→  async function saveDraft({ silent = false } = {}): Promise<SiteConfig | null> {
+   325→    if (!config) return null;
+   326→    setSaving(true);
+   327→    try {
+   328→      await api("/api/me/site", { method: "PUT", json: { config } });
+   329→      setDirty(false);
+   330→      if (!silent) toast.success("Draft saved — only you can see it");
+   331→      return config;
+   332→    } catch (e) {
+   333→      toast.error(e instanceof Error ? e.message : "Could not save the draft");
+   334→      return null;
+   335→    } finally {
+   336→      setSaving(false);
+   337→    }
+   338→  }
+   339→
+   340→  async function publish() {
+   341→    if (!config) return;
+   342→    setPublishing(true);
+   343→    try {
+   344→      // Publishing snapshots the SAVED draft — flush unsaved edits first.
+   345→      if (dirty) {
+   346→        const saved = await saveDraft({ silent: true });
+   347→        if (!saved) return;
+   348→      }
+   349→      const res = await api<{ status: string; publishedAt: string | null; publicUrl: string }>("/api/me/site/publish", { method: "POST" });
+   350→      setDesign((d) =>
+   351→        d
+   352→          ? { ...d, status: "PUBLISHED", publishedAt: res.publishedAt, publicUrl: res.publicUrl, published: config, draft: config }
+   353→          : d
+   354→      );
+   355→      toast.success("Website published — visitors now see it on your public profile");
+   356→    } catch (e) {
+   357→      toast.error(e instanceof Error ? e.message : "Could not publish");
+   358→    } finally {
+   359→      setPublishing(false);
+   360→    }
+   361→  }
+   362→
+   363→  async function unpublish() {
+   364→    setPublishing(true);
+   365→    try {
+   366→      const res = await api<{ status: string }>("/api/me/site/unpublish", { method: "POST" });
+   367→      setDesign((d) => (d ? { ...d, status: "DRAFT", publishedAt: null } : d));
+   368→      toast.success("Website unpublished — visitors see the standard profile again");
+   369→      void res;
+   370→    } catch (e) {
+   371→      toast.error(e instanceof Error ? e.message : "Could not unpublish");
+   372→    } finally {
+   373→      setPublishing(false);
+   374→    }
+   375→  }
+   376→
+   377→  // ------------------------------------------------------------ Code Giftz flow
+   378→
+   379→  function handleProposal(p: CodeGiftzProposal | null) {
+   380→    if (!p) {
+   381→      setProposal(null);
+   382→      return;
+   383→    }
+   384→    setProposal(p);
+   385→    setPanelTab("design"); // canvas banner shows the preview controls
+   386→  }
+   387→
+   388→  function acceptProposal() {
+   389→    if (!proposal || !config) return;
+   390→    setUndoConfig(config);
+   391→    setConfig(proposal.config);
+   392→    setDirty(true);
+   393→    setProposal(null);
+   394→    toast.success("Proposal applied as a draft — review and save");
+   395→  }
+   396→
+   397→  function discardProposal() {
+   398→    setProposal(null);
+   399→  }
+   400→
+   401→  function undoProposal() {
+   402→    if (!undoConfig) return;
+   403→    setConfig(undoConfig);
+   404→    setUndoConfig(null);
+   405→    setDirty(true);
+   406→    toast.success("Reverted to the previous version");
+   407→  }
+   408→
+   409→  // ------------------------------------------------------------ render
+   410→
+   411→  const previewProfile = useMemo(() => {
+   412→    const p = profileData?.profile;
+   413→    return {
+   414→      name: p?.name ?? user?.name ?? "Your Name",
+   415→      username: p?.username ?? user?.username ?? null,
+   416→      headline: p?.headline ?? user?.headline ?? null,
+   417→      location: p?.location ?? user?.location ?? null,
+   418→      bio: p?.bio ?? user?.bio ?? null,
+   419→      availability: p?.availability ?? user?.availability ?? null,
+   420→      avatarUrl: p?.avatarUrl ?? user?.avatarUrl ?? null,
+   421→      coverUrl: p?.coverUrl ?? user?.coverUrl ?? null,
+   422→      coverPositionY: p?.coverPositionY ?? user?.coverPositionY ?? 50,
+   423→      professions: p?.professions ?? user?.professions ?? [],
+   424→      skills: p?.skills ?? user?.skills ?? [],
+   425→      websiteUrl: p?.websiteUrl ?? user?.websiteUrl ?? null,
+   426→      contactEmail: p?.contactEmail ?? user?.contactEmail ?? null,
+   427→      stats: {
+   428→        followers: p?.stats.followers ?? 0,
+   429→        following: p?.stats.following ?? 0,
+   430→        projects: profileData?.projects.length ?? 0,
+   431→      },
+   432→    };
+   433→  }, [profileData, user]);
+   434→
+   435→  if (loading) {
+   436→    return (
+   437→      <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6" aria-busy="true">
+   438→        <Skeleton className="h-14 w-full rounded-xl" />
+   439→        <div className="mt-6 grid gap-6 lg:grid-cols-[280px_1fr_320px]">
+   440→          <Skeleton className="h-96 rounded-xl" />
+   441→          <Skeleton className="h-96 rounded-xl" />
+   442→          <Skeleton className="h-96 rounded-xl" />
+   443→        </div>
+   444→      </div>
+   445→    );
+   446→  }
+   447→
+   448→  if (loadError || !config) {
+   449→    return (
+   450→      <div className="mx-auto max-w-xl px-4 py-16 sm:px-6">
+   451→        <EmptyState
+   452→          icon={RefreshCw}
+   453→          title="Couldn't open the website editor"
+   454→          description={loadError ?? "Something went wrong."}
+   455→          action={<Button onClick={() => void load()}>Try again</Button>}
+   456→        />
+   457→      </div>
+   458→    );
+   459→  }
+   460→
+   461→  if (needsUsername) {
+   462→    return (
+   463→      <div className="mx-auto max-w-xl px-4 py-16 sm:px-6">
+   464→        <EmptyState
+   465→          icon={Globe}
+   466→          title="Claim your public URL first"
+   467→          description="Your website publishes to your public profile address. Finish onboarding to claim your username, then come back to design your site."
+   468→          action={<Button onClick={() => navigate("/onboarding")}>Finish setup</Button>}
+   469→        />
+   470→      </div>
+   471→    );
+   472→  }
+   473→
+   474→  const selectedSection = config.sections.find((s) => s.id === selectedSectionId) ?? null;
+   475→  const previewConfig = proposal ? proposal.config : config;
+   476→  const published = design?.status === "PUBLISHED";
+   477→
+   478→  return (
+   479→    <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6">
+   480→      {/* ---------------- top bar */}
+   481→      <div className="flex flex-col gap-3 rounded-xl border border-border/60 bg-card p-4 lg:flex-row lg:items-center">
+   482→        <div className="flex min-w-0 flex-1 items-center gap-3">
+   483→          <Layers className="size-5 shrink-0 text-primary" aria-hidden />
+   484→          <div className="min-w-0 flex-1">
+   485→            <Input
+   486→              value={config.name}
+   487→              maxLength={80}
+   488→              onChange={(e) => mutateConfig((c) => ({ ...c, name: e.target.value }))}
+   489→              aria-label="Website name"
+   490→              placeholder="Website name"
+   491→              className="font-display text-lg font-semibold"
+   492→            />
+   493→          </div>
+   494→          <span
+   495→            className={cn(
+   496→              "hidden shrink-0 rounded-full px-2.5 py-1 text-xs font-medium sm:inline-block",
+   497→              published ? "bg-gold-soft text-primary ring-1 ring-primary/25" : "bg-secondary text-secondary-foreground"
+   498→            )}
+   499→          >
+   500→            {published ? "Published" : "Draft"}
+   501→          </span>
+   502→        </div>
+   503→
+   504→        <div className="flex flex-wrap items-center gap-2">
+   505→          {dirty && <span className="text-xs text-muted-foreground">Unsaved changes</span>}
+   506→          <Button variant="outline" size="sm" onClick={() => void saveDraft()} disabled={saving}>
+   507→            {saving ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
+   508→            Save draft
+   509→          </Button>
+   510→          {published ? (
+   511→            <>
+   512→              <Button variant="outline" size="sm" onClick={() => navigate(design?.publicUrl ?? "/")}>
+   513→                <ExternalLink className="size-4" aria-hidden /> View live
+   514→              </Button>
+   515→              <Button variant="ghost" size="sm" onClick={() => void unpublish()} disabled={publishing}>
+   516→                Unpublish
+   517→              </Button>
+   518→            </>
+   519→          ) : (
+   520→            <Button size="sm" onClick={() => void publish()} disabled={publishing}>
+   521→              {publishing ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Globe className="size-4" aria-hidden />}
+   522→              Publish
+   523→            </Button>
+   524→          )}
+   525→        </div>
+   526→      </div>
+   527→
+   528→      {published && design?.publicUrl && (
+   529→        <p className="mt-2 px-1 text-xs text-muted-foreground">
+   530→          Live at{" "}
+   531→          <a href={design.publicUrl} className="font-medium text-primary underline-offset-4 hover:underline">
+   532→            {design.publicUrl}
+   533→          </a>{" "}
+   534→          · your real public profile URL. Draft edits stay private until you publish again.
+   535→          {design.publishedAt && ` Last published ${new Date(design.publishedAt).toLocaleString()}.`}
+   536→        </p>
+   537→      )}
+   538→
+   539→      {/* ---------------- work area */}
+   540→      <div className="mt-5 grid gap-5 lg:grid-cols-[270px_minmax(0,1fr)_330px]">
+   541→        {/* ------- left: sections */}
+   542→        <aside className="rounded-xl border border-border/60 bg-card" aria-label="Sections">
+   543→          <div className="flex items-center justify-between border-b border-border/60 px-4 py-3">
+   544→            <p className="text-sm font-medium">Sections</p>
+   545→            <Select onValueChange={(t) => addSection(t as SiteSectionType)}>
+   546→              <SelectTrigger size="sm" className="h-8 w-[130px]" aria-label="Add a section">
+   547→                <Plus className="size-3.5" aria-hidden /> <SelectValue placeholder="Add" />
+   548→              </SelectTrigger>
+   549→              <SelectContent>
+   550→                {(Object.keys(SECTION_TYPE_LABELS) as SiteSectionType[]).map((t) => (
+   551→                  <SelectItem key={t} value={t}>
+   552→                    {SECTION_TYPE_LABELS[t]}
+   553→                  </SelectItem>
+   554→                ))}
+   555→              </SelectContent>
+   556→            </Select>
+   557→          </div>
+   558→          <ul className="max-h-[420px] overflow-y-auto p-2 lg:max-h-[560px]" style={{ scrollbarWidth: "thin" }}>
+   559→            {config.sections.map((s, i) => (
+   560→              <li key={s.id}>
+   561→                <div
+   562→                  className={cn(
+   563→                    "group mb-1 rounded-lg border px-2.5 py-2 transition-colors",
+   564→                    selectedSectionId === s.id ? "border-primary/40 bg-gold-soft/40" : "border-transparent hover:bg-accent"
+   565→                  )}
+   566→                >
+   567→                  <button
+   568→                    type="button"
+   569→                    className="block w-full text-left"
+   570→                    onClick={() => {
+   571→                      setSelectedSectionId(s.id);
+   572→                      setPanelTab("section");
+   573→                    }}
+   574→                  >
+   575→                    <span className="flex items-center gap-2">
+   576→                      <span className={cn("text-[10px] font-semibold uppercase tracking-wider", s.visible ? "text-primary" : "text-muted-foreground")}>
+   577→                        {SECTION_TYPE_LABELS[s.type]}
+   578→                      </span>
+   579→                      {!s.visible && <EyeOff className="size-3 text-muted-foreground" aria-hidden />}
+   580→                    </span>
+   581→                    <span className="mt-0.5 block truncate text-xs text-muted-foreground">{s.title}</span>
+   582→                    <span className="mt-0.5 block truncate text-[11px] text-muted-foreground/70">
+   583→                      <SectionSummary section={s} />
+   584→                    </span>
+   585→                  </button>
+   586→                  <div className="mt-1.5 flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+   587→                    <Button variant="ghost" size="icon" className="size-6" aria-label={`Move ${s.title} up`} disabled={i === 0} onClick={() => moveSection(s.id, -1)}>
+   588→                      <ArrowUp className="size-3" aria-hidden />
+   589→                    </Button>
+   590→                    <Button variant="ghost" size="icon" className="size-6" aria-label={`Move ${s.title} down`} disabled={i === config.sections.length - 1} onClick={() => moveSection(s.id, 1)}>
+   591→                      <ArrowDown className="size-3" aria-hidden />
+   592→                    </Button>
+   593→                    <Button variant="ghost" size="icon" className="size-6" aria-label={`Duplicate ${s.title}`} onClick={() => duplicateSection(s.id)}>
+   594→                      <Copy className="size-3" aria-hidden />
+   595→                    </Button>
+   596→                    <Button
+   597→                      variant="ghost"
+   598→                      size="icon"
+   599→                      className="size-6 text-muted-foreground hover:text-destructive"
+   600→                      aria-label={`Remove ${s.title}`}
+   601→                      onClick={() => removeSection(s.id)}
+   602→                    >
+   603→                      <Trash2 className="size-3" aria-hidden />
+   604→                    </Button>
+   605→                    <Button
+   606→                      variant="ghost"
+   607→                      size="icon"
+   608→                      className="size-6"
+   609→                      aria-label={s.visible ? `Hide ${s.title}` : `Show ${s.title}`}
+   610→                      onClick={() => updateSection(s.id, { visible: !s.visible } as Partial<SiteSection>)}
+   611→                    >
+   612→                      {s.visible ? <Eye className="size-3" aria-hidden /> : <EyeOff className="size-3" aria-hidden />}
+   613→                    </Button>
+   614→                  </div>
+   615→                </div>
+   616→              </li>
+   617→            ))}
+   618→          </ul>
+   619→        </aside>
+   620→
+   621→        {/* ------- center: preview canvas */}
+   622→        <section className="min-w-0" aria-label="Website preview">
+   623→          <div className="flex items-center justify-between gap-2 rounded-t-xl border border-b-0 border-border/60 bg-card px-3 py-2">
+   624→            <div className="flex rounded-lg border border-border/60 p-0.5" role="tablist" aria-label="Preview device">
+   625→              {(Object.keys(DEVICE_PRESETS) as (keyof typeof DEVICE_PRESETS)[]).map((d) => {
+   626→                const Icon = DEVICE_PRESETS[d].icon;
+   627→                return (
+   628→                  <button
+   629→                    key={d}
+   630→                    type="button"
+   631→                    role="tab"
+   632→                    aria-selected={device === d}
+   633→                    onClick={() => setDevice(d)}
+   634→                    className={cn(
+   635→                      "flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs transition-colors",
+   636→                      device === d ? "bg-gold-soft font-medium text-primary" : "text-muted-foreground hover:text-foreground"
+   637→                    )}
+   638→                  >
+   639→                    <Icon className="size-3.5" aria-hidden /> {DEVICE_PRESETS[d].label}
+   640→                  </button>
+   641→                );
+   642→              })}
+   643→            </div>
+   644→            {proposal ? (
+   645→              <span className="inline-flex items-center gap-1.5 rounded-full bg-gold-soft px-2.5 py-1 text-[11px] font-medium text-primary">
+   646→                <Gift className="size-3" aria-hidden /> Code Giftz preview
+   647→              </span>
+   648→            ) : (
+   649→              <span className="text-[11px] text-muted-foreground">{dirty ? "Unsaved draft preview" : "Saved draft preview"}</span>
+   650→            )}
+   651→          </div>
+   652→
+   653→          {/* proposal preview banner */}
+   654→          {proposal && (
+   655→            <div className="border-x border-border/60 bg-gold-soft/30 px-3 py-2.5">
+   656→              <p className="text-sm font-medium text-primary">Previewing an AI proposal</p>
+   657→              {proposal.changes.length > 0 && (
+   658→                <ul className="mt-1 list-inside list-disc text-xs text-muted-foreground">
+   659→                  {proposal.changes.slice(0, 6).map((c, i) => (
+   660→                    <li key={i}>{c}</li>
+   661→                  ))}
+   662→                </ul>
+   663→              )}
+   664→              {proposal.reply && <p className="mt-1 text-xs italic text-muted-foreground">“{proposal.reply}”</p>}
+   665→              <div className="mt-2.5 flex flex-wrap gap-2">
+   666→                <Button size="sm" onClick={acceptProposal}>
+   667→                  Accept as draft
+   668→                </Button>
+   669→                <Button size="sm" variant="outline" onClick={discardProposal}>
+   670→                  Discard
+   671→                </Button>
+   672→                <Button size="sm" variant="ghost" onClick={() => setPanelTab("giftz")}>
+   673→                  Refine with Code Giftz
+   674→                </Button>
+   675→              </div>
+   676→            </div>
+   677→          )}
+   678→
+   679→          {!proposal && undoConfig && (
+   680→            <div className="flex items-center justify-between gap-2 border-x border-border/60 bg-card px-3 py-2">
+   681→              <p className="text-xs text-muted-foreground">Applied an AI proposal you regret?</p>
+   682→              <Button size="sm" variant="outline" onClick={undoProposal}>
+   683→                <RefreshCw className="size-3.5" aria-hidden /> Undo
+   684→              </Button>
+   685→            </div>
+   686→          )}
+   687→
+   688→          <div className="rounded-b-xl border border-border/60 bg-muted/40 p-3 sm:p-5">
+   689→            <PreviewFrame
+   690→              width={DEVICE_PRESETS[device].width}
+   691→              height={device === "desktop" ? "620px" : device === "tablet" ? "600px" : "560px"}
+   692→              label={`${DEVICE_PRESETS[device].label} website preview`}
+   693→            >
+   694→              <SiteRenderer
+   695→                config={previewConfig}
+   696→                profile={previewProfile}
+   697→                projects={profileData?.projects ?? []}
+   698→                collections={profileData?.collections ?? []}
+   699→              />
+   700→            </PreviewFrame>
+   701→            <p className="mt-3 text-center text-[11px] text-muted-foreground">
+   702→              Live preview of your draft · links inside the preview are disabled
+   703→            </p>
+   704→          </div>
+   705→        </section>
+   706→
+   707→        {/* ------- right: design / section / Code Giftz */}
+   708→        <aside className="rounded-xl border border-border/60 bg-card" aria-label="Design panel">
+   709→          <Tabs value={panelTab} onValueChange={(v) => setPanelTab(v as typeof panelTab)}>
+   710→            <TabsList className="m-2 grid w-[calc(100%-1rem)] grid-cols-3">
+   711→              <TabsTrigger value="design">
+   712→                <Palette className="size-3.5" aria-hidden /> Design
+   713→              </TabsTrigger>
+   714→              <TabsTrigger value="section">
+   715→                <TypeIcon className="size-3.5" aria-hidden /> Content
+   716→              </TabsTrigger>
+   717→              <TabsTrigger value="giftz">
+   718→                <Gift className="size-3.5" aria-hidden /> AI
+   719→              </TabsTrigger>
+   720→            </TabsList>
+   721→
+   722→            {/* -------- design tab */}
+   723→            <TabsContent value="design" className="max-h-[560px] space-y-6 overflow-y-auto px-4 pb-6" style={{ scrollbarWidth: "thin" }}>
+   724→              <div className="space-y-2">
+   725→                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Template</p>
+   726→                <div className="grid gap-2">
+   727→                  {templatePresets().map((t) => (
+   728→                    <button
+   729→                      key={t.id}
+   730→                      type="button"
+   731→                      onClick={() => applyTemplate(t.id)}
+   732→                      className={cn(
+   733→                        "rounded-lg border p-3 text-left transition-colors",
+   734→                        config.template === t.id ? "border-primary/50 bg-gold-soft/30" : "border-border/60 hover:border-primary/30"
+   735→                      )}
+   736→                      aria-pressed={config.template === t.id}
+   737→                    >
+   738→                      <span className="flex items-center justify-between">
+   739→                        <span className="text-sm font-medium">{t.label}</span>
+   740→                        <span className="flex gap-1" aria-hidden>
+   741→                          {[t.theme.background, t.theme.foreground, t.theme.accent].map((c) => (
+   742→                            <span key={c} className="size-3.5 rounded-full border border-border/60" style={{ background: c }} />
+   743→                          ))}
+   744→                        </span>
+   745→                      </span>
+   746→                      <span className="mt-1 block text-xs text-muted-foreground">{t.description}</span>
+   747→                    </button>
+   748→                  ))}
+   749→                </div>
+   750→              </div>
+   751→
+   752→              <div className="space-y-2">
+   753→                <Label htmlFor="ws-tagline">Tagline (optional)</Label>
+   754→                <Input
+   755→                  id="ws-tagline"
+   756→                  value={config.tagline}
+   757→                  maxLength={160}
+   758→                  placeholder="One line under your name"
+   759→                  onChange={(e) => mutateConfig((c) => ({ ...c, tagline: e.target.value }))}
+   760→                />
+   761→              </div>
+   762→
+   763→              <div className="space-y-3">
+   764→                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Colors</p>
+   765→                {(
+   766→                  [
+   767→                    { key: "background", label: "Background" },
+   768→                    { key: "foreground", label: "Text" },
+   769→                    { key: "accent", label: "Accent" },
+   770→                  ] as const
+   771→                ).map((row) => (
+   772→                  <div key={row.key} className="flex items-center justify-between gap-3">
+   773→                    <Label htmlFor={`ws-${row.key}`} className="text-sm">
+   774→                      {row.label}
+   775→                    </Label>
+   776→                    <div className="flex items-center gap-2">
+   777→                      <input
+   778→                        id={`ws-${row.key}`}
+   779→                        type="color"
+   780→                        value={/^#[0-9a-fA-F]{6}$/.test(config.theme[row.key]) ? config.theme[row.key] : "#090a0c"}
+   781→                        onChange={(e) => updateTheme({ [row.key]: e.target.value } as Partial<SiteTheme>)}
+   782→                        className="size-8 cursor-pointer rounded border border-border/60 bg-transparent"
+   783→                        aria-label={`${row.label} color`}
+   784→                      />
+   785→                      <span className="w-[72px] font-mono text-[11px] text-muted-foreground">{config.theme[row.key]}</span>
+   786→                    </div>
+   787→                  </div>
+   788→                ))}
+   789→              </div>
+   790→
+   791→              <div className="space-y-3">
+   792→                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Typography &amp; shape</p>
+   793→                <div className="space-y-1.5">
+   794→                  <Label htmlFor="ws-font">Font</Label>
+   795→                  <Select value={config.theme.font} onValueChange={(v) => updateTheme({ font: v as SiteTheme["font"] })}>
+   796→                    <SelectTrigger id="ws-font" className="w-full">
+   797→                      <SelectValue />
+   798→                    </SelectTrigger>
+   799→                    <SelectContent>
+   800→                      <SelectItem value="editorial">Editorial serif</SelectItem>
+   801→                      <SelectItem value="clean">Clean sans</SelectItem>
+   802→                      <SelectItem value="mono">Technical mono</SelectItem>
+   803→                    </SelectContent>
+   804→                  </Select>
+   805→                </div>
+   806→                <div className="space-y-1.5">
+   807→                  <Label htmlFor="ws-radius">Corners</Label>
+   808→                  <Select value={config.theme.radius} onValueChange={(v) => updateTheme({ radius: v as SiteTheme["radius"] })}>
+   809→                    <SelectTrigger id="ws-radius" className="w-full">
+   810→                      <SelectValue />
+   811→                    </SelectTrigger>
+   812→                    <SelectContent>
+   813→                      <SelectItem value="none">Square</SelectItem>
+   814→                      <SelectItem value="md">Rounded</SelectItem>
+   815→                      <SelectItem value="full">Pill</SelectItem>
+   816→                    </SelectContent>
+   817→                  </Select>
+   818→                </div>
+   819→                <div className="space-y-1.5">
+   820→                  <Label htmlFor="ws-density">Spacing</Label>
+   821→                  <Select value={config.theme.density} onValueChange={(v) => updateTheme({ density: v as SiteTheme["density"] })}>
+   822→                    <SelectTrigger id="ws-density" className="w-full">
+   823→                      <SelectValue />
+   824→                    </SelectTrigger>
+   825→                    <SelectContent>
+   826→                      <SelectItem value="compact">Compact</SelectItem>
+   827→                      <SelectItem value="regular">Regular</SelectItem>
+   828→                      <SelectItem value="relaxed">Relaxed</SelectItem>
+   829→                    </SelectContent>
+   830→                  </Select>
+   831→                </div>
+   832→              </div>
+   833→            </TabsContent>
+   834→
+   835→            {/* -------- section content tab */}
+   836→            <TabsContent value="section" className="max-h-[560px] space-y-4 overflow-y-auto px-4 pb-6" style={{ scrollbarWidth: "thin" }}>
+   837→              {!selectedSection ? (
+   838→                <p className="py-8 text-center text-sm text-muted-foreground">
+   839→                  Pick a section on the left to edit its content.
+   840→                </p>
+   841→              ) : (
+   842→                <>
+   843→                  <div className="flex items-center justify-between gap-2">
+   844→                    <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+   845→                      {SECTION_TYPE_LABELS[selectedSection.type]} section
+   846→                    </p>
+   847→                    <div className="flex items-center gap-1.5">
+   848→                      <Switch
+   849→                        id="sec-visible"
+   850→                        checked={selectedSection.visible}
+   851→                        onCheckedChange={(v) => updateSection(selectedSection.id, { visible: v } as Partial<SiteSection>)}
+   852→                        aria-label="Section visible"
+   853→                      />
+   854→                      <Label htmlFor="sec-visible" className="text-xs">
+   855→                        Visible
+   856→                      </Label>
+   857→                    </div>
+   858→                  </div>
+   859→
+   860→                  <div className="space-y-1.5">
+   861→                    <Label htmlFor="sec-title">Title</Label>
+   862→                    <Input
+   863→                      id="sec-title"
+   864→                      value={selectedSection.title}
+   865→                      maxLength={120}
+   866→                      onChange={(e) => updateSection(selectedSection.id, { title: e.target.value } as Partial<SiteSection>)}
+   867→                    />
+   868→                  </div>
+   869→
+   870→                  {selectedSection.type === "hero" && (
+   871→                    <div className="space-y-1.5">
+   872→                      <Label htmlFor="sec-subtitle">Subtitle</Label>
+   873→                      <Textarea
+   874→                        id="sec-subtitle"
+   875→                        value={selectedSection.subtitle}
+   876→                        maxLength={280}
+   877→                        className="min-h-16"
+   878→                        placeholder="Supports {name} {headline} {location} {tagline}"
+   879→                        onChange={(e) => updateSection(selectedSection.id, { subtitle: e.target.value } as Partial<SiteSection>)}
+   880→                      />
+   881→                    </div>
+   882→                  )}
+   883→
+   884→                  {(selectedSection.type === "about" || selectedSection.type === "contact") && (
+   885→                    <div className="space-y-1.5">
+   886→                      <Label htmlFor="sec-body">Body</Label>
+   887→                      <Textarea
+   888→                        id="sec-body"
+   889→                        value={selectedSection.body}
+   890→                        maxLength={selectedSection.type === "about" ? 4000 : 1200}
+   891→                        className="min-h-32"
+   892→                        placeholder="Supports {bio} {availability} {name}"
+   893→                        onChange={(e) => updateSection(selectedSection.id, { body: e.target.value } as Partial<SiteSection>)}
+   894→                      />
+   895→                    </div>
+   896→                  )}
+   897→
+   898→                  {selectedSection.type === "projects" && (
+   899→                    <>
+   900→                      <div className="space-y-1.5">
+   901→                        <Label htmlFor="sec-layout">Layout</Label>
+   902→                        <Select
+   903→                          value={selectedSection.layout}
+   904→                          onValueChange={(v) => updateSection(selectedSection.id, { layout: v } as Partial<SiteSection>)}
+   905→                        >
+   906→                          <SelectTrigger id="sec-layout" className="w-full">
+   907→                            <SelectValue />
+   908→                          </SelectTrigger>
+   909→                          <SelectContent>
+   910→                            <SelectItem value="grid">Grid</SelectItem>
+   911→                            <SelectItem value="featured">Featured first</SelectItem>
+   912→                          </SelectContent>
+   913→                        </Select>
+   914→                      </div>
+   915→                      <div className="space-y-1.5">
+   916→                        <Label htmlFor="sec-limit">Show up to {selectedSection.limit} projects</Label>
+   917→                        <Slider
+   918→                          id="sec-limit"
+   919→                          value={[selectedSection.limit]}
+   920→                          min={1}
+   921→                          max={24}
+   922→                          step={1}
+   923→                          onValueChange={(v) => updateSection(selectedSection.id, { limit: v[0] } as Partial<SiteSection>)}
+   924→                        />
+   925→                      </div>
+   926→                    </>
+   927→                  )}
+   928→
+   929→                  {selectedSection.type === "collections" && (
+   930→                    <div className="space-y-1.5">
+   931→                      <Label htmlFor="sec-climit">Show up to {selectedSection.limit} collections</Label>
+   932→                      <Slider
+   933→                        id="sec-climit"
+   934→                        value={[selectedSection.limit]}
+   935→                        min={1}
+   936→                        max={12}
+   937→                        step={1}
+   938→                        onValueChange={(v) => updateSection(selectedSection.id, { limit: v[0] } as Partial<SiteSection>)}
+   939→                      />
+   940→                    </div>
+   941→                  )}
+   942→
+   943→                  {(selectedSection.type === "skills" || selectedSection.type === "stats") && (
+   944→                    <p className="text-xs text-muted-foreground">
+   945→                      This section pulls straight from your profile data — manage skills and stats in{" "}
+   946→                      <button type="button" className="text-primary underline-offset-4 hover:underline" onClick={() => navigate("/folio")}>
+   947→                        My Folio
+   948→                      </button>
+   949→                      .
+   950→                    </p>
+   951→                  )}
+   952→                </>
+   953→              )}
+   954→            </TabsContent>
+   955→
+   956→            {/* -------- Code Giftz tab */}
+   957→            <TabsContent value="giftz" className="max-h-[560px] overflow-y-auto" style={{ scrollbarWidth: "thin" }}>
+   958→              <CodeGiftzPanel
+   959→                currentConfig={config}
+   960→                lastProposal={proposal?.config ?? null}
+   961→                onProposal={handleProposal}
+   962→              />
+   963→            </TabsContent>
+   964→          </Tabs>
+   965→        </aside>
+   966→      </div>
+   967→    </div>
+   968→  );
+   969→}
+   970→

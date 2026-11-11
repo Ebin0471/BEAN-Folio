@@ -1,0 +1,30 @@
+# Task 8 — Ops Documentation & Tier A/B/C Deployment Configs (work record)
+
+Agent: ops-docs · Date: 2026-11-05 · Status: **COMPLETE** (all 5 deliverables created, tested, lint-clean)
+
+## Files created (ONLY the 5 permitted — nothing else touched)
+
+| File | What it is |
+|---|---|
+| `scripts/backup-db.ts` | SQLite backup via bun:sqlite `VACUUM INTO` (read-only on source) → `db/backups/beanfolio-YYYYMMDD-HHMMSS.db` + `.json` manifest sidecar (`file, bytes, sha256, tables, method`), retention `--keep` (default 14) with sidecar pruning, raw-copy fallback (records method honestly). PG `DATABASE_URL` → prints exact `pg_dump` command, exit 0, zero side effects (no JS pg_dump by design). |
+| `scripts/restore-db.ts` | `<backupFile> [--force] [--target <path>]`: verifies sha256 sidecar (or recomputes with an UNVERIFIED warning), prints stop-the-app warning, pre-flights `PRAGMA integrity_check` **on the backup before touching anything**, `.bak-<stamp>` of current target on `--force`, temp-copy → integrity → atomic rename, stray `-wal/-shm` cleanup, re-verifies restored file, prints `restore.ok` JSON. Refuses overwrite without `--force` (exit 2); refuses PG target without `--target` (exit 2). |
+| `docs/ops/MIGRATIONS.md` | Additive-migration policy as actually practiced: edit both schemas → `check-schema-parity.ts` gate → `db:push` (never `--accept-data-loss`) → `prisma migrate diff --from-empty|--from-url --to-schema-datamodel` DDL → review (zero DROP/ALTER/RENAME rule) → apply → probe + verify-postgres + app-level checks. Rollback matrix (forward-only), destructive ban + 5-point approval checklist, backup/restore drill (quarterly + post-schema-change), validation checklist. |
+| `docs/ops/RUNBOOK.md` | Deploy (build → standalone → 4-step health gate → worker on/off), grouped env reference (DB/session/media-S3/AI/queue/rate-limit/app-URL), scaling (RATE_LIMIT_BACKEND=postgres mandatory at N>1 + what silently breaks without it; dedicated drain workers; pooling), incident recovery (DB-down health/ready semantics, backlog → `queue-drain.ts` + DLQ replay pointer, stuck turns → `site.studio-sweep`), 12-row monitoring/alert table with "observable today" vs Tier-B/C tooling, backup cadence + restore-drill cadence, secret rules. |
+| `docs/ops/DEPLOYMENT_TIERS.md` | Tier A (ceiling ~100–500 concurrent, $0–60/mo), Tier B (~5k–20k concurrent, **$150–800/mo**), Tier C (100k concurrent, **$5,000–30,000+/mo** + explicit "a free tier cannot guarantee 100k simultaneous users"). All costs labeled list-price ballparks / "verify current provider pricing". Explicit per-tier assumptions (RPS, storage GB, bandwidth TB/mo, region) and ceilings. §5 portability table (env levers incl. `DATABASE_URL`, `RATE_LIMIT_BACKEND`, `QUEUE_*`, `MEDIA_STORAGE_DRIVER`, `NEXT_PUBLIC_APP_URL`) + 5 named code swaps (Redis cache/rate-limit adapter, presigned uploads, keyset pagination, SSR/ISR, streaming media). |
+
+## Test results (against the real dev DB — `db/custom.db` never modified)
+
+- `bun scripts/backup-db.ts --out /tmp/bk-test` → `{"event":"backup.ok","file":"/tmp/bk-test/beanfolio-20261105-181335.db","bytes":782336,"sha256":"5811824d…e3803a","tables":45,"method":"vacuum-into","kept":1,"pruned":0}` — VACUUM INTO confirmed supported by bun:sqlite (probed first).
+- Restore drill: `bun scripts/restore-db.ts /tmp/bk-test/beanfolio-…db --target /tmp/bk-test-restore/throwaway.db` → `restore.ok`, `integrity:"ok"`, `tables:45` (manifest 45), `manifest:"verified"`.
+- **Byte-proof of non-touch:** sha256+mtime of `db/custom.db` identical immediately before/after the restore run (`PROOF: db/custom.db byte-identical across the restore`). Note: an *earlier* hash check drifted only because the live dev server's recurring sweeps write to the DB during normal operation — not from this tooling.
+- Negative paths: overwrite without `--force` → exit 2; tampered sidecar sha256 → exit 1 abort; truncated backup → pre-flight integrity abort, target never created; missing sidecar → recompute + honest UNVERIFIED warning; `--force` → `.bak-<stamp>` created; `--keep 2` retention pruned oldest; `DATABASE_URL=postgresql://…` → guidance printed, exit 0, no directory created.
+- `bun run lint` → 0 errors (only 5 pre-existing warnings in `scripts/loadtest/k6/*`, not this task's files). `bunx tsc --noEmit` → no findings for either new script. dev.log healthy (queue sweeps ticking normally).
+
+## Surprises found in existing docs (for the next agent)
+
+1. **`.env.example` does not list `QUEUE_ENABLED` / `QUEUE_CONCURRENCY` / `QUEUE_POLL_MS` / `QUEUE_USER_CONCURRENCY` / `RATE_LIMIT_BACKEND`** — they exist in code (`src/lib/queue/*`, `src/lib/rate-limit-backend.ts`) and are only documented in `docs/ops/RUNBOOK-QUEUE.md` §3. RUNBOOK.md §2 flags this gap rather than editing `.env.example` (file off-limits for this task). Suggest a docs owner adds the two blocks.
+2. **Model-count drift across docs:** schema files both hold **45 models**; `docs/database.md` says 27, the deployment §0 probes expect 36, ARCHITECTURE_AUDIT saw 41. The audit trail (B-2, re-sync notes) explains the history; docs lag reality. I used 45 only in MIGRATIONS.md ("currently") and avoided restating counts elsewhere.
+3. **`docs/deployment/initial-schema.sql` + `additive-schema.sql` are documented HISTORICAL traps** (pre-LAXII, would strand 5+ tables) — deployment.md says so; MIGRATIONS.md repeats the warning because a migration runbook is exactly where someone would reach for them.
+4. **`/api/health` deliberately stays 200 during a DB outage** (queue counters → nulls) while `/api/ready` 503s — the liveness/readiness split is real and worth alerting on separately; encoded in RUNBOOK §4.1.
+5. **The historical 808-row backup is unrecoverable** (gitignored, deleted — B-4) which is precisely why backup tooling + drill cadence were the top ops gap; the audit's B-4 fix list matches this task 1:1 (A4/H1/H2 in IMPLEMENTATION_PLAN).
+6. Rate-limit postgres backend stores **SHA-256-hashed keys** (PII hygiene) and **falls back to memory per-call** if the shared backend throws — documented as the honest degradation in RUNBOOK §2/§3.1.

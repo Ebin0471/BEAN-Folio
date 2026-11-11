@@ -1,0 +1,6 @@
+# Test discovery is confined to tests/ — CODE GIFTZ user workspaces under
+# data/giftz-workspaces/ contain their own *.test.ts files (executed there in
+# isolation, with the workspace as cwd) and must never be collected by the
+# application suite.
+[test]
+root = "tests"

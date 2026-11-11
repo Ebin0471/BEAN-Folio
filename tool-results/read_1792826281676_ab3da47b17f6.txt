@@ -1,0 +1,309 @@
+     1→# BEAN Folio — Build Worklog
+     2→
+     3→Single source of truth for all agents working on BEAN Folio in this sandbox.
+     4→Before starting work: READ this file. After finishing: APPEND your section (never overwrite).
+     5→
+     6→---
+     7→
+     8→## AUDIT (Task 1 — completed by orchestrator)
+     9→
+    10→### What existed before this build
+    11→- Fresh Next.js 16.1.3 scaffold (App Router, Turbopack, TypeScript 5, bun runtime)
+    12→- Tailwind CSS 4 + full shadcn/ui "new-york" component set in `src/components/ui/*`
+    13→- Prisma 6 + SQLite (`db/custom.db`) with a trivial `User`/`Post` demo schema
+    14→- `z-ai-web-dev-sdk@0.0.18` installed (LLM + image generation available server-side)
+    15→- framer-motion, recharts, zustand, sonner, next-themes, lucide-react, zod v4
+    16→- Dev server runs on port 3000 (`bun run dev`, logs to `dev.log`)
+    17→
+    18→### What was broken / missing
+    19→- No product code at all: no auth, no profiles, no projects, no discovery, no AI, no docs
+    20→- Default Z.ai scaffold branding and light theme only
+    21→- `src/lib/db.ts` logged every query (`log: ['query']`) — noisy; changed to warn/error
+    22→
+    23→### Sandbox constraints (verified, non-negotiable)
+    24→- Single Next.js app on port 3000; only the `/` page route is user-visible → the entire
+    25→  product is a client-side SPA under `/` using hash routing (`#/discover`, `#/u/:username`, …)
+    26→- SQLite via Prisma (no PostgreSQL), no external S3/Supabase/Google credentials available
+    27→- `z-ai-web-dev-sdk` is the real configured AI provider (server-side only)
+    28→- Media storage = local `uploads/` directory served through an API route
+    29→- No test frameworks may be added; verification = lint + live browser E2E checks
+    30→
+    31→### Architecture decision (documented trade-off)
+    32→The production blueprint (NestJS monorepo + PostgreSQL + Supabase + S3 + Expo) requires
+    33→infrastructure and credentials unavailable here. Per the build rules, we implement the full
+    34→product on the enforced stack with clean integration boundaries and document the exact
+    35→upgrade path in `docs/` (google-auth.md, media-pipeline.md, deployment.md). Auth is real
+    36→email+password with server-side sessions (scrypt hashes, httpOnly cookies, DB-backed).
+    37→Google OAuth is documented as a configuration-required boundary, not faked.
+    38→
+    39→---
+    40→
+    41→## CONVENTIONS (all agents MUST follow)
+    42→
+    43→### Next.js 16 specifics
+    44→- Route handler dynamic params are Promises: `export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> })` → `const { id } = await params`
+    45→- `cookies()` from `next/headers` is async: `const store = await cookies()`
+    46→- Use `NextRequest`/`NextResponse` from `next/server`
+    47→- All API routes under `src/app/api/**/route.ts` (API routes are allowed; PAGE routes other than `/` are NOT)
+    48→
+    49→### Server helpers (already implemented by orchestrator — import, do not re-create)
+    50→```ts
+    51→import { db } from '@/lib/db'                    // Prisma client
+    52→import { getSessionUser } from '@/lib/auth'      // → User | null (validates session cookie)
+    53→import { setSessionCookie, clearSessionCookie } from '@/lib/auth'
+    54→import { ok, err, parseBody, getClientKey, rateLimit } from '@/lib/api-helpers'
+    55→import { saveUpload } from '@/lib/media'         // validates magic bytes, writes to uploads/
+    56→import { aiComplete, aiCapabilities } from '@/lib/ai'
+    57→```
+    58→- `ok(data, status=200)` → NextResponse.json(data)
+    59→- `err(message, status=400, code?)` → NextResponse.json({ error, code? }, { status })
+    60→- `parseBody(req, zodSchema)` → `{ data } | { response }` — check `if ('response' in r) return r.response`
+    61→- `rateLimit(key, limit, windowMs)` → boolean (in-memory)
+    62→- Hash passwords with `hashPassword` / `verifyPassword` from `@/lib/auth` (scrypt, never store plaintext)
+    63→
+    64→### Error shape (all endpoints)
+    65→- 400 validation `{ error: string }`, 401 `{ error: 'Authentication required' }`,
+    66→  403 `{ error: 'Not allowed' }`, 404 `{ error: 'Not found' }`, 429 `{ error: 'Too many requests' }`, 500 `{ error: 'Something went wrong' }`
+    67→- NEVER leak stack traces, internal errors, or secrets. Wrap handlers in try/catch → err('Something went wrong', 500)
+    68→
+    69→### Visibility rules (server-enforced, everywhere)
+    70→- Project PUBLIC: readable by anyone; UNLISTED: readable by direct id but excluded from feeds/search; PRIVATE: owner only
+    71→- Auth-required endpoints: 401 without session
+    72→- Blocked users: neither party can follow/inquire/see each other in feeds (filter by Block in both directions)
+    73→- Soft-deleted users (`deletedAt != null`): treated as not found on public endpoints
+    74→
+    75→### Frontend conventions
+    76→- ONLY hash routing via `src/lib/hash-router.ts` (`navigate(to)`, `useHashRoute()`)
+    77→- Fetch via `src/lib/client.ts` `api<T>(path, init?)` — it throws `ApiError` with `.message` and `.status`
+    78→- Session via `useSession()` from `src/lib/session.tsx` → `{ user, loading, refresh, logout }`
+    79→- Brand: dark obsidian premium editorial. Gold `--primary` (#E8BC51) accent. NO blue/indigo
+    80→- Use existing shadcn/ui components (`@/components/ui/*`) + shared atoms in `@/components/bean/*`
+    81→- Cards: `p-4`/`p-6`, `gap-4`/`gap-6`, consistent `rounded-xl`. Long lists: `max-h-96 overflow-y-auto`
+    82→- Every async view: loading skeleton, empty state (`EmptyState`), error state, success toast (sonner)
+    83→- Responsive: mobile-first, `sm:/md:/lg:` prefixes. Footer must stick to bottom (handled in shell)
+    84→- `MediaUrl` format: `/api/media/{mediaId}/raw` — use directly as img/video src
+    85→
+    86→### Demo fixtures vs real data
+    87→- `User.isDemo = true` marks seeded fixture accounts. Seed script: `scripts/seed.ts` (explicit `bun run scripts/seed.ts`)
+    88→- Never fabricate AI output, stats, or integration success states in product code
+    89→
+    90→---
+    91→
+    92→## API CONTRACT v1 (authoritative)
+    93→
+    94→All endpoints under `/api`. JSON bodies. Cookie session auth (`bean_session`).
+    95→
+    96→### Auth
+    97→- `POST /api/auth/register` `{ email, password (min 8), name }` → 200 `{ user: PublicMe }` + sets cookie. 409 if email taken.
+    98→- `POST /api/auth/login` `{ email, password }` → 200 `{ user: PublicMe }`. 401 invalid credentials.
+    99→- `POST /api/auth/logout` → 200 `{ ok: true }`, clears cookie.
+   100→- `GET /api/auth/me` → 200 `{ user: PublicMe | null }`.
+   101→  - `PublicMe = { id, email, name, username, headline, bio, location, avatarUrl, coverUrl, availability, contactEmail, websiteUrl, professions: string[] (slugs), skills: string[] (slugs), aiConsent, onboarded, profileVisibility, isDemo, createdAt }`
+   102→
+   103→### Onboarding & profile
+   104→- `POST /api/me/onboarding` `{ username, displayName, professions: string[], skills?: string[], bio?, location?, headline? }` → 200 `{ user: PublicMe }`. Validates username `[a-z0-9-]{3,24}` unique. Sets `onboarded=true`.
+   105→- `GET /api/me/profile` → `{ user: PublicMe, stats: { projects, published, followers, following, profileViews } }`
+   106→- `PATCH /api/me/profile` (partial: `name, headline, bio, location, availability, contactEmail, websiteUrl, avatarMediaId, coverMediaId, professions, skills, profileVisibility`) → `{ user: PublicMe }`
+   107→- `GET /api/profiles/:username` → public profile `{ profile: { id, name, username, headline, bio, location, avatarUrl, coverUrl, availability, websiteUrl, professions, skills, createdAt, stats: { followers, following, projects, profileViews? } }, isFollowing: boolean, projects: ProjectCard[] (public+published only; include UNLISTED if owner), collections: [{id,name,description,items:ProjectCard[]}] }`. Records a ProfileView (deduped/day).
+   108→- `GET /api/professions` → `{ professions: [{ slug, label, group }] }` (curated static list served from DB seed or code constant)
+   109→- `GET /api/skills` → `{ skills: [{ slug, label }] }`
+   110→
+   111→### Media
+   112→- `POST /api/media/upload` multipart form: `file` (+ optional `kind`). → 200 `{ media: { id, kind, mime, size, url } }`. Auth required. Limits: images ≤ 8MB (jpeg/png/webp/gif), video ≤ 64MB (mp4/webm/quicktime), audio ≤ 20MB, docs(pdf) ≤ 10MB. Magic-byte validation.
+   113→- `GET /api/media/:id/raw` → binary stream with content-type + cache-control. Public if linked to published content or owned; simplest correct rule: any READY media is servable (IDs are unguessable cuids) — but PRIVATE-project media must 403 unless owner: check `ProjectMedia→Project.visibility` and avatar/cover ownership.
+   114→- `GET /api/media/:id` → `{ media }` metadata (owner only). `DELETE` → owner only, removes file + row.
+   115→
+   116→### Projects
+   117→- `POST /api/projects` `{ title, summary?, description?, category?, visibility?, coverMediaId?, brief?, process?, challenges?, outcome?, role?, externalUrl?, repoUrl?, skills?: string[], tools?: string[], media?: [{ mediaId, caption? }], contributors?: [{ name, role?, contribution? }] }` → `{ project: FullProject }` (status DRAFT).
+   118→- `GET /api/projects?status=DRAFT|PUBLISHED` → `{ projects: ProjectCard[] }` (OWN projects only, all visibilities).
+   119→- `GET /api/projects/:id` → `{ project: FullProject, owner: PublicPerson, isOwner, isSaved, canEdit }`.
+   120→  - PRIVATE → 404 unless owner. UNLISTED → readable by direct link. Records ProjectView (deduped per viewer/day) when PUBLISHED and not owner.
+   121→- `PATCH /api/projects/:id` (same fields as POST, partial; owner only) → `{ project }`
+   122→- `DELETE /api/projects/:id` → `{ ok: true }` (owner only)
+   123→- `POST /api/projects/:id/publish` → `{ project }` (requires title + cover OR ≥1 media; sets status PUBLISHED, publishedAt). Also `POST /api/projects/:id/unpublish` → back to DRAFT.
+   124→- `FullProject = ProjectCard fields + description, brief, process, challenges, outcome, role, externalUrl, repoUrl, skills: string[], tools: string[], media: [{ id, mediaId, url, kind, caption, order }], contributors: [{ id, name, role, contribution }], counts, visibility, status, publishedAt, createdAt, updatedAt`
+   125→- `ProjectCard = { id, title, summary, category, coverUrl, visibility, status, publishedAt, updatedAt, owner: { username, name, avatarUrl }, counts: { views, saves }, skills: string[] }`
+   126→- `POST /api/projects/:id/view` → records view (used by client on mount for anon tracking), 200 `{ ok: true }`
+   127→
+   128→### Discover & search
+   129→- `GET /api/discover?cursor=&limit=12&category=` → `{ items: [{ project: ProjectCard, reason?: string }], nextCursor }`. Ranking: published+PUBLIC only, recency-weighted engagement (saves+views), same-profession boost for signed-in viewer, new-creator boost (first project), never follower-count-only. `reason` examples: "New on BEAN Folio", "Matches your profession: Film", "Popular in Architecture".
+   130→- `GET /api/search/projects?q=&category=&skill=&sort=recent|saved&cursor=` → `{ items: ProjectCard[], nextCursor }` (PUBLIC+PUBLISHED only)
+   131→- `GET /api/search/profiles?q=&profession=&skill=&cursor=` → `{ items: PublicPerson[], nextCursor }` (PUBLIC profiles only)
+   132→  - `PublicPerson = { username, name, headline, avatarUrl, location, professions, skills, stats: { followers, projects } }`
+   133→
+   134→### Saves & collections
+   135→- `POST /api/projects/:id/save` / `DELETE /api/projects/:id/save` → `{ saved: boolean }` (auth; creates notification for owner)
+   136→- `GET /api/me/saves` → `{ projects: ProjectCard[] }`
+   137→- `GET /api/me/collections` → `{ collections: [{ id, name, description, isPublic, items: ProjectCard[] }] }`
+   138→- `POST /api/me/collections` `{ name, description?, isPublic? }` → `{ collection }`
+   139→- `PATCH /api/collections/:id` / `DELETE /api/collections/:id` → owner only
+   140→- `POST /api/collections/:id/items` `{ projectId }` / `DELETE /api/collections/:id/items?projectId=` → `{ ok: true }`
+   141→
+   142→### Follows & social graph
+   143→- `POST /api/profiles/:username/follow` / `DELETE ...` → `{ following: boolean }` (auth; no self-follow; block-aware; notification)
+   144→- `GET /api/me/following` / `GET /api/me/followers` → `{ people: PublicPerson[] }`
+   145→
+   146→### Inquiries & notifications
+   147→- `POST /api/inquiries` `{ recipientUsername | projectId, type: INQUIRY|COLLABORATION|INVITE, subject, message }` → `{ inquiry }` (auth; blocked → 403; rate-limited 10/hour; notification)
+   148→- `GET /api/me/inquiries` → `{ incoming: InquiryDTO[], outgoing: InquiryDTO[] }` (`InquiryDTO = { id, type, subject, message, status, createdAt, project?: { id, title }, counterparty: PublicPerson }`)
+   149→- `PATCH /api/inquiries/:id` `{ status: ACCEPTED|DECLINED }` → recipient only → `{ inquiry }` (notification to sender)
+   150→- `GET /api/me/notifications` → `{ notifications: [{ id, type, payload (parsed object: e.g. { actor, projectTitle }), readAt, createdAt }], unreadCount }`
+   151→- `POST /api/me/notifications/read` `{ ids?: string[] }` (omit = all) → `{ ok: true }`
+   152→
+   153→### Trust & safety
+   154→- `GET /api/me/blocks` → `{ blocks: PublicPerson[] }`; `POST /api/me/blocks` `{ username }`; `DELETE /api/me/blocks?username=` → `{ ok: true }`
+   155→- `POST /api/reports` `{ targetType: PROJECT|PROFILE, targetId, reason, details? }` → `{ ok: true }`
+   156→- `GET /api/me/privacy` → `{ profileVisibility, aiConsent }`
+   157→- `PATCH /api/me/privacy` `{ profileVisibility?, aiConsent? }` → `{ profileVisibility, aiConsent }` (audit-logged)
+   158→- `POST /api/me/export` → `{ job: { id, status } }` (creates ExportJob, synchronously fills payload JSON of user's own data)
+   159→- `GET /api/me/export/:jobId` → `{ job }`; when READY, `payload` contains full data export JSON (owner only)
+   160→- `POST /api/me/deletion` `{ reason? }` → creates DeletionRequest + immediately soft-deletes account (anonymize email/name, `deletedAt=now`, revoke sessions) → `{ ok: true }`
+   161→- `GET /api/me/audit` → `{ events: [{ action, targetType, targetId, createdAt }] }`
+   162→
+   163→### Insights (owner-only, labelled "estimated")
+   164→- `GET /api/me/insights/overview` → `{ totals: { profileViews, projectViews, saves, followers }, series14d: [{ day, views }], topProjects: [{ id, title, views, saves }] }`
+   165→- `GET /api/me/insights/projects` → `{ projects: [{ id, title, views, saves, views14d }] }`
+   166→
+   167→### BEAN Intelligence (AI)
+   168→- `GET /api/ai/capabilities` → `{ available: boolean, features: [{ id, label, description }], dailyLimit: number, usedToday: number, consentRequired: boolean }`
+   169→- All AI features require: auth + `aiConsent=true` (else 403 `{ error: 'AI is not enabled for your account. Enable it in Settings.' }`) + usage limit (default 30/day) + rate limit.
+   170→- `POST /api/ai/improve` `{ field: 'description'|'summary'|'bio'|'process'|'outcome', content, projectContext? }` → `{ text }` (LLM rewrite; never auto-saves)
+   171→- `POST /api/ai/suggest` `{ projectId? , title?, description? }` → `{ summary?, skills?: string[], category?: string }` (JSON-validated LLM output)
+   172→- `POST /api/ai/chat` `{ conversationId?, message }` → `{ conversationId, reply }`. Context: ONLY the user's own profile + projects they own (never other users' private data). Persist AiConversation/AiMessage.
+   173→- `GET /api/ai/conversations` → `{ conversations: [{ id, title, updatedAt }] }`
+   174→- `GET /api/ai/conversations/:id` → `{ conversation: { id, title, messages: [{ role, content, createdAt }] } }` (owner only)
+   175→- LLM calls: `aiComplete(system, messages)` in `@/lib/ai` (z-ai-web-dev-sdk, thinking disabled, timeout 60s, returns `{ text }` or throws with safe message). Log every call to AiUsage.
+   176→
+   177→### System
+   178→- `GET /api/health` → `{ ok: true, service: 'bean-folio', time }`
+   179→
+   180→---
+   181→
+   182→## FILE OWNERSHIP MATRIX (agents: ONLY touch files in your row)
+   183→
+   184→| Task | Owner files |
+   185→|------|-------------|
+   186→| 1 orchestrator | prisma/schema.prisma, src/lib/{db,auth,api-helpers,ai,media}.ts, src/lib/client.ts, src/lib/hash-router.ts, src/lib/session.tsx, src/app/{layout,page}.tsx, src/app/globals.css, src/components/bean/*, src/views/_stubs, scripts/seed.ts |
+   187→| 3-a | src/app/api/{auth/*, me/onboarding, me/profile, profiles/[username], profiles/[username]/follow, professions, skills, media/upload, media/[id]/raw, media/[id], health} |
+   188→| 3-b | src/app/api/{projects/**, discover, search/**, me/saves, me/collections, collections/[id], collections/[id]/items} |
+   189→| 3-c | src/app/api/{me/inquiries, inquiries/[id], me/notifications, me/notifications/read, me/blocks, reports, me/privacy, me/export**, me/deletion, me/audit, me/insights/**, ai/**, me/following, me/followers} |
+   190→| 4-a | src/views/{AuthView,OnboardingView,DiscoverView,ExploreView}.tsx |
+   191→| 4-b | src/views/{StudioView,ProjectEditorView,ProjectDetailView,FolioView,PublicProfileView}.tsx |
+   192→| 4-c | src/views/{IntelligenceView,ConnectView,InsightsView,SettingsView,CollectionsView,StaticView}.tsx |
+   193→| 5 | README.md, docs/**, .env.example |
+   194→
+   195→Rule: if you need a shared change, note it in your worklog section instead of editing shared files.
+   196→
+   197→---
+   198→
+   199→---
+   200→Task ID: 1-2 (audit + foundation)
+   201→Agent: orchestrator (Z.ai Code)
+   202→Task: Repository audit, architecture decision, worklog/API contract, full foundation build.
+   203→
+   204→Work Log:
+   205→- Audited repo: fresh Next.js 16.1.3 scaffold, full shadcn/ui set, Prisma 6+SQLite, z-ai-web-dev-sdk 0.0.18, no product code. Constraints verified (single port 3000, single visible page route, SQLite only, no external service credentials).
+   206→- Wrote this worklog with the authoritative API contract + file ownership matrix.
+   207→- prisma/schema.prisma: full domain model (24 models: User, Session, Profession, ProfileProfession, Skill, ProfileSkill, MediaAsset, Project, ProjectSkill, ProjectMedia, Contributor, SavedProject, Collection, CollectionItem, Follow, Inquiry, Notification, Block, Report, ProjectView, ProfileView, AiConversation, AiMessage, AiUsage, AuditEvent, ExportJob, DeletionRequest). Pushed with `bun run db:push` — DB in sync, client generated.
+   208→- src/app/globals.css: BEAN Folio design tokens (obsidian #090A0C default dark, porcelain light theme, champagne gold #E8BC51 primary, graphite cards, custom scrollbars, reduced-motion support, .font-display editorial serif, restrained .glass-surface).
+   209→- src/app/layout.tsx: brand metadata, Geist + Fraunces fonts, sonner Toaster, pre-paint theme script.
+   210→- Server libs: src/lib/auth.ts (scrypt passwords, hashed session tokens, 30d cookies, getSessionUser, buildPublicMe/getUserWithTaxonomy), src/lib/api-helpers.ts (ok/err/ERR, parseBody+zod, rateLimit, resolveViewerKey + utcDay for view dedup, handler wrapper, USERNAME_RE), src/lib/media.ts (magic-byte sniffing, size rules, uploads/ storage, imageDimensions), src/lib/ai.ts (z-ai gateway: aiComplete with 60s timeout + safe errors, aiCapabilities, parseJsonFromText), src/lib/serialize.ts (toProjectCard/toFullProject/toPublicPerson + prisma includes).
+   211→- Client libs: src/lib/types.ts (all DTOs), src/lib/client.ts (api(), ApiError, uploadFile with XHR progress), src/lib/hash-router.ts (navigate/useHashRoute), src/lib/session.tsx (SessionProvider/useSession).
+   212→- Shared components in src/components/bean/: Wordmark, EmptyState, Spinner+CardsSkeleton, MediaThumb, ProjectCard (with CATEGORY_LABELS + categoryLabel/categoryFromLabel + PROJECT_CATEGORIES), PersonCard, FollowButton, TagInput, MediaUploadButton, SectionHeader+StatCard.
+   213→- src/app/page.tsx: full SPA shell — ThemeProvider+SessionProvider, hash router with 15 routes, RequireAuth gating, OnboardingGate redirect, desktop nav + mobile bottom nav, notifications bell, user menu, theme toggle, sticky footer. All view stubs created in src/views/.
+   214→- `bun run lint` passes clean. `GET /` 200, `GET /api` health 200 verified against the running dev server.
+   215→
+   216→Stage Summary:
+   217→- Foundation complete: schema pushed, design tokens live, shell renders, shared libs + components ready for agents.
+   218→- IMPORTANT for agents: use `@/lib/auth` `getSessionUser`, `@/lib/api-helpers` ok/err/parseBody/rateLimit/resolveViewerKey/utcDay, `@/lib/serialize` builders, `@/lib/ai` aiComplete. Do NOT re-create these.
+   219→- Next.js 16: route params are Promises (`await params`); `cookies()` is async.
+   220→- View stubs exist at src/views/*.tsx — frontend agents overwrite their OWN files with full implementations.
+   221→
+   222→---
+   223→Task ID: 3-a
+   224→Agent: Z.ai Code (backend core API agent)
+   225→Task: Implement auth, onboarding/profile, public profile, follow, taxonomy, media, and health API routes per the v1 contract.
+   226→
+   227→Work Log:
+   228→- Read worklog.md (audit, conventions, contract), prisma/schema.prisma, and shared libs (auth, api-helpers, media, serialize, types). Imported shared helpers only — nothing re-created.
+   229→- Created 14 route files under src/app/api/** (register, login, logout, me, me/onboarding, me/profile, profiles/[username], profiles/[username]/follow, professions, skills, media/upload, media/[id]/raw, media/[id], health). All handlers wrapped with `handler()`, zod-validated inputs via `parseBody`, rate limits on all four auth endpoints (`auth:<ip>` 10/min) and media upload (`media:<uid>` 30/hour).
+   230→- Onboarding + profile PATCH share the same taxonomy logic (duplicated as module-local helpers since shared lib edits are out of scope): professions validated against the Profession table (unknown slug → 400); skills resolved by slug OR label, new ones created with slugified labels (max 20, deduped, P2002-safe on races). Username regex via USERNAME_RE (400), uniqueness (409), links full-replaced inside a $transaction.
+   231→- PATCH /api/me/profile: partial + nullable fields; contactEmail/websiteUrl validated (http(s) regex, max 300); avatarMediaId/coverMediaId verified to exist AND belong to the caller (else 400); professions/skills full replace; returns rebuilt PublicMe.
+   232→- Public profile GET: deletedAt/PRIVATE → 404 unless isSelf; isFollowing/isSelf; PUBLISHED projects (PUBLIC, +UNLISTED for self) via projectCardInclude/toProjectCard, take 50; collections (public, or all for self) with PUBLISHED+PUBLIC items; stats include published count. ProfileView recorded (not for self) with `resolveViewerKey(req, res, viewerId)` + `utcDay()` upsert after building the response so the anon cookie is set; view recording never fails the request.
+   233→- Follow POST/DELETE: auth, 404 unknown user, self-follow 400, Block in either direction → 403 'Not allowed', idempotent upsert/delete, FOLLOW notification created only on first follow.
+   234→- Media: upload via formData + saveUpload (UploadError → 400 with safe message); raw GET authorization ladder (owner → avatar/cover of live account → attached project PUBLIC/UNLISTED or project-owner → else 403); missing blob marks the asset FAILED and 404s; served via NextResponse with Content-Type/Length + `private, max-age=3600`; metadata GET + DELETE are owner-only (delete removes file then row).
+   235→- professions/skills GET: seed-on-read with the curated 18/40-row lists (createMany wrapped in catch for idempotency), ordered by profession.order / skill.label.
+   236→- Found + fixed a TS-strict pitfall in the documented parseBody convention: `if ("response" in r) return r.response` does NOT narrow because the success member declares `response?: undefined` (optional prop still matches the `in` check) → handler return type becomes `NextResponse | undefined`. Used `if (r.response !== undefined) return r.response;` instead (identical runtime semantics). Other agents using parseBody will hit the same tsc error.
+   237→- Verification: `bun run lint` clean; `bunx tsc --noEmit` shows zero errors in my files (remaining tsc errors are in other agents' files + scaffold/examples). Live curl smoke tests against the running dev server all passed (status codes noted in my report): register 200/409-dup/400-weak, login 200/401, me 200 (+anon user:null), onboarding 200/400 username/400 profession/409 taken, profile GET stats 200, PATCH 200/400 bad URL/400 foreign media, professions+skills seeded, public profile 200 + isFollowing/isSelf/404/PRIVATE-hidden-to-others, follow 200/400 self/404/401, media upload 200/401/400-bad-type, raw owner 200/anon 403/avatar-allowed 200/404-after-delete, metadata owner 200/other 404/anon 401, logout 200 + session cleared, rate-limit burst → 429 on 11th call. Test users + temp files cleaned from the DB afterward.
+   238→
+   239→Stage Summary:
+   240→- All 3-a endpoints implemented and live: POST /api/auth/{register,login,logout}, GET /api/auth/me, POST /api/me/onboarding, GET+PATCH /api/me/profile, GET /api/profiles/:username, POST+DELETE /api/profiles/:username/follow, GET /api/professions, GET /api/skills, POST /api/media/upload, GET /api/media/:id/raw, GET+DELETE /api/media/:id, GET /api/health.
+   241→- NOTE FOR ORCHESTRATOR (shared-lib observation, not changed by me): the documented `if ('response' in r) return r.response` pattern for parseBody fails TS-strict compilation (yields `NextResponse | undefined` returns). My routes use the equivalent `if (r.response !== undefined) return r.response;`. Other 3-x agents may need the same pattern; a docs/CONVENTIONS tweak is worth considering.
+   242→- NOTE: onboarding/PATCH reject unknown profession slugs with 400 'One or more professions are not recognized' — frontend should fetch /api/professions first (it self-seeds on first GET). Skills are free-form (labels or slugs, auto-created).
+   243→- Public profile exposes skills as labels (consistent with toPublicPerson/ProjectCard); self endpoints (PublicMe) use slugs per contract/buildPublicMe. Frontend should treat profile-page skill tags as display strings.
+   244→- Rate limits: auth endpoints 10 req/min per IP (shared bucket) — includes GET /api/auth/me, so the SPA should avoid hammering session refresh; media upload 30/hour per user.
+   245→
+   246→---
+   247→Task ID: 3-c
+   248→Agent: 3-c backend agent (Z.ai Code)
+   249→Task: Backend API routes — inquiries, notifications, blocks, reports, privacy, export, deletion, audit, insights, following/followers, BEAN Intelligence (AI).
+   250→
+   251→Work Log:
+   252→- Read worklog.md (audit, conventions, contract), prisma/schema.prisma, and shared libs (auth, api-helpers, serialize, ai, types). Did not re-create any shared helper.
+   253→- Implemented all 22 owned route files under src/app/api/** (inquiries POST/GET/PATCH, notifications GET/read, blocks GET/POST/DELETE, reports POST, privacy GET/PATCH, export POST + [jobId] GET, deletion POST, audit GET, insights overview/projects GET, following/followers GET, ai capabilities/improve/suggest/chat/conversations/[id]).
+   254→- Inquiries: rate 10/h per sender; recipient from username OR project owner; missing/deleted → 404; self → 400; block in either direction → 403 'Not allowed'; INQUIRY + INQUIRY_RESPONSE notifications exactly per contract; InquiryDTO counterparty = other party (PublicPerson with taxonomy, zero stats).
+   255→- Governance: blocks idempotent upsert + follow severing both directions; reports rate-limited 10/h with target existence checks (soft-deleted profile → 404) + audit report.create; privacy PATCH audits privacy.update with changed-field meta; export builds full synchronous JSON (account minus passwordHash, taxonomy, full projects, collections, saves, follows, inquiries, notifications, AI conversations) into ExportJob READY (+ FAILED fallback), audit data.export; deletion creates DeletionRequest then immediately soft-deletes (anonymized email/name, username+profile fields nulled), revokes all sessions, audits account.deleted; audit GET never returns meta.
+   256→- Insights: 100% real dedup-table data — totals (profileViews/projectViews/saves/followers), 14-UTC-day series incl. zero days grouped from ProjectView.day via utcDay(), topProjects by view count; projects endpoint adds views14d (groupBy projectId). No invented numbers.
+   257→- AI: shared per-file gate (consent 403 → rateLimit 6/min → 30/day AiUsage count 429); improve/suggest/chat call aiComplete, catch AiProviderError → 502 with safe message; suggest validates JSON loosely and coerces category against the 18 profession slugs (unknown → null); chat grounds ONLY in the user's own profile + latest 10 own projects (any visibility), keeps last-10 history, persists USER/ASSISTANT rows and touches conversation updatedAt; conversations GETs are consent-gated but do NOT consume quota (see decisions).
+   258→- Fixed Next16/zod/prisma typing issues in MY files: `if (r.response) return r.response` (the documented `'response' in r` check doesn't narrow), local exportProjectInclude overriding invalid shared include (see below).
+   259→- Verified: bun run lint clean; tsc --noEmit has ZERO errors in 3-c files; live curl E2E — anonymous 401 sweep (15 endpoints), full inquiry→accept→notify→read flow, block→403→unblock, reports valid/404, privacy GET/PATCH, audit shape, export READY + owner-only 404, insights real zeros + 14-day series, following/followers, REAL LLM chat (2 turns w/ history), improve, suggest (category: photography), usedToday counter increments, consent gate 403, deletion → DB row anonymized → session revoked (auth/me null, endpoints 401). Test users cleaned from DB afterwards. No errors from my routes in dev.log.
+   260→
+   261→Stage Summary:
+   262→- All 22 endpoints of task 3-c implemented, lint-clean, and E2E-verified against the running dev server with real data (incl. 6 real LLM calls through z-ai gateway).
+   263→- ATTENTION ORCHESTRATOR (shared-file issues, I did not touch them):
+   264→  1. src/lib/serialize.ts `fullProjectInclude.contributors = { orderBy: { createdAt: 'asc' } }` is INVALID — Contributor has no createdAt column → runtime Prisma validation error + TS2322 for anyone passing fullProjectInclude to Prisma. Fix: `contributors: true`. Affects 3-b's project detail route too.
+   265→  2. CONVENTIONS' parseBody check `if ('response' in r)` doesn't type-narrow (both union members declare `response`); use `if (r.response) return r.response` or make the union discriminated in api-helpers.ts. 3-a's files show the same TS2322.
+   266→- Decisions: AI conversations list/detail are consent-gated but skip AiUsage/daily-quota (reading history must not burn LLM quota); DeletionRequest is marked COMPLETED after the soft delete (created PENDING per contract); rate limits as contracted (inquiries 10/h, reports 10/h, AI 6/min + 30/day); maxDuration=60 on LLM/export routes.
+   267→- Record also written to agent-ctx/3-c-backend-api.md.
+   268→
+   269→---
+   270→Task ID: 3-b-relaunch-note (orchestrator)
+   271→Agent: orchestrator (Z.ai Code)
+   272→
+   273→Work Log:
+   274→- Task 3-b's first subagent run failed (empty response) BEFORE creating any files — no /api/projects, /api/discover, /api/search, /api/me/saves, /api/me/collections exist yet. Relaunching.
+   275→- Fixed shared lib per agents' findings: serialize.ts fullProjectInclude.contributors is now `true` (Contributor has no createdAt column).
+   276→- CONVENTIONS CORRECTION for all agents: after `const r = await parseBody(req, schema)` use `if (r.response) return r.response;` (the `'response' in r` check does not narrow under TS-strict).
+   277→---
+   278→Task ID: 3-b (relaunch)
+   279→Agent: 3-b projects/discovery backend agent (Z.ai Code)
+   280→Task: Project CRUD + publish/view/save, discover feed, project/profile search, saves, collections API routes.
+   281→
+   282→Work Log:
+   283→- Read worklog.md (contract + conventions + 3-a/3-c entries), prisma/schema.prisma, and shared libs (auth, api-helpers, serialize, types). Imported shared helpers only — nothing re-created.
+   284→- Created all 13 owned route files (none existed before this relaunch): projects (GET own list + POST create), projects/[id] (GET + PATCH + DELETE), projects/[id]/{publish,unpublish,view,save}, discover, search/{projects,profiles}, me/saves, me/collections (GET+POST), collections/[id] (PATCH+DELETE), collections/[id]/items (POST+DELETE).
+   285→- POST /api/projects: auth + rateLimit 20/h/user; zod per contract (title 1..140, summary 200, description 20000, brief/process/challenges/outcome 6000 each, role 120, urls 300, tools ≤15×40 stored JSON.stringify in `tools` column, skills ≤15 resolved/created by slug OR label with slugify + P2002-safe create (module-local duplicate of onboarding's resolver, capped at 15), media ≤30 deduped by mediaId with order=index, contributors ≤20); category validated against Profession.slug (unknown → 400); coverMediaId + every media item verified owned by caller (else 400); project + ProjectSkill/ProjectMedia/Contributor rows created inside one db.$transaction; returns { project: toFullProject } via fullProjectInclude.
+   286→- GET /api/projects: owner scope, all visibilities, ?status=DRAFT|PUBLISHED (invalid → 400), updatedAt desc, take 100, toProjectCard.
+   287→- GET /api/projects/[id]: fullProjectInclude + separate owner query (professions/skills + _count {followsReceived, projects(PUBLISHED-filtered)}) serialized via toPublicPerson({…owner, _count:{followers:…,projects:…}}); PRIVATE→404 unless owner; response built first (res = ok({...})), then resolveViewerKey + projectView.upsert(…).catch(()=>{}) when PUBLISHED and viewer ≠ owner. isSaved for signed-in; canEdit=isOwner.
+   288→- PATCH: owner-only (403 non-owner), same zod partial; '' clears nullable text/category/cover; arrays replace wholesale — skills deleteMany+createMany (resolved pre-transaction), media deleteMany+createMany with ownership re-verification, contributors deleteMany+createMany — all inside one transaction; status is NOT patchable (publish/unpublish own that).
+   289→- publish: owner-only; requires trimmed title non-empty AND (coverMediaId OR _count.media ≥ 1) else exact 400 'Add a cover or at least one media item before publishing'; sets PUBLISHED; publishedAt only if null. unpublish → DRAFT.
+   290→- view POST: visibility-aware (PRIVATE → 404 for non-owners), dedup upsert skipped for owner/drafts, always { ok: true }.
+   291→- save POST/DELETE: PUBLISHED + PUBLIC/UNLISTED + live owner required (else 404); own project → 400; notification to owner with payload {actor, actorUsername, projectTitle} only on FIRST save (re-save idempotent, no duplicate notify); DELETE deleteMany → { saved: false }.
+   292→- discover: candidates PUBLISHED+PUBLIC+owner.live(+category, +block-filter ownerId notIn) take 60 publishedAt desc; score = exp(-days/14) * (1 + 0.5*log1p(saves) + 0.3*log1p(views)) + 0.8 categoryBoost (signed-in viewer profession slugs ∩ project.category) + 0.5 newCreator (groupBy owner counts on candidate set, _count._all === 1, PUBLISHED only) + deterministic FNV-1a jitter 0..0.05; sorted desc with publishedAt/id tiebreaks; offset cursor pagination (limit 1..24 default 12); reason priority: 'New on BEAN Folio' → 'Popular in <Label>' (engagement > 1.4, category label resolved from the real Profession table, skipped when category null) → 'Matches your profession: <Label>' → undefined. All counts real (from projectCardInclude _count).
+   293→- search/projects: PUBLISHED+PUBLIC+live owner + block filter (viewer's Block rows both directions → ownerId notIn); q ≤ 80 (400 over) OR-contains title/summary/description (SQLite ASCII case-insensitive); skill = slug OR label exact via skills.some; sort recent→publishedAt desc, saved→savedBy._count desc (+publishedAt tiebreak); skip/take 13 → nextCursor offset string.
+   294→- search/profiles: username NOT null, profileVisibility PUBLIC, deletedAt null, self excluded (signed-in), block filter; q contains name/username/headline/bio; profession slug some-filter; skill slug OR label; orderBy followsReceived _count desc then username; serialized via toPublicPerson with _count remapped {followers: followsReceived, projects: PUBLISHED-filtered count}.
+   295→- me/saves: SavedProject createdAt desc take 100; skips visibility PRIVATE + deleted-owner rows defensively (owner select extended with deletedAt).
+   296→- me/collections GET: items filtered at query level (project.visibility ≠ PRIVATE, owner.live), addedAt asc → { id, name, description, isPublic, items: ProjectCard[] }; POST zod name 1..80/description 300/isPublic → collection with items: [].
+   297→- collections/[id] PATCH/DELETE + items POST/DELETE: owner-only enforced as 404 (per task spec — foreign/missing collections are indistinguishable); items POST requires PUBLISHED + not PRIVATE (404 missing, 400 otherwise) → collectionItem upsert; items DELETE ?projectId= (missing → 400) → deleteMany → { ok: true }.
+   298→- Verification: bun run lint clean; bunx tsc --noEmit → ZERO errors in my 13 files (remaining pre-existing errors: src/app/page.tsx ×7 — orchestrator shell + view stubs; examples/skills scaffold). Live curl E2E against dev server: full matrix of happy paths + 401/400/403/404s, publish gate exact message, foreign-media 400s, republish keeps publishedAt, view dedup verified via 3-c insights totals (3 distinct viewer keys, repeats not counted, owner views never counted), discover reasons observed ('New on BEAN Folio', 'Popular in Photography', 'Matches your profession: Photography'), sort=saved ordering, block filter excludes blocked party from discover/search as viewer, UNLISTED saveable/readable-by-link, PRIVATE hidden everywhere, collection PATCH (empty description → null) + item add/remove. Test data fully cleaned: projects/collections/media deleted via API, both temp users soft-deleted via /api/me/deletion (sessions revoked, auth/me null), 3 SAVE notifications left on the anonymized users removed via Prisma. No errors from my routes in dev.log.
+   299→
+   300→Stage Summary:
+   301→- All 13 endpoints of task 3-b implemented, lint-clean, type-clean, and E2E-verified live. DB left with zero project/save/collection/view rows and no test users.
+   302→- DECISIONS ORCHESTRATOR SHOULD KNOW:
+   303→  1. Draft guard: GET /api/projects/[id] additionally 404s non-published (DRAFT) projects for non-owners (task text specified visibility-only checks; a PUBLIC-visibility draft would otherwise leak to anyone with the id). Owner access unaffected. POST view mirrors it.
+   304→  2. Non-owner PATCH/DELETE/publish/unpublish → 403 'Not allowed' (resource exists, action denied); collections/[id]* → 404 per explicit task spec. GET keeps the 404 privacy ladder.
+   305→  3. Module-local helpers (optText/slugify/resolveSkillIds/dedupeMedia) are intentionally duplicated across projects/route.ts and projects/[id]/route.ts to respect the "only these files" boundary — same precedent as 3-a. If a shared home is ever wanted, a src/lib/projects-input.ts could absorb them.
+   306→  4. toPublicPerson project counts use PUBLISHED-filtered _count (draft counts never leak); save notifications fire only on first save; owner card label map for 'Popular in' comes from the live Profession table, not a hardcoded map.
+   307→  5. parseBody pattern used: `if (r.response) return r.response;` per the corrected convention.
+   308→- SHARED-FILE OBSERVATION (not touched by me): src/lib/serialize.ts line 113 has a pre-existing TS2339 — PersonInput declares `skills?: { skill: { slug: string } }[]` but toPublicPerson maps `s.skill.label`. All callers (3-a/3-c/3-b) pass full Skill rows, so widening the type to `{ skill: { slug: string; label: string } }[]` (or `label?: string` + fallback to slug) fixes it. Left as-is per ownership rules; worth fixing before any `tsc`-gated build.
+   309→

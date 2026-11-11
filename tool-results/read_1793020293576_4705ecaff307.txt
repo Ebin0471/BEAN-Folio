@@ -1,0 +1,725 @@
+     1→/**
+     2→ * BEAN Folio — Website Builder configuration schema (v2).
+     3→ *
+     4→ * Single source of truth shared by the client (WebsiteBuilderView,
+     5→ * SiteRenderer, Code Giftz design panel) and the server (/api/me/site, /api/ai/design).
+     6→ * Every persisted config — user edits and AI proposals alike — must pass
+     7→ * `siteConfigSchema` before it is stored or rendered.
+     8→ *
+     9→ * v2 additions (all backward compatible — legacy v1 JSON parses and is
+    10→ * migrated by `normalizeConfig`):
+    11→ *  - rich design tokens (surface/border/muted colors, heading+body fonts,
+    12→ *    type scale, line height, tracking, weights, layout width, columns,
+    13→ *    buttons, links, image ratios, dividers, page transitions)
+    14→ *  - a `motion` system (config-driven animation presets)
+    15→ *  - multi-page sites via the optional `pages` array
+    16→ *  - new section types: services, experience, gallery, testimonials
+    17→ *  - a curated design-preset library (tokens only) and a profession
+    18→ *    template registry
+    19→ */
+    20→import { z } from "zod";
+    21→
+    22→// ------------------------------------------------------------------ helpers
+    23→
+    24→const CSS_COLOR = z.string().regex(/^#[0-9a-fA-F]{3,8}$|^[a-z]+$/i).max(32);
+    25→
+    26→/** Mix two hex colors. t=0 → a, t=1 → b. Non-hex inputs return b. */
+    27→export function mixHex(a: string, b: string, t: number): string {
+    28→  const parse = (c: string): [number, number, number] | null => {
+    29→    const m = /^#([0-9a-fA-F]{6})$/.exec(c.trim());
+    30→    if (!m) return null;
+    31→    const n = parseInt(m[1], 16);
+    32→    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+    33→  };
+    34→  const pa = parse(a);
+    35→  const pb = parse(b);
+    36→  if (!pa || !pb) return /^#[0-9a-fA-F]{3,8}$/.test(b) ? b : "#888888";
+    37→  const ch = (i: number) => Math.round(pa[i] + (pb[i] - pa[i]) * t);
+    38→  const hex = (n: number) => n.toString(16).padStart(2, "0");
+    39→  return `#${hex(ch(0))}${hex(ch(1))}${hex(ch(2))}`;
+    40→}
+    41→
+    42→/** Schema input shape — defaults optional (used by template/preset authors). */
+    43→type ThemeInput = z.input<typeof themeSchema>;
+    44→
+    45→/** A theme after derivation: every token is a concrete string. */
+    46→export interface ResolvedTheme extends Omit<SiteTheme, "surface" | "border" | "muted" | "headingFont" | "bodyFont"> {
+    47→  surface: string;
+    48→  border: string;
+    49→  muted: string;
+    50→  headingFont: SiteFontChoice;
+    51→  bodyFont: SiteFontChoice;
+    52→}
+    53→
+    54→/** Derived defaults for tokens a legacy/v1 config does not carry. */
+    55→export function deriveTheme(theme: ThemeInput): ResolvedTheme {
+    56→  const base = themeSchema.parse(theme);
+    57→  return {
+    58→    ...base,
+    59→    surface: base.surface ?? mixHex(base.background, base.foreground, 0.06),
+    60→    border: base.border ?? mixHex(base.background, base.foreground, 0.18),
+    61→    muted: base.muted ?? mixHex(base.foreground, base.background, 0.42),
+    62→    headingFont: base.headingFont ?? base.font,
+    63→    bodyFont: base.bodyFont ?? base.font,
+    64→  };
+    65→}
+    66→
+    67→// ------------------------------------------------------------------ sections
+    68→
+    69→export const SECTION_TYPES = [
+    70→  "hero", "about", "projects", "skills", "stats", "collections", "contact",
+    71→  "services", "experience", "gallery", "testimonials",
+    72→] as const;
+    73→export type SiteSectionType = (typeof SECTION_TYPES)[number];
+    74→
+    75→export const HERO_VARIANTS = ["classic", "centered", "split", "cover"] as const;
+    76→export type HeroVariant = (typeof HERO_VARIANTS)[number];
+    77→
+    78→export const sectionBaseSchema = z.object({
+    79→  id: z.string().min(1).max(64),
+    80→  type: z.enum(SECTION_TYPES),
+    81→  visible: z.boolean().default(true),
+    82→  title: z.string().min(1).max(120),
+    83→});
+    84→
+    85→export const heroSectionSchema = sectionBaseSchema.extend({
+    86→  type: z.literal("hero"),
+    87→  subtitle: z.string().max(280).default(""),
+    88→  variant: z.enum(HERO_VARIANTS).default("classic"),
+    89→  /** Optional call-to-action button label; empty = no button. */
+    90→  ctaLabel: z.string().max(40).default(""),
+    91→});
+    92→
+    93→export const aboutSectionSchema = sectionBaseSchema.extend({
+    94→  type: z.literal("about"),
+    95→  body: z.string().max(4000).default(""),
+    96→});
+    97→
+    98→export const projectsSectionSchema = sectionBaseSchema.extend({
+    99→  type: z.literal("projects"),
+   100→  limit: z.number().int().min(1).max(24).default(6),
+   101→  layout: z.enum(["grid", "featured", "list", "editorial"]).default("grid"),
+   102→  /** Optional category slug filter (e.g. "writing-journalism"). */
+   103→  category: z.string().max(40).default(""),
+   104→});
+   105→
+   106→export const skillsSectionSchema = sectionBaseSchema.extend({
+   107→  type: z.literal("skills"),
+   108→});
+   109→
+   110→export const statsSectionSchema = sectionBaseSchema.extend({
+   111→  type: z.literal("stats"),
+   112→});
+   113→
+   114→export const collectionsSectionSchema = sectionBaseSchema.extend({
+   115→  type: z.literal("collections"),
+   116→  limit: z.number().int().min(1).max(12).default(3),
+   117→});
+   118→
+   119→export const contactSectionSchema = sectionBaseSchema.extend({
+   120→  type: z.literal("contact"),
+   121→  body: z.string().max(1200).default(""),
+   122→});
+   123→
+   124→export const servicesSectionSchema = sectionBaseSchema.extend({
+   125→  type: z.literal("services"),
+   126→  layout: z.enum(["cards", "rows"]).default("cards"),
+   127→  items: z
+   128→    .array(
+   129→      z.object({
+   130→        title: z.string().min(1).max(80),
+   131→        description: z.string().max(300).default(""),
+   132→      })
+   133→    )
+   134→    .max(8)
+   135→    .default([]),
+   136→});
+   137→
+   138→export const experienceSectionSchema = sectionBaseSchema.extend({
+   139→  type: z.literal("experience"),
+   140→  layout: z.enum(["timeline", "rows"]).default("timeline"),
+   141→  entries: z
+   142→    .array(
+   143→      z.object({
+   144→        role: z.string().min(1).max(80),
+   145→        org: z.string().max(80).default(""),
+   146→        period: z.string().max(40).default(""),
+   147→        description: z.string().max(400).default(""),
+   148→      })
+   149→    )
+   150→    .max(10)
+   151→    .default([]),
+   152→});
+   153→
+   154→export const gallerySectionSchema = sectionBaseSchema.extend({
+   155→  type: z.literal("gallery"),
+   156→  source: z.enum(["projects", "collections"]).default("projects"),
+   157→  limit: z.number().int().min(1).max(24).default(9),
+   158→  layout: z.enum(["masonry", "grid", "strip"]).default("masonry"),
+   159→});
+   160→
+   161→export const testimonialsSectionSchema = sectionBaseSchema.extend({
+   162→  type: z.literal("testimonials"),
+   163→  layout: z.enum(["cards", "stack"]).default("cards"),
+   164→  items: z
+   165→    .array(
+   166→      z.object({
+   167→        quote: z.string().min(1).max(500),
+   168→        name: z.string().min(1).max(80),
+   169→        role: z.string().max(80).default(""),
+   170→      })
+   171→    )
+   172→    .max(8)
+   173→    .default([]),
+   174→});
+   175→
+   176→export const siteSectionSchema = z.discriminatedUnion("type", [
+   177→  heroSectionSchema,
+   178→  aboutSectionSchema,
+   179→  projectsSectionSchema,
+   180→  skillsSectionSchema,
+   181→  statsSectionSchema,
+   182→  collectionsSectionSchema,
+   183→  contactSectionSchema,
+   184→  servicesSectionSchema,
+   185→  experienceSectionSchema,
+   186→  gallerySectionSchema,
+   187→  testimonialsSectionSchema,
+   188→]);
+   189→export type SiteSection = z.infer<typeof siteSectionSchema>;
+   190→
+   191→// ------------------------------------------------------------------ theme
+   192→
+   193→export const FONT_CHOICES = ["editorial", "clean", "mono"] as const;
+   194→export type SiteFontChoice = (typeof FONT_CHOICES)[number];
+   195→
+   196→export const themeSchema = z.object({
+   197→  /** Page background — any valid CSS color string. */
+   198→  background: CSS_COLOR,
+   199→  /** Main text color. */
+   200→  foreground: CSS_COLOR,
+   201→  /** Accent (links, highlights) — brand default is champagne gold. */
+   202→  accent: CSS_COLOR,
+   203→  /** Card / raised surface background (defaults derived from bg+fg). */
+   204→  surface: CSS_COLOR.optional(),
+   205→  /** Hairline / border color. */
+   206→  border: CSS_COLOR.optional(),
+   207→  /** Secondary (muted) text color. */
+   208→  muted: CSS_COLOR.optional(),
+   209→  /** Legacy base font (v1). Kept as the fallback for heading/body. */
+   210→  font: z.enum(FONT_CHOICES).default("editorial"),
+   211→  /** Heading typeface — controlled library: editorial serif / clean sans / mono. */
+   212→  headingFont: z.enum(FONT_CHOICES).optional(),
+   213→  /** Body typeface. */
+   214→  bodyFont: z.enum(FONT_CHOICES).optional(),
+   215→  radius: z.enum(["none", "md", "full"]).default("md"),
+   216→  density: z.enum(["compact", "regular", "relaxed"]).default("regular"),
+   217→  /** Heading size ladder. */
+   218→  typeScale: z.enum(["intimate", "balanced", "grand"]).default("balanced"),
+   219→  lineHeight: z.enum(["tight", "normal", "relaxed"]).default("normal"),
+   220→  letterSpacing: z.enum(["tight", "normal", "wide"]).default("normal"),
+   221→  headingWeight: z.enum(["light", "semibold", "bold"]).default("semibold"),
+   222→  /** Page content width. */
+   223→  contentWidth: z.enum(["narrow", "regular", "wide"]).default("regular"),
+   224→  /** Fixed project/gallery column count; 0 = responsive auto. */
+   225→  columns: z.union([z.literal(0), z.literal(2), z.literal(3)]).default(0),
+   226→  buttonStyle: z.enum(["sharp", "rounded", "pill", "outline"]).default("rounded"),
+   227→  linkStyle: z.enum(["underline", "accent", "plain"]).default("accent"),
+   228→  imageRatio: z.enum(["4/3", "3/2", "1/1", "16/9"]).default("4/3"),
+   229→  divider: z.enum(["none", "line", "accent"]).default("line"),
+   230→  /** Transition when switching pages inside the site nav. */
+   231→  pageTransition: z.enum(["none", "fade", "slide"]).default("fade"),
+   232→});
+   233→export type SiteTheme = z.infer<typeof themeSchema>;
+   234→
+   235→// ------------------------------------------------------------------ motion
+   236→
+   237→export const MOTION_PRESETS = [
+   238→  "none", "fadeUp", "blurIn", "maskReveal", "stagger", "zoom", "cinematic", "parallax",
+   239→] as const;
+   240→export type MotionPreset = (typeof MOTION_PRESETS)[number];
+   241→
+   242→export const motionSchema = z.object({
+   243→  enabled: z.boolean().default(true),
+   244→  preset: z.enum(MOTION_PRESETS).default("fadeUp"),
+   245→  /** Base animation duration in ms. */
+   246→  duration: z.number().int().min(150).max(1200).default(600),
+   247→  /** Per-item stagger in ms for grid/card entrances. */
+   248→  stagger: z.number().int().min(0).max(240).default(60),
+   249→  easing: z.enum(["smooth", "snap", "drift"]).default("smooth"),
+   250→  /** 0-100 — how far elements travel / how strong effects are. */
+   251→  intensity: z.number().int().min(0).max(100).default(50),
+   252→  /** Card image zoom + button micro-interactions on hover. */
+   253→  hoverEffects: z.boolean().default(true),
+   254→  /** Scroll-triggered section reveals. */
+   255→  scrollReveal: z.boolean().default(true),
+   256→});
+   257→export type SiteMotion = z.infer<typeof motionSchema>;
+   258→
+   259→export function defaultMotion(): SiteMotion {
+   260→  return motionSchema.parse({});
+   261→}
+   262→
+   263→// ------------------------------------------------------------------ pages
+   264→
+   265→export const sitePageSchema = z.object({
+   266→  id: z.string().min(1).max(64),
+   267→  /** Page name shown in the site navigation. */
+   268→  name: z.string().min(1).max(60),
+   269→  visible: z.boolean().default(true),
+   270→  sections: z.array(siteSectionSchema).min(1, "Every page needs at least one section").max(12),
+   271→});
+   272→export type SitePage = z.infer<typeof sitePageSchema>;
+   273→
+   274→// ------------------------------------------------------------------ config
+   275→
+   276→export const TEMPLATE_IDS = [
+   277→  // classic (v1) templates — kept so legacy configs stay valid
+   278→  "atelier", "mono", "gallery",
+   279→  // v2 profession templates
+   280→  "dev-console", "product-studio", "brand-atelier", "lens-gallery", "motion-reel",
+   281→  "illustration-desk", "architecture-index", "byline-journal", "growth-consult",
+   282→  "founder-story", "sound-room", "classroom-folio", "polymath-index",
+   283→] as const;
+   284→export type TemplateId = (typeof TEMPLATE_IDS)[number];
+   285→
+   286→const configShape = z.object({
+   287→  version: z.literal(1).default(1),
+   288→  template: z.enum(TEMPLATE_IDS),
+   289→  /** Website display name shown in the site header/hero. */
+   290→  name: z.string().min(1).max(80),
+   291→  tagline: z.string().max(160).default(""),
+   292→  /** Cover image media override (optional — falls back to profile cover). */
+   293→  coverMediaId: z.string().max(64).nullish(),
+   294→  theme: themeSchema,
+   295→  motion: motionSchema.optional(),
+   296→  /** Legacy v1 single-page sections. Migrated into `pages` on read. */
+   297→  sections: z.array(siteSectionSchema).min(1).max(12).optional(),
+   298→  pages: z.array(sitePageSchema).min(1).max(8).optional(),
+   299→});
+   300→
+   301→export const siteConfigSchema = configShape.refine(
+   302→  (c) => (c.pages && c.pages.length > 0) || (c.sections && c.sections.length > 0),
+   303→  { message: "A website needs at least one page or section" }
+   304→);
+   305→
+   306→/** Schema output shape (pre-migration). */
+   307→type RawSiteConfig = z.infer<typeof siteConfigSchema>;
+   308→
+   309→/**
+   310→ * Normalized, runtime-ready config. `pages` is always populated and is the
+   311→ * single source of truth for rendering; the legacy top-level `sections`
+   312→ * array is consumed by migration.
+   313→ */
+   314→export interface SiteConfig {
+   315→  version: 1;
+   316→  template: TemplateId;
+   317→  name: string;
+   318→  tagline: string;
+   319→  coverMediaId?: string | null;
+   320→  theme: SiteTheme;
+   321→  motion: SiteMotion;
+   322→  pages: SitePage[];
+   323→}
+   324→
+   325→/** Defensive read helper — never let a missing/legacy `sections` array crash a render. */
+   326→export function getVisibleSections(config: SiteConfig | null | undefined, pageId?: string): SiteSection[] {
+   327→  if (!config || typeof config !== "object") return [];
+   328→  const page = pageId ? config.pages.find((p) => p.id === pageId) : config.pages[0];
+   329→  const sections = page?.sections ?? config.pages[0]?.sections ?? [];
+   330→  return sections.filter((s) => s && typeof s === "object" && s.visible !== false);
+   331→}
+   332→
+   333→/** The first visible page (used when no explicit page is selected). */
+   334→export function homePage(config: SiteConfig): SitePage {
+   335→  return config.pages.find((p) => p.visible) ?? config.pages[0];
+   336→}
+   337→
+   338→// ------------------------------------------------------------------ section factory
+   339→
+   340→/** Fresh section ids so duplicated presets never share React keys. */
+   341→let uid = 0;
+   342→function sid(type: string): string {
+   343→  uid += 1;
+   344→  return `${type}-${Date.now().toString(36)}-${uid}`;
+   345→}
+   346→
+   347→export function makeSection(type: SiteSectionType): SiteSection {
+   348→  const base = { id: sid(type), visible: true };
+   349→  switch (type) {
+   350→    case "hero":
+   351→      return { ...base, type: "hero", title: "Selected work", subtitle: "", variant: "classic", ctaLabel: "" };
+   352→    case "about":
+   353→      return { ...base, type: "about", title: "About", body: "" };
+   354→    case "projects":
+   355→      return { ...base, type: "projects", title: "Projects", limit: 6, layout: "grid", category: "" };
+   356→    case "skills":
+   357→      return { ...base, type: "skills", title: "Skills & tools" };
+   358→    case "stats":
+   359→      return { ...base, type: "stats", title: "At a glance" };
+   360→    case "collections":
+   361→      return { ...base, type: "collections", title: "Collections", limit: 3 };
+   362→    case "contact":
+   363→      return { ...base, type: "contact", title: "Contact", body: "Available for commissions and collaborations." };
+   364→    case "services":
+   365→      return { ...base, type: "services", title: "Services", layout: "cards", items: [] };
+   366→    case "experience":
+   367→      return { ...base, type: "experience", title: "Experience", layout: "timeline", entries: [] };
+   368→    case "gallery":
+   369→      return { ...base, type: "gallery", title: "Gallery", source: "projects", limit: 9, layout: "masonry" };
+   370→    case "testimonials":
+   371→      return { ...base, type: "testimonials", title: "Kind words", layout: "cards", items: [] };
+   372→  }
+   373→}
+   374→
+   375→// ------------------------------------------------------------------ design presets (tokens only)
+   376→
+   377→export interface DesignPreset {
+   378→  id: string;
+   379→  label: string;
+   380→  description: string;
+   381→  theme: SiteTheme;
+   382→  motion?: Partial<SiteMotion>;
+   383→}
+   384→
+   385→export function designPresets(): DesignPreset[] {
+   386→  return [
+   387→    {
+   388→      id: "dark-luxury", label: "Dark Luxury", description: "Near-black canvas, champagne accent, grand serif headings.",
+   389→      theme: { background: "#0a0a0c", foreground: "#f5f2ea", accent: "#d4af6a", surface: "#131318", border: "#2a2a33", muted: "#a5a3a0", font: "editorial", headingFont: "editorial", bodyFont: "clean", radius: "md", density: "relaxed", typeScale: "grand", lineHeight: "normal", letterSpacing: "wide", headingWeight: "semibold", contentWidth: "regular", columns: 0, buttonStyle: "rounded", linkStyle: "accent", imageRatio: "3/2", divider: "line", pageTransition: "fade" },
+   390→      motion: { preset: "fadeUp", duration: 700, easing: "smooth", intensity: 55 },
+   391→    },
+   392→    {
+   393→      id: "editorial-minimal", label: "Editorial Minimal", description: "Paper white, mono-accent, quiet serif typography.",
+   394→      theme: { background: "#faf9f6", foreground: "#111110", accent: "#111110", surface: "#ffffff", border: "#e3e1da", muted: "#6f6d68", font: "editorial", headingFont: "editorial", bodyFont: "editorial", radius: "none", density: "regular", typeScale: "balanced", lineHeight: "relaxed", letterSpacing: "normal", headingWeight: "semibold", contentWidth: "narrow", columns: 0, buttonStyle: "sharp", linkStyle: "underline", imageRatio: "3/2", divider: "line", pageTransition: "fade" },
+   395→      motion: { preset: "blurIn", duration: 500, intensity: 35 },
+   396→    },
+   397→    {
+   398→      id: "creative-brutalist", label: "Creative Brutalist", description: "High contrast, hard edges, oversized mono headings.",
+   399→      theme: { background: "#f2f0e9", foreground: "#101010", accent: "#ff4d00", surface: "#ffffff", border: "#101010", muted: "#565550", font: "mono", headingFont: "mono", bodyFont: "clean", radius: "none", density: "compact", typeScale: "grand", lineHeight: "tight", letterSpacing: "tight", headingWeight: "bold", contentWidth: "wide", columns: 0, buttonStyle: "sharp", linkStyle: "underline", imageRatio: "4/3", divider: "accent", pageTransition: "slide" },
+   400→      motion: { preset: "fadeUp", duration: 350, easing: "snap", intensity: 30 },
+   401→    },
+   402→    {
+   403→      id: "warm-modern", label: "Warm Modern", description: "Cream canvas, terracotta accent, friendly rounded cards.",
+   404→      theme: { background: "#fbf7f0", foreground: "#33291f", accent: "#c46a3a", surface: "#ffffff", border: "#e8ded0", muted: "#8a7c6c", font: "clean", headingFont: "clean", bodyFont: "clean", radius: "md", density: "regular", typeScale: "balanced", lineHeight: "normal", letterSpacing: "normal", headingWeight: "semibold", contentWidth: "regular", columns: 0, buttonStyle: "rounded", linkStyle: "accent", imageRatio: "4/3", divider: "line", pageTransition: "fade" },
+   405→      motion: { preset: "fadeUp", duration: 500, intensity: 45 },
+   406→    },
+   407→    {
+   408→      id: "cinematic-portfolio", label: "Cinematic Portfolio", description: "Deep charcoal, widescreen imagery, slow cinematic reveals.",
+   409→      theme: { background: "#0d0f12", foreground: "#eef0f2", accent: "#e8bc51", surface: "#16191e", border: "#272b33", muted: "#9aa0a8", font: "editorial", headingFont: "editorial", bodyFont: "clean", radius: "none", density: "relaxed", typeScale: "grand", lineHeight: "normal", letterSpacing: "wide", headingWeight: "light", contentWidth: "wide", columns: 0, buttonStyle: "outline", linkStyle: "accent", imageRatio: "16/9", divider: "line", pageTransition: "fade" },
+   410→      motion: { preset: "cinematic", duration: 850, easing: "drift", intensity: 70 },
+   411→    },
+   412→    {
+   413→      id: "swiss-grid", label: "Swiss Grid", description: "Strict white grid, red accent, bold objective type.",
+   414→      theme: { background: "#ffffff", foreground: "#0a0a0a", accent: "#d92b2b", surface: "#ffffff", border: "#d9d9d9", muted: "#616161", font: "clean", headingFont: "clean", bodyFont: "clean", radius: "none", density: "compact", typeScale: "balanced", lineHeight: "tight", letterSpacing: "normal", headingWeight: "bold", contentWidth: "wide", columns: 3, buttonStyle: "sharp", linkStyle: "underline", imageRatio: "1/1", divider: "line", pageTransition: "none" },
+   415→      motion: { preset: "stagger", duration: 400, stagger: 70, easing: "snap" },
+   416→    },
+   417→    {
+   418→      id: "monochrome-studio", label: "Monochrome Studio", description: "Greys only — restrained, documentation-like calm.",
+   419→      theme: { background: "#111214", foreground: "#e8e8e8", accent: "#9ba1a6", surface: "#191b1e", border: "#2c2f33", muted: "#8b9095", font: "clean", headingFont: "clean", bodyFont: "clean", radius: "md", density: "regular", typeScale: "balanced", lineHeight: "normal", letterSpacing: "normal", headingWeight: "semibold", contentWidth: "regular", columns: 0, buttonStyle: "outline", linkStyle: "underline", imageRatio: "3/2", divider: "line", pageTransition: "fade" },
+   420→      motion: { preset: "fadeUp", duration: 500, intensity: 40 },
+   421→    },
+   422→    {
+   423→      id: "vibrant-creative", label: "Vibrant Creative", description: "Warm paper, coral accent, pill buttons, playful energy.",
+   424→      theme: { background: "#fdf6ee", foreground: "#1f1a17", accent: "#e2543e", surface: "#ffffff", border: "#f0e2d2", muted: "#7d7066", font: "clean", headingFont: "clean", bodyFont: "clean", radius: "full", density: "regular", typeScale: "balanced", lineHeight: "normal", letterSpacing: "normal", headingWeight: "bold", contentWidth: "regular", columns: 0, buttonStyle: "pill", linkStyle: "accent", imageRatio: "4/3", divider: "none", pageTransition: "slide" },
+   425→      motion: { preset: "stagger", duration: 450, stagger: 80, intensity: 60 },
+   426→    },
+   427→    {
+   428→      id: "soft-minimal", label: "Soft Minimal", description: "Off-white calm, sage accent, generous breathing room.",
+   429→      theme: { background: "#f7f8f7", foreground: "#24312a", accent: "#5e8c74", surface: "#ffffff", border: "#e2e8e4", muted: "#75827b", font: "clean", headingFont: "clean", bodyFont: "clean", radius: "md", density: "relaxed", typeScale: "intimate", lineHeight: "relaxed", letterSpacing: "normal", headingWeight: "semibold", contentWidth: "narrow", columns: 0, buttonStyle: "rounded", linkStyle: "accent", imageRatio: "3/2", divider: "none", pageTransition: "fade" },
+   430→      motion: { preset: "fadeUp", duration: 450, intensity: 35 },
+   431→    },
+   432→    {
+   433→      id: "experimental-art-direction", label: "Experimental Art Direction", description: "Violet-black, acid accent, mixed type, mask reveals.",
+   434→      theme: { background: "#0b0a10", foreground: "#f2eff8", accent: "#c7f24c", surface: "#14121c", border: "#2a2740", muted: "#a29dbb", font: "mono", headingFont: "mono", bodyFont: "clean", radius: "none", density: "regular", typeScale: "grand", lineHeight: "tight", letterSpacing: "wide", headingWeight: "bold", contentWidth: "wide", columns: 0, buttonStyle: "outline", linkStyle: "plain", imageRatio: "3/2", divider: "accent", pageTransition: "slide" },
+   435→      motion: { preset: "maskReveal", duration: 700, easing: "drift", intensity: 75 },
+   436→    },
+   437→  ];
+   438→}
+   439→
+   440→// ------------------------------------------------------------------ templates
+   441→
+   442→export interface TemplatePreset {
+   443→  id: TemplateId;
+   444→  label: string;
+   445→  description: string;
+   446→  /** Profession slugs this template is recommended for (filter chips). */
+   447→  professions: string[];
+   448→  theme: ThemeInput;
+   449→  motion?: Partial<SiteMotion>;
+   450→  pages: SitePage[];
+   451→}
+   452→
+   453→function tplSection(type: SiteSectionType, overrides: Partial<SiteSection> = {}): SiteSection {
+   454→  return { ...makeSection(type), ...overrides, id: sid(type) } as SiteSection;
+   455→}
+   456→
+   457→export function templatePresets(): TemplatePreset[] {
+   458→  return [
+   459→    // ---------------- classic v1 (kept for legacy configs)
+   460→    {
+   461→      id: "atelier", label: "Atelier (classic)", description: "Editorial serif, warm dark canvas, generous spacing.",
+   462→      professions: [],
+   463→      theme: { background: "#090a0c", foreground: "#f7f5ef", accent: "#e8bc51", font: "editorial", radius: "md", density: "relaxed" },
+   464→      pages: [{ id: "home", name: "Home", visible: true, sections: [
+   465→        tplSection("hero", { title: "Studio of {name}", subtitle: "{headline} — {location}" } as Partial<SiteSection>),
+   466→        tplSection("about", { title: "About", body: "{bio}" } as Partial<SiteSection>),
+   467→        tplSection("projects", { title: "Featured work", limit: 3, layout: "featured" } as Partial<SiteSection>),
+   468→        tplSection("projects", { title: "All projects", limit: 12, layout: "grid" } as Partial<SiteSection>),
+   469→        tplSection("skills", { title: "Skills & tools" }),
+   470→        tplSection("contact", { title: "Contact", body: "{availability}" } as Partial<SiteSection>),
+   471→      ]}],
+   472→    },
+   473→    {
+   474→      id: "mono", label: "Mono (classic)", description: "Single column, quiet grey, documentation-like clarity.",
+   475→      professions: [],
+   476→      theme: { background: "#f7f5ef", foreground: "#090a0c", accent: "#8a8d93", font: "clean", radius: "none", density: "regular" },
+   477→      pages: [{ id: "home", name: "Home", visible: true, sections: [
+   478→        tplSection("hero", { title: "{name}", subtitle: "{headline}" } as Partial<SiteSection>),
+   479→        tplSection("stats", { title: "At a glance" }),
+   480→        tplSection("projects", { title: "Projects", limit: 12, layout: "grid" } as Partial<SiteSection>),
+   481→        tplSection("about", { title: "About", body: "{bio}" } as Partial<SiteSection>),
+   482→        tplSection("contact", { title: "Get in touch", body: "" } as Partial<SiteSection>),
+   483→      ]}],
+   484→    },
+   485→    {
+   486→      id: "gallery", label: "Gallery (classic)", description: "Media-forward grid, deep graphite, minimal chrome.",
+   487→      professions: [],
+   488→      theme: { background: "#17191d", foreground: "#f7f5ef", accent: "#e8bc51", font: "editorial", radius: "full", density: "compact" },
+   489→      pages: [{ id: "home", name: "Home", visible: true, sections: [
+   490→        tplSection("hero", { title: "{name}", subtitle: "{tagline}" } as Partial<SiteSection>),
+   491→        tplSection("projects", { title: "Latest work", limit: 9, layout: "grid" } as Partial<SiteSection>),
+   492→        tplSection("collections", { title: "Collections", limit: 3 } as Partial<SiteSection>),
+   493→        tplSection("contact", { title: "Say hello", body: "{availability}" } as Partial<SiteSection>),
+   494→      ]}],
+   495→    },
+   496→
+   497→    // ---------------- v2 profession templates
+   498→    {
+   499→      id: "dev-console", label: "Developer Console", description: "Terminal-flavoured dark theme, mono headings, engineering case studies front and centre.",
+   500→      professions: ["software-development"],
+   501→      theme: { background: "#0c0e10", foreground: "#e6e8ea", accent: "#3fbf8f", surface: "#12151a", border: "#232a30", muted: "#8d949b", font: "mono", headingFont: "mono", bodyFont: "clean", radius: "none", density: "regular", typeScale: "balanced", lineHeight: "normal", letterSpacing: "normal", headingWeight: "semibold", contentWidth: "regular", columns: 2, buttonStyle: "sharp", linkStyle: "accent", imageRatio: "16/9", divider: "line", pageTransition: "fade" },
+   502→      motion: { preset: "stagger", duration: 400, stagger: 60 },
+   503→      pages: [{ id: "home", name: "Home", visible: true, sections: [
+   504→        tplSection("hero", { title: "{name}", subtitle: "{headline}", variant: "classic" } as Partial<SiteSection>),
+   505→        tplSection("stats", { title: "Track record" }),
+   506→        tplSection("projects", { title: "Engineering work", limit: 6, layout: "grid" } as Partial<SiteSection>),
+   507→        tplSection("skills", { title: "Stack & tools" }),
+   508→        tplSection("experience", { title: "Experience" }),
+   509→        tplSection("contact", { title: "Contact", body: "Open to engineering roles and collaborations. {availability}" } as Partial<SiteSection>),
+   510→      ]}],
+   511→    },
+   512→    {
+   513→      id: "product-studio", label: "Product Studio", description: "Refined dark studio look with featured case studies and a services strip.",
+   514→      professions: ["ui-ux-design", "product-design"],
+   515→      theme: { background: "#101113", foreground: "#f4f4f2", accent: "#e8bc51", surface: "#181a1d", border: "#2b2e33", muted: "#9b9d99", font: "clean", headingFont: "clean", bodyFont: "clean", radius: "md", density: "regular", typeScale: "balanced", lineHeight: "normal", letterSpacing: "normal", headingWeight: "semibold", contentWidth: "regular", columns: 0, buttonStyle: "rounded", linkStyle: "accent", imageRatio: "4/3", divider: "line", pageTransition: "fade" },
+   516→      motion: { preset: "fadeUp", duration: 550 },
+   517→      pages: [{ id: "home", name: "Home", visible: true, sections: [
+   518→        tplSection("hero", { title: "{name}", subtitle: "{tagline}", variant: "split" } as Partial<SiteSection>),
+   519→        tplSection("projects", { title: "Case studies", limit: 4, layout: "featured" } as Partial<SiteSection>),
+   520→        tplSection("services", { title: "What I do" }),
+   521→        tplSection("about", { title: "About", body: "{bio}" } as Partial<SiteSection>),
+   522→        tplSection("contact", { title: "Start a project", body: "{availability}" } as Partial<SiteSection>),
+   523→      ]}],
+   524→    },
+   525→    {
+   526→      id: "brand-atelier", label: "Brand Atelier", description: "Editorial serif atelier with a full-bleed cover hero and curated collections.",
+   527→      professions: ["graphic-design", "marketing-business"],
+   528→      theme: { background: "#090a0c", foreground: "#f7f5ef", accent: "#e8bc51", surface: "#141519", border: "#26282e", muted: "#a3a094", font: "editorial", headingFont: "editorial", bodyFont: "clean", radius: "md", density: "relaxed", typeScale: "grand", lineHeight: "normal", letterSpacing: "wide", headingWeight: "semibold", contentWidth: "regular", columns: 0, buttonStyle: "rounded", linkStyle: "accent", imageRatio: "3/2", divider: "line", pageTransition: "fade" },
+   529→      motion: { preset: "maskReveal", duration: 650, intensity: 60 },
+   530→      pages: [{ id: "home", name: "Home", visible: true, sections: [
+   531→        tplSection("hero", { title: "Studio of {name}", subtitle: "{headline} — {location}", variant: "cover" } as Partial<SiteSection>),
+   532→        tplSection("projects", { title: "Selected identity work", limit: 6, layout: "editorial" } as Partial<SiteSection>),
+   533→        tplSection("collections", { title: "Collections", limit: 3 } as Partial<SiteSection>),
+   534→        tplSection("about", { title: "The studio", body: "{bio}" } as Partial<SiteSection>),
+   535→        tplSection("contact", { title: "Commissions", body: "{availability}" } as Partial<SiteSection>),
+   536→      ]}],
+   537→    },
+   538→    {
+   539→      id: "lens-gallery", label: "Lens Gallery", description: "Image-first masonry and strips for photographers and filmmakers.",
+   540→      professions: ["photography", "film-video"],
+   541→      theme: { background: "#0e0e10", foreground: "#f2f1ec", accent: "#d9c9a8", surface: "#151518", border: "#28282c", muted: "#98948c", font: "clean", headingFont: "editorial", bodyFont: "clean", radius: "none", density: "compact", typeScale: "balanced", lineHeight: "normal", letterSpacing: "wide", headingWeight: "light", contentWidth: "wide", columns: 0, buttonStyle: "outline", linkStyle: "accent", imageRatio: "3/2", divider: "line", pageTransition: "fade" },
+   542→      motion: { preset: "zoom", duration: 600, intensity: 45 },
+   543→      pages: [{ id: "home", name: "Home", visible: true, sections: [
+   544→        tplSection("hero", { title: "{name}", subtitle: "{tagline}", variant: "cover" } as Partial<SiteSection>),
+   545→        tplSection("gallery", { title: "Recent frames", limit: 12, layout: "masonry" } as Partial<SiteSection>),
+   546→        tplSection("projects", { title: "Series & films", limit: 6, layout: "grid" } as Partial<SiteSection>),
+   547→        tplSection("contact", { title: "Book a shoot", body: "{availability}" } as Partial<SiteSection>),
+   548→      ]}],
+   549→    },
+   550→    {
+   551→      id: "motion-reel", label: "Motion Reel", description: "Cinematic 16:9 reel layout with slow reveals for motion and 3D artists.",
+   552→      professions: ["motion-design", "music-audio"],
+   553→      theme: { background: "#0a0b0d", foreground: "#f0eee9", accent: "#f0c75e", surface: "#131519", border: "#24272d", muted: "#94928c", font: "clean", headingFont: "editorial", bodyFont: "clean", radius: "none", density: "regular", typeScale: "grand", lineHeight: "normal", letterSpacing: "wide", headingWeight: "light", contentWidth: "wide", columns: 0, buttonStyle: "outline", linkStyle: "accent", imageRatio: "16/9", divider: "line", pageTransition: "fade" },
+   554→      motion: { preset: "cinematic", duration: 850, easing: "drift", intensity: 70 },
+   555→      pages: [{ id: "home", name: "Home", visible: true, sections: [
+   556→        tplSection("hero", { title: "{name}", subtitle: "{headline}", variant: "centered" } as Partial<SiteSection>),
+   557→        tplSection("gallery", { title: "Reel", limit: 8, layout: "strip" } as Partial<SiteSection>),
+   558→        tplSection("projects", { title: "Projects", limit: 6, layout: "featured" } as Partial<SiteSection>),
+   559→        tplSection("skills", { title: "Toolbox" }),
+   560→        tplSection("contact", { title: "Let's talk", body: "{availability}" } as Partial<SiteSection>),
+   561→      ]}],
+   562→    },
+   563→    {
+   564→      id: "illustration-desk", label: "Illustration Desk", description: "Warm paper desk with a playful masonry wall of illustration work.",
+   565→      professions: ["illustration", "fine-art"],
+   566→      theme: { background: "#fbf6ec", foreground: "#2d2620", accent: "#d98e4a", surface: "#ffffff", border: "#ecdfca", muted: "#8b7d6d", font: "clean", headingFont: "editorial", bodyFont: "clean", radius: "md", density: "regular", typeScale: "balanced", lineHeight: "normal", letterSpacing: "normal", headingWeight: "semibold", contentWidth: "regular", columns: 0, buttonStyle: "rounded", linkStyle: "accent", imageRatio: "1/1", divider: "none", pageTransition: "slide" },
+   567→      motion: { preset: "stagger", duration: 450, stagger: 70, intensity: 55 },
+   568→      pages: [{ id: "home", name: "Home", visible: true, sections: [
+   569→        tplSection("hero", { title: "Hi, I'm {name}", subtitle: "{headline}", variant: "split" } as Partial<SiteSection>),
+   570→        tplSection("gallery", { title: "Sketch wall", limit: 12, layout: "masonry" } as Partial<SiteSection>),
+   571→        tplSection("projects", { title: "Series", limit: 6, layout: "grid" } as Partial<SiteSection>),
+   572→        tplSection("about", { title: "About me", body: "{bio}" } as Partial<SiteSection>),
+   573→        tplSection("contact", { title: "Commissions", body: "{availability}" } as Partial<SiteSection>),
+   574→      ]}],
+   575→    },
+   576→    {
+   577→      id: "architecture-index", label: "Architecture Index", description: "Precise squared grid, wide tracking, restrained palette for built work.",
+   578→      professions: ["architecture", "civil-engineering"],
+   579→      theme: { background: "#f4f3f0", foreground: "#17181a", accent: "#8a8d93", surface: "#ffffff", border: "#dcdbd6", muted: "#6f7175", font: "clean", headingFont: "clean", bodyFont: "clean", radius: "none", density: "regular", typeScale: "balanced", lineHeight: "normal", letterSpacing: "wide", headingWeight: "semibold", contentWidth: "wide", columns: 2, buttonStyle: "sharp", linkStyle: "underline", imageRatio: "1/1", divider: "line", pageTransition: "none" },
+   580→      motion: { preset: "fadeUp", duration: 450, intensity: 30 },
+   581→      pages: [{ id: "home", name: "Home", visible: true, sections: [
+   582→        tplSection("hero", { title: "{name}", subtitle: "{headline} — {location}", variant: "centered" } as Partial<SiteSection>),
+   583→        tplSection("projects", { title: "Built work", limit: 8, layout: "grid" } as Partial<SiteSection>),
+   584→        tplSection("experience", { title: "Practice history", layout: "rows" } as Partial<SiteSection>),
+   585→        tplSection("about", { title: "Approach", body: "{bio}" } as Partial<SiteSection>),
+   586→        tplSection("contact", { title: "Enquiries", body: "" } as Partial<SiteSection>),
+   587→      ]}],
+   588→    },
+   589→    {
+   590→      id: "byline-journal", label: "Byline Journal", description: "Narrow editorial column with serif type and a timeline of published work.",
+   591→      professions: ["writing-journalism", "education-research"],
+   592→      theme: { background: "#fbfaf7", foreground: "#1a1a1a", accent: "#9b2c2c", surface: "#ffffff", border: "#e6e3dc", muted: "#6d6a64", font: "editorial", headingFont: "editorial", bodyFont: "editorial", radius: "none", density: "regular", typeScale: "intimate", lineHeight: "relaxed", letterSpacing: "normal", headingWeight: "semibold", contentWidth: "narrow", columns: 0, buttonStyle: "sharp", linkStyle: "underline", imageRatio: "3/2", divider: "line", pageTransition: "fade" },
+   593→      motion: { preset: "blurIn", duration: 500, intensity: 30 },
+   594→      pages: [{ id: "home", name: "Home", visible: true, sections: [
+   595→        tplSection("hero", { title: "{name}", subtitle: "{headline}", variant: "classic" } as Partial<SiteSection>),
+   596→        tplSection("projects", { title: "Selected writing", limit: 8, layout: "list", category: "writing-journalism" } as Partial<SiteSection>),
+   597→        tplSection("projects", { title: "More stories", limit: 6, layout: "grid" } as Partial<SiteSection>),
+   598→        tplSection("experience", { title: "Experience & education" }),
+   599→        tplSection("about", { title: "About", body: "{bio}" } as Partial<SiteSection>),
+   600→        tplSection("contact", { title: "Contact", body: "{availability}" } as Partial<SiteSection>),
+   601→      ]}],
+   602→    },
+   603→    {
+   604→      id: "growth-consult", label: "Growth Consult", description: "Crisp consultant layout with services, proof and a stats strip.",
+   605→      professions: ["marketing-business"],
+   606→      theme: { background: "#ffffff", foreground: "#191c1f", accent: "#b0813c", surface: "#f7f6f3", border: "#e4e2dc", muted: "#6b7076", font: "clean", headingFont: "clean", bodyFont: "clean", radius: "md", density: "regular", typeScale: "balanced", lineHeight: "normal", letterSpacing: "normal", headingWeight: "bold", contentWidth: "regular", columns: 0, buttonStyle: "rounded", linkStyle: "accent", imageRatio: "16/9", divider: "line", pageTransition: "fade" },
+   607→      motion: { preset: "fadeUp", duration: 500 },
+   608→      pages: [{ id: "home", name: "Home", visible: true, sections: [
+   609→        tplSection("hero", { title: "{name}", subtitle: "{tagline}", variant: "split", ctaLabel: "Book a call" } as Partial<SiteSection>),
+   610→        tplSection("stats", { title: "Results" }),
+   611→        tplSection("services", { title: "How I help" }),
+   612→        tplSection("testimonials", { title: "Client words" }),
+   613→        tplSection("experience", { title: "Background", layout: "rows" } as Partial<SiteSection>),
+   614→        tplSection("contact", { title: "Get in touch", body: "{availability}" } as Partial<SiteSection>),
+   615→      ]}],
+   616→    },
+   617→    {
+   618→      id: "founder-story", label: "Founder Story", description: "Split hero narrative with journey timeline for founders and entrepreneurs.",
+   619→      professions: ["marketing-business", "other"],
+   620→      theme: { background: "#fffdf9", foreground: "#20242b", accent: "#3e6b4f", surface: "#ffffff", border: "#e9e6de", muted: "#757b84", font: "clean", headingFont: "editorial", bodyFont: "clean", radius: "md", density: "relaxed", typeScale: "balanced", lineHeight: "relaxed", letterSpacing: "normal", headingWeight: "semibold", contentWidth: "narrow", columns: 0, buttonStyle: "rounded", linkStyle: "accent", imageRatio: "3/2", divider: "none", pageTransition: "fade" },
+   621→      motion: { preset: "fadeUp", duration: 550 },
+   622→      pages: [{ id: "home", name: "Home", visible: true, sections: [
+   623→        tplSection("hero", { title: "{name}", subtitle: "{headline}", variant: "split", ctaLabel: "Read my story" } as Partial<SiteSection>),
+   624→        tplSection("about", { title: "The story so far", body: "{bio}" } as Partial<SiteSection>),
+   625→        tplSection("experience", { title: "Ventures" }),
+   626→        tplSection("projects", { title: "What I've built", limit: 6, layout: "editorial" } as Partial<SiteSection>),
+   627→        tplSection("contact", { title: "Say hello", body: "{availability}" } as Partial<SiteSection>),
+   628→      ]}],
+   629→    },
+   630→    {
+   631→      id: "sound-room", label: "Sound Room", description: "Dark listening-room aesthetic with a horizontal reel strip.",
+   632→      professions: ["music-audio"],
+   633→      theme: { background: "#0b0c0e", foreground: "#efece6", accent: "#d9a85e", surface: "#14151a", border: "#25272c", muted: "#918e86", font: "mono", headingFont: "editorial", bodyFont: "clean", radius: "md", density: "regular", typeScale: "grand", lineHeight: "normal", letterSpacing: "wide", headingWeight: "light", contentWidth: "wide", columns: 0, buttonStyle: "outline", linkStyle: "accent", imageRatio: "1/1", divider: "accent", pageTransition: "fade" },
+   634→      motion: { preset: "zoom", duration: 600 },
+   635→      pages: [{ id: "home", name: "Home", visible: true, sections: [
+   636→        tplSection("hero", { title: "{name}", subtitle: "{tagline}", variant: "centered" } as Partial<SiteSection>),
+   637→        tplSection("gallery", { title: "Releases & sessions", limit: 10, layout: "strip" } as Partial<SiteSection>),
+   638→        tplSection("projects", { title: "Selected work", limit: 6, layout: "featured" } as Partial<SiteSection>),
+   639→        tplSection("services", { title: "Sessions", layout: "rows" } as Partial<SiteSection>),
+   640→        tplSection("contact", { title: "Booking", body: "{availability}" } as Partial<SiteSection>),
+   641→      ]}],
+   642→    },
+   643→    {
+   644→      id: "classroom-folio", label: "Classroom Folio", description: "Friendly educator layout with courses-as-services and experience rows.",
+   645→      professions: ["education-research"],
+   646→      theme: { background: "#f9f8f4", foreground: "#26301f", accent: "#4f7c5e", surface: "#ffffff", border: "#e4e6da", muted: "#74806c", font: "clean", headingFont: "clean", bodyFont: "clean", radius: "md", density: "regular", typeScale: "balanced", lineHeight: "relaxed", letterSpacing: "normal", headingWeight: "semibold", contentWidth: "regular", columns: 0, buttonStyle: "rounded", linkStyle: "underline", imageRatio: "4/3", divider: "line", pageTransition: "fade" },
+   647→      motion: { preset: "fadeUp", duration: 450, intensity: 35 },
+   648→      pages: [{ id: "home", name: "Home", visible: true, sections: [
+   649→        tplSection("hero", { title: "{name}", subtitle: "{headline}", variant: "classic" } as Partial<SiteSection>),
+   650→        tplSection("services", { title: "Courses & workshops" }),
+   651→        tplSection("experience", { title: "Teaching history", layout: "rows" } as Partial<SiteSection>),
+   652→        tplSection("skills", { title: "Areas of study" }),
+   653→        tplSection("testimonials", { title: "Student feedback" }),
+   654→        tplSection("contact", { title: "Office hours", body: "{availability}" } as Partial<SiteSection>),
+   655→      ]}],
+   656→    },
+   657→    {
+   658→      id: "polymath-index", label: "Polymath Index", description: "A curated mix for multidisciplinary practices — everything, in balance.",
+   659→      professions: ["other", "graphic-design", "film-video"],
+   660→      theme: { background: "#101013", foreground: "#efedf3", accent: "#c9a86a", surface: "#17171c", border: "#2a2a32", muted: "#9c99a4", font: "editorial", headingFont: "editorial", bodyFont: "clean", radius: "md", density: "regular", typeScale: "balanced", lineHeight: "normal", letterSpacing: "normal", headingWeight: "semibold", contentWidth: "regular", columns: 0, buttonStyle: "rounded", linkStyle: "accent", imageRatio: "3/2", divider: "line", pageTransition: "fade" },
+   661→      motion: { preset: "maskReveal", duration: 600 },
+   662→      pages: [{ id: "home", name: "Home", visible: true, sections: [
+   663→        tplSection("hero", { title: "{name}", subtitle: "{headline}", variant: "split" } as Partial<SiteSection>),
+   664→        tplSection("projects", { title: "Selected work", limit: 4, layout: "featured" } as Partial<SiteSection>),
+   665→        tplSection("gallery", { title: "Fragments", limit: 8, layout: "masonry" } as Partial<SiteSection>),
+   666→        tplSection("services", { title: "Practices" }),
+   667→        tplSection("experience", { title: "Path" }),
+   668→        tplSection("contact", { title: "Contact", body: "{availability}" } as Partial<SiteSection>),
+   669→      ]}],
+   670→    },
+   671→  ];
+   672→}
+   673→
+   674→export function defaultConfig(template: TemplateId = "atelier"): SiteConfig {
+   675→  const preset = templatePresets().find((t) => t.id === template) ?? templatePresets()[0];
+   676→  return {
+   677→    version: 1,
+   678→    template: preset.id,
+   679→    name: "My website",
+   680→    tagline: "",
+   681→    coverMediaId: null,
+   682→    theme: deriveTheme(preset.theme),
+   683→    motion: { ...defaultMotion(), ...(preset.motion ?? {}) },
+   684→    pages: preset.pages.map((p) => ({ ...p, sections: p.sections.map((s) => ({ ...s })) })),
+   685→  };
+   686→}
+   687→
+   688→/**
+   689→ * Normalize any parsed-but-possibly-incomplete config into a renderable one.
+   690→ * Accepts an object OR a raw JSON string (as stored in SiteDesign.draftConfig).
+   691→ * Migrates legacy v1 single-page configs into the `pages` model, applies
+   692→ * derived theme tokens, and defaults the motion system.
+   693→ * Returns null for anything that does not satisfy the schema — callers must
+   694→ * treat null as "invalid/corrupt", never render it.
+   695→ */
+   696→export function normalizeConfig(input: unknown): SiteConfig | null {
+   697→  let candidate = input;
+   698→  if (typeof candidate === "string") {
+   699→    try {
+   700→      candidate = JSON.parse(candidate);
+   701→    } catch {
+   702→      return null;
+   703→    }
+   704→  }
+   705→  const parsed = siteConfigSchema.safeParse(candidate);
+   706→  if (!parsed.success) return null;
+   707→  const raw = parsed.data as RawSiteConfig;
+   708→
+   709→  const pages: SitePage[] =
+   710→    raw.pages && raw.pages.length > 0
+   711→      ? raw.pages
+   712→      : [{ id: "home", name: "Home", visible: true, sections: raw.sections ?? [] }];
+   713→
+   714→  return {
+   715→    version: 1,
+   716→    template: raw.template,
+   717→    name: raw.name,
+   718→    tagline: raw.tagline,
+   719→    coverMediaId: raw.coverMediaId ?? null,
+   720→    theme: deriveTheme(raw.theme),
+   721→    motion: raw.motion ? motionSchema.parse(raw.motion) : defaultMotion(),
+   722→    pages,
+   723→  };
+   724→}
+   725→

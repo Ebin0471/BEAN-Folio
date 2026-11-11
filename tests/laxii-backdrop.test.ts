@@ -1,0 +1,367 @@
+/// <reference types="bun-types" />
+/**
+ * LAXII backdrop-generation regression tests.
+ *
+ * Each test pins a REAL failure that was fixed — if one of these fails, the
+ * "every generated scene contained a person" production incident is back:
+ *
+ *  A1  User instructions were appended VERBATIM to the empty-backdrop prompt,
+ *      so "corporate headshot … charcoal blazer … confident expression"
+ *      commanded the generator to paint a person. The sanitizer must strip
+ *      every person/subject clause while keeping scene/light/color clauses.
+ *  A2  Retry used weak "variation hints" instead of genuinely different
+ *      prompts. The ladder must escalate and end on a minimal fail-safe.
+ *  A3  The gate rejected plates on MODNet coverage alone — MODNet is a
+ *      matting model, not a person classifier, and flags plants/furniture
+ *      (measured 15.9% / 8.7% on real person-free scenes). The gate must
+ *      INSPECT the mask (shape + skin evidence) before rejecting; ambiguous
+ *      masks are still rejected (never silently accepted).
+ *  A4  After the retry budget the error must be actionable, not vague.
+ *
+ * The real-image tests use actual generated evidence captured from the
+ * incident (tests/fixtures/laxii/): a plate the poisoned prompt produced
+ * (a painted human portrait — coverage ~57%) and a genuinely empty plate.
+ */
+
+import { describe, expect, test } from "bun:test";
+import { readFile } from "fs/promises";
+import path from "node:path";
+
+import { LaxiiError } from "../src/lib/laxii/types";
+import type { ImageProvider, LaxiiRequest } from "../src/lib/laxii/types";
+import {
+  backdropPromptLadder,
+  backdropSafeInstructions,
+  generateCleanBackdrop,
+} from "../src/lib/laxii/engine";
+import {
+  analyzeMaskShape,
+  assessPlate,
+  decidePlatePerson,
+  segmentationAvailable,
+} from "../src/lib/laxii/pipeline/segment";
+
+const FIXTURES = path.resolve(__dirname, "fixtures/laxii");
+
+// ------------------------------------------------------------------ helpers
+
+const REQUEST: LaxiiRequest = {
+  kind: "AVATAR",
+  style: "corporate_headshot",
+  identityMode: "PRESERVE",
+  variations: 1,
+  size: { width: 1024, height: 1024 },
+  format: "PNG",
+  provider: "managed",
+};
+
+/** The exact instructions from the failed production job (job cmvvztd0i…). */
+const POISONED_INSTRUCTIONS = [
+  "Create a premium professional corporate headshot using my uploaded reference photograph.",
+  "**Primary objective:** Transform this casual outdoor photograph into a polished, high-end professional studio portrait while preserving the person's original identity.",
+  "### Visual direction",
+  "- Professional charcoal-black blazer over a clean, premium dark shirt.",
+  "- Natural, confident expression.",
+  "- Elegant warm-neutral studio background with subtle champagne-gold lighting.",
+  "- Soft professional key lighting and realistic shadows.",
+  "- Premium editorial photography aesthetic.",
+  "- Natural skin texture, realistic hair",
+].join("\n\n");
+
+/**
+ * Person-USAGE vocabulary (not the negated constraint words like "no face" —
+ * those are the engine's own emptiness constraints, not person painting).
+ */
+const PERSON_TERMS = /\b(person|headshot|blazer|shirt|expression|skin|hair|identity|photograph|portrait|likeness|selfie)\b/i;
+
+/** Stub provider that replays prepared plates and records every prompt. */
+function stubProvider(plates: Buffer[], opts: { id?: ImageProvider["id"] } = {}): ImageProvider & { prompts: string[] } {
+  const prompts: string[] = [];
+  let call = 0;
+  return {
+    id: opts.id ?? "managed",
+    label: "stub",
+    prompts,
+    async available() {
+      return { ok: true };
+    },
+    async textToImage(req) {
+      prompts.push(req.prompt);
+      const plate = plates[Math.min(call, plates.length - 1)];
+      call++;
+      return plate;
+    },
+    async imageToImage() {
+      throw new LaxiiError("stub provider does not implement imageToImage");
+    },
+    getCapabilities() {
+      return {
+        textToImage: true,
+        imageToImage: true,
+        conversationalEditing: "synthetic" as const,
+        maxReferences: 1,
+        aspectRatios: [],
+        maxOutputPixels: 2880,
+        transparentBackground: false,
+        upscaleNative: false,
+        models: [{ id: "stub", label: "Stub" }],
+        costEstimateUSDPerImage: { stub: 0 },
+        costBasis: "test stub",
+        notes: [],
+      };
+    },
+  };
+}
+
+async function loadFixture(name: string): Promise<Buffer> {
+  return readFile(path.join(FIXTURES, name));
+}
+
+/** Build a synthetic alpha mask (width×height grayscale) from draw callbacks. */
+function syntheticMask(width: number, height: number, draw: (ctx: (x: number, y: number, v: number) => void) => void): Buffer {
+  const alpha = Buffer.alloc(width * height);
+  draw((x, y, v) => {
+    if (x >= 0 && x < width && y >= 0 && y < height) alpha[y * width + x] = v;
+  });
+  return alpha;
+}
+
+// ------------------------------------------------------------------ A1: prompt sanitization
+
+describe("backdrop prompt sanitization", () => {
+  test("strips every person/subject clause from the failed job's instructions", () => {
+    const safe = backdropSafeInstructions(POISONED_INSTRUCTIONS);
+    expect(safe).not.toBe("");
+    expect(PERSON_TERMS.test(safe)).toBe(false);
+  });
+
+  test("keeps the scene-relevant clauses (background, lighting)", () => {
+    const safe = backdropSafeInstructions(POISONED_INSTRUCTIONS);
+    expect(safe.toLowerCase()).toContain("background");
+    expect(safe.toLowerCase()).toContain("lighting");
+  });
+
+  test("keeps plain scene directions the user actually writes", () => {
+    const safe = backdropSafeInstructions("warmer tones, slightly darker backdrop, film grain");
+    expect(safe.toLowerCase()).toContain("warmer tones");
+    expect(safe.toLowerCase()).toContain("darker backdrop");
+    expect(safe.toLowerCase()).toContain("film grain");
+  });
+
+  test("returns an empty string for blank or purely subject-directed input", () => {
+    expect(backdropSafeInstructions("")).toBe("");
+    expect(backdropSafeInstructions("   ")).toBe("");
+    expect(backdropSafeInstructions("make me smile, sharp suit, realistic hair")).toBe("");
+  });
+
+  test("the backdrop prompt ladder never contains person vocabulary", () => {
+    const req = { ...REQUEST, instructions: POISONED_INSTRUCTIONS };
+    const ladder = backdropPromptLadder(req);
+    expect(ladder).toHaveLength(3);
+    for (const prompt of ladder) {
+      expect(PERSON_TERMS.test(prompt)).toBe(false);
+    }
+  });
+
+  test("ladder prompts are genuinely different and end on a minimal fail-safe", () => {
+    const req = { ...REQUEST, instructions: "champagne-gold lighting" };
+    const ladder = backdropPromptLadder(req);
+    expect(new Set(ladder).size).toBe(3);
+    // attempts 0/1 keep the style scene; the final attempt drops it entirely
+    expect(ladder[0]).toContain("seamless neutral gray studio backdrop");
+    expect(ladder[1]).toContain("seamless neutral gray studio backdrop");
+    expect(ladder[1].length).not.toBe(ladder[0].length);
+    expect(ladder[2]).toContain("plain seamless empty studio backdrop wall");
+    expect(ladder[2]).not.toContain("seamless neutral gray studio backdrop");
+    // every rung front-loads explicit emptiness constraints
+    for (const prompt of ladder) {
+      expect(prompt).toContain("no people");
+      expect(prompt).toContain("scenery only");
+    }
+  });
+
+  test("unknown style fails honestly", () => {
+    expect(() => backdropPromptLadder({ ...REQUEST, style: "nope" })).toThrow(LaxiiError);
+  });
+});
+
+// ------------------------------------------------------------------ A3: mask inspection before rejecting
+
+describe("mask shape inspection (synthetic masks, no model)", () => {
+  const W = 256;
+  const H = 256;
+
+  test("a connected tall dominant blob is a person", () => {
+    // head + shoulders + torso: one connected figure spanning most of the frame
+    const alpha = syntheticMask(W, H, (set) => {
+      for (let y = 20; y < 80; y++)
+        for (let x = 98; x < 158; x++) set(x, y, 255); // head
+      for (let y = 80; y < 100; y++)
+        for (let x = 88; x < 168; x++) set(x, y, 255); // neck/shoulder ramp
+      for (let y = 100; y < 250; y++)
+        for (let x = 48; x < 208; x++) set(x, y, 255); // torso
+    });
+    const shape = analyzeMaskShape(alpha, W, H);
+    const decision = decidePlatePerson(shape, false);
+    expect(decision.decision).toBe("person");
+  });
+
+  test("fragmented blobs (plants, foliage) are a false positive", () => {
+    const alpha = syntheticMask(W, H, (set) => {
+      // scattered leaf-like clusters, no dominant connected mass
+      const clusters = [
+        [30, 30], [90, 20], [150, 40], [210, 25], [50, 90], [120, 80],
+        [190, 100], [35, 150], [100, 160], [170, 150], [220, 180], [70, 210],
+        [140, 220], [200, 230],
+      ];
+      for (const [cx, cy] of clusters)
+        for (let y = cy; y < cy + 22; y++)
+          for (let x = cx; x < cx + 22; x++)
+            if ((x + y) % 3 !== 0) set(x, y, 255); // ragged edges
+    });
+    const shape = analyzeMaskShape(alpha, W, H);
+    expect(shape.components).toBeGreaterThan(3);
+    const decision = decidePlatePerson(shape, false);
+    expect(decision.decision).toBe("false-positive");
+  });
+
+  test("a wide flat mass (furniture) is a false positive", () => {
+    const alpha = syntheticMask(W, H, (set) => {
+      for (let y = 170; y < 230; y++)
+        for (let x = 10; x < 246; x++) set(x, y, 255); // long low sofa silhouette
+    });
+    const shape = analyzeMaskShape(alpha, W, H);
+    expect(shape.aspect).toBeLessThan(0.85);
+    const decision = decidePlatePerson(shape, false);
+    expect(decision.decision).toBe("false-positive");
+  });
+
+  test("a border-hugging smear (texture leakage) is a false positive", () => {
+    const alpha = syntheticMask(W, H, (set) => {
+      // frame-edge texture: strips along all four borders
+      for (let y = 0; y < H; y++)
+        for (let x = 0; x < 14; x++) set(x, y, 255);
+      for (let y = 0; y < H; y++)
+        for (let x = W - 14; x < W; x++) set(x, y, 255);
+      for (let x = 0; x < W; x++)
+        for (let y = 0; y < 14; y++) set(x, y, 255);
+      for (let x = 0; x < W; x++)
+        for (let y = H - 14; y < H; y++) set(x, y, 255);
+    });
+    const shape = analyzeMaskShape(alpha, W, H);
+    expect(shape.borderShare).toBeGreaterThan(0.3);
+    const decision = decidePlatePerson(shape, false);
+    expect(decision.decision).toBe("false-positive");
+  });
+
+  test("skin evidence overrides exoneration (ambiguous mask + skin = person)", () => {
+    const alpha = syntheticMask(W, H, (set) => {
+      // fragmented, wide — would be a false positive on shape alone
+      for (let y = 150; y < 210; y++)
+        for (let x = 20; x < 120; x++) set(x, y, 255);
+      for (let y = 60; y < 110; y++)
+        for (let x = 150; x < 210; x++) set(x, y, 255);
+    });
+    const shape = analyzeMaskShape(alpha, W, H);
+    expect(decidePlatePerson(shape, false).decision).toBe("false-positive");
+    expect(decidePlatePerson(shape, true).decision).toBe("person");
+  });
+
+  test("an empty mask is degenerate, not a person", () => {
+    const shape = analyzeMaskShape(Buffer.alloc(W * H), W, H);
+    expect(shape.coverage).toBe(0);
+    expect(decidePlatePerson(shape, false).decision).toBe("false-positive");
+  });
+});
+
+// ------------------------------------------------------------------ A3: real evidence fixtures (MODNet, cached weights)
+
+describe("plate gate on real generated evidence (MODNet)", () => {
+  const av = segmentationAvailable();
+  test("segmentation weights are cached", () => {
+    expect(av.ok).toBe(true);
+  });
+
+  test("empty studio plate is accepted as clean", async () => {
+    test.skipIf(!av.ok);
+    const assessment = await assessPlate(await loadFixture("clean-plate.png"));
+    expect(assessment.decision).toBe("clean");
+    expect(assessment.coverage).toBeLessThanOrEqual(0.04);
+  });
+
+  test("the painted portrait from the incident is rejected as a person", async () => {
+    test.skipIf(!av.ok);
+    const assessment = await assessPlate(await loadFixture("person-plate.png"));
+    expect(assessment.decision).toBe("person");
+    expect(assessment.coverage).toBeGreaterThan(0.04);
+  });
+});
+
+// ------------------------------------------------------------------ A2/A4: retry ladder with a stub provider
+
+describe("generateCleanBackdrop retry behavior (stub provider)", () => {
+  test("accepts the first clean plate without regenerating", async () => {
+    const clean = await loadFixture("clean-plate.png");
+    const provider = stubProvider([clean]);
+    const out = await generateCleanBackdrop(provider, REQUEST, 0);
+    expect(out.attempts).toBe(1);
+    expect(out.personCoverage).toBeLessThanOrEqual(0.04);
+    expect(provider.prompts).toHaveLength(1);
+  });
+
+  test("regenerates rejected plates with genuinely different prompts, then accepts", async () => {
+    const person = await loadFixture("person-plate.png");
+    const clean = await loadFixture("clean-plate.png");
+    const provider = stubProvider([person, person, clean]);
+    const rejected: number[] = [];
+    const out = await generateCleanBackdrop(provider, REQUEST, 0, (_p, _a, attempt) => {
+      rejected.push(attempt);
+    });
+    expect(out.attempts).toBe(3);
+    expect(out.personCoverage).toBeLessThanOrEqual(0.04);
+    expect(rejected).toEqual([0, 1]);
+    expect(provider.prompts).toHaveLength(3);
+    // every retry used a genuinely different prompt
+    expect(new Set(provider.prompts).size).toBe(3);
+    // the failing ladder rungs stay sanitized
+    for (const p of provider.prompts) expect(PERSON_TERMS.test(p)).toBe(false);
+    // the gate log records both rejections with reasons
+    expect(out.gateLog).toHaveLength(2);
+    expect(out.gateLog[0].decision).toBe("person");
+    expect(out.gateLog[0].reason.length).toBeGreaterThan(0);
+  });
+
+  test("after the ladder is exhausted the job fails with an actionable error", async () => {
+    const person = await loadFixture("person-plate.png");
+    const provider = stubProvider([person]);
+    let err: unknown = null;
+    try {
+      await generateCleanBackdrop(provider, REQUEST, 1);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(LaxiiError);
+    const message = (err as LaxiiError).message;
+    expect(message).toContain("3 genuinely different empty-scene prompts");
+    expect(message).toContain("% of the frame");
+    expect(message.toLowerCase()).toContain("retry");
+    expect(provider.prompts).toHaveLength(3);
+    expect(new Set(provider.prompts).size).toBe(3);
+  });
+
+  test("with segmentation disabled the plate is ungated (documented downgrade)", async () => {
+    const person = await loadFixture("person-plate.png");
+    const provider = stubProvider([person]);
+    const prev = process.env.LAXII_DISABLE_SEGMENTATION;
+    process.env.LAXII_DISABLE_SEGMENTATION = "1";
+    try {
+      const out = await generateCleanBackdrop(provider, REQUEST, 0);
+      expect(out.attempts).toBe(1);
+      expect(out.personCoverage).toBe(-1);
+      expect(provider.prompts).toHaveLength(1);
+    } finally {
+      if (prev === undefined) delete process.env.LAXII_DISABLE_SEGMENTATION;
+      else process.env.LAXII_DISABLE_SEGMENTATION = prev;
+    }
+  });
+});

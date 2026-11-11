@@ -1,0 +1,191 @@
+import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+import { db } from "@/lib/db";
+import { getSessionUser } from "@/lib/auth";
+import { err, ERR, parseBody, handler } from "@/lib/api-helpers";
+import { aiGate, aiStream, AiProviderError } from "@/lib/ai";
+import { riisheSystemPrompt } from "@/lib/intelligence/personas";
+import { buildPortfolioContext } from "@/lib/intelligence/context";
+
+export const dynamic = "force-dynamic";
+export const maxDuration = 60;
+
+/**
+ * POST /api/ai/chat/stream — Server-Sent-Events streaming variant of the
+ * BEAN Intelligence chat used by the RIISHE assistant.
+ *
+ * Protocol (SSE):  data: {"delta":"text"}  …  data: {"done":true,"conversationId":"…"}
+ *                  data: {"error":"message"} on failure.
+ *
+ * The provider is streamed through when the gateway answers with an event
+ * stream; if it answers with plain JSON despite stream:true, the full reply is
+ * forwarded as a single delta — the client experience is identical either way.
+ * The reply is persisted only after the stream completes.
+ */
+
+const chatSchema = z.object({
+  conversationId: z.string().trim().min(1).optional(),
+  message: z.string().trim().min(1).max(2000),
+});
+
+const MAX_HISTORY = 10;
+
+/** Extract the incremental text from one gateway SSE line. */
+function extractDelta(line: string): string {
+  const payload = line.startsWith("data:") ? line.slice(5).trim() : line.trim();
+  if (!payload || payload === "[DONE]") return "";
+  try {
+    const json = JSON.parse(payload) as {
+      choices?: { delta?: { content?: string }; message?: { content?: string } }[];
+      content?: string;
+      delta?: { content?: string };
+    };
+    return (
+      json.choices?.[0]?.delta?.content ??
+      json.choices?.[0]?.message?.content ??
+      json.delta?.content ??
+      (typeof json.content === "string" ? json.content : "") ??
+      ""
+    );
+  } catch {
+    // Gateway sent raw text instead of JSON frames — surface it verbatim.
+    return payload;
+  }
+}
+
+export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
+  const user = await getSessionUser();
+  if (!user) return ERR.unauthorized();
+
+  const gate = await aiGate(user);
+  if (gate) return gate;
+
+  const r = await parseBody(req, chatSchema);
+  if (r.response) return r.response;
+  const { conversationId, message } = r.data;
+
+  let conversation;
+  if (conversationId) {
+    conversation = await db.aiConversation.findFirst({ where: { id: conversationId, userId: user.id } });
+    if (!conversation) return ERR.notFound();
+  } else {
+    conversation = await db.aiConversation.create({ data: { userId: user.id, title: message.slice(0, 40) } });
+  }
+
+  // ---- Context: ONLY the user's own data (same contract as /api/ai/chat).
+  // Shared builder + unified persona — RIISHE has ONE identity regardless of
+  // entry point (defect fixed: this route previously carried an older persona
+  // with a false provenance claim).
+  const { profileBlock, projectsBlock, projects } = await buildPortfolioContext(user);
+
+  const systemPrompt = riisheSystemPrompt(profileBlock, projectsBlock, projects.length);
+
+  const history = await db.aiMessage.findMany({
+    where: { conversationId: conversation.id, role: { in: ["USER", "ASSISTANT"] } },
+    orderBy: { createdAt: "desc" },
+    take: MAX_HISTORY,
+  });
+  history.reverse();
+
+  const llmMessages = [
+    ...history.map((m) => ({ role: m.role === "USER" ? ("user" as const) : ("assistant" as const), content: m.content })),
+    { role: "user" as const, content: message },
+  ];
+
+  const conversationIdForClient = conversation.id;
+
+  const encoder = new TextEncoder();
+  const sse = (obj: Record<string, unknown>) => encoder.encode(`data: ${JSON.stringify(obj)}\n\n`);
+
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      let full = "";
+      let failed = false;
+      try {
+        // Streamed through the shared gateway (same contract as aiComplete).
+        const result = (await aiStream(systemPrompt, llmMessages, {
+          agent: "RIISHE",
+          feature: "chat-stream",
+          userId: user.id,
+        })) as unknown;
+
+        if (result instanceof ReadableStream || (result && typeof (result as ReadableStream).getReader === "function")) {
+          const reader = (result as ReadableStream<Uint8Array>).getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+          const deadline = Date.now() + 55_000;
+          for (;;) {
+            if (Date.now() > deadline) break;
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() ?? "";
+            for (const line of lines) {
+              const delta = extractDelta(line);
+              if (delta) {
+                full += delta;
+                controller.enqueue(sse({ delta }));
+              }
+            }
+          }
+          if (buffer) {
+            const delta = extractDelta(buffer);
+            if (delta) {
+              full += delta;
+              controller.enqueue(sse({ delta }));
+            }
+          }
+        } else {
+          // Non-streaming fallback: gateway answered with a plain completion JSON.
+          const completion = result as { choices?: { message?: { content?: string } }[] };
+          const text = completion?.choices?.[0]?.message?.content?.trim() ?? "";
+          if (!text) throw new Error("empty response");
+          full = text;
+          controller.enqueue(sse({ delta: text }));
+        }
+
+        if (full.trim()) {
+          await db.aiMessage.createMany({
+            data: [
+              { conversationId: conversation.id, role: "USER", content: message },
+              { conversationId: conversation.id, role: "ASSISTANT", content: full },
+            ],
+          });
+          await db.aiConversation.update({ where: { id: conversation.id }, data: { updatedAt: new Date() } });
+          await db.aiUsage.create({ data: { userId: user.id, feature: "chat" } });
+        }
+        controller.enqueue(sse({ done: true, conversationId: conversationIdForClient }));
+      } catch (e) {
+        failed = true;
+        const errMsg =
+          e instanceof AiProviderError
+            ? e.message
+            : "The AI service is unavailable right now. Please try again shortly.";
+        // Persist what streamed so nothing the user saw disappears from history.
+        if (full.trim()) {
+          await db.aiMessage
+            .createMany({
+              data: [
+                { conversationId: conversation.id, role: "USER", content: message },
+                { conversationId: conversation.id, role: "ASSISTANT", content: full },
+              ],
+            })
+            .catch(() => undefined);
+        }
+        controller.enqueue(sse({ error: errMsg }));
+      } finally {
+        void failed;
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+    },
+  }) as unknown as NextResponse;
+});

@@ -1,0 +1,1284 @@
+# BEAN Folio — Standardize Banner Dimensions & Fix Image Upload Failures
+
+## 1. Standard Banner Specification
+
+Use the uploaded reference banner dimensions as the standard:
+
+- Width: 2048 px
+- Height: 687 px
+- Aspect ratio: 2.981:1 (approximately 3:1)
+- Display ratio: `2048 / 687`
+
+Apply this consistently to all banner/cover-image areas wherever applicable:
+
+- User profile cover/banner
+- LAXII banner/cover sections
+- Portfolio presentation and public profile banner
+- Other existing banner upload and display components that share this functionality
+
+Do not apply this ratio to avatars, profile pictures, thumbnails, or ordinary content images.
+
+## 2. Image Display Requirements
+
+- Maintain the 2048:687 aspect ratio.
+- Use responsive width: 100%.
+- Use `object-fit: cover` for banner presentation.
+- Use centered positioning by default, with existing focal-point adjustment functionality preserved.
+- Avoid stretching, distortion, unexpected cropping, and layout overflow.
+- Keep the banner height proportional to its width.
+- Ensure desktop, tablet, and mobile layouts remain responsive.
+- Update upload previews and crop/adjust interfaces to use the same ratio.
+- Preserve existing user-uploaded banners and their saved focal positions wherever possible.
+
+## 3. Fix Avatar and Banner Upload Failures (HTTP 405)
+
+The current profile page shows `Upload failed (405)` for both avatar and cover uploads.
+
+Investigate the actual root cause before modifying anything.
+
+Inspect:
+- Frontend upload request method and URL.
+- Backend API route definitions and allowed HTTP methods.
+- Next.js route handlers, middleware and proxy configuration.
+- Authentication and CSRF requirements.
+- Storage provider integration and upload adapter.
+- Presigned upload flow, if applicable.
+- Content-Type, multipart/form-data and request body handling.
+
+HTTP 405 means the request method is not allowed by the responding route. Do not treat it as a file-size error without evidence.
+
+Identify whether the failure occurs during:
+1. Upload URL creation.
+2. Direct file upload to storage.
+3. Finalization or database update.
+
+Fix the actual failing stage. Preserve the existing storage architecture and security controls.
+
+## 4. Testing Requirements
+
+Test both avatar and banner uploads.
+
+Verify:
+- Valid image upload succeeds.
+- Invalid file types are rejected.
+- File-size limits are enforced correctly.
+- Existing image replacement works.
+- Uploaded images persist after refresh.
+- Public profile displays the correct banner.
+- LAXII displays the same banner ratio.
+- Mobile and desktop layouts do not overflow.
+- Upload errors show meaningful messages.
+
+Add regression tests for the upload routes and banner-ratio behavior.
+
+## 5. Strict Scope
+
+- Do not redesign the UI.
+- Do not change unrelated components.
+- Do not modify authentication, user data, existing integrations or storage architecture unnecessarily.
+- Do not delete existing uploaded media.
+- Preserve existing avatar dimensions and circular presentation.
+- Reuse shared banner components where practical instead of implementing inconsistent ratios separately.
+
+## 6. Completion Report
+
+Report:
+1. Exact root cause of HTTP 405.
+2. Files changed.
+3. Banner components updated.
+4. Upload endpoints fixed.
+5. Tests executed and actual results.
+6. Any remaining limitations.
+
+Do not claim success without verifying real uploads and persistence.
+
+# CRITICAL BUG FIX — BEAN Folio View Profile Opens Wrong Page
+
+The **View Profile** action is opening the standalone portfolio website instead of the actual BEAN Folio public profile.
+
+This is incorrect. Fix the routing and action mapping.
+
+## Expected behavior
+
+### 1. View Profile
+When the user clicks View Profile:
+- Open the user's actual BEAN Folio public profile.
+- Display the BEAN Folio profile experience.
+- Show profile information, avatar, cover image, profession, skills, published projects, and existing public profile sections.
+- Use the existing public profile route and profile data.
+- Do NOT open the standalone website builder or its published website.
+
+### 2. Standalone Website
+The standalone website is a separate feature.
+
+Keep its existing functionality:
+- Website builder and customization.
+- Published website.
+- Custom website design.
+- Website-specific sections and projects.
+- Its existing public URL.
+
+It must remain independent of the BEAN Folio public profile.
+
+## Investigation
+
+Inspect:
+- View Profile button component and onClick handler.
+- ProfileStudio.tsx
+- PublishedSiteView.tsx
+- Public profile route and URL generation.
+- Navigation and route resolver.
+- Any shared profile/website URL helper.
+
+Find the exact point where View Profile is incorrectly mapped to the standalone published website.
+
+Correct only that mapping.
+
+## Strict requirements
+
+- Do not redesign either experience.
+- Do not delete or modify the standalone website.
+- Do not merge website data with public profile data.
+- Do not change authentication, database schema, user data, or unrelated routes.
+- Preserve existing public URLs and website publishing functionality.
+- Ensure the View Profile action uses the actual BEAN Folio public profile URL.
+
+## Verification
+
+Test both actions independently:
+
+1. Click View Profile → actual BEAN Folio public profile opens.
+2. Click My Website / Published Website → standalone website opens.
+3. Refresh both URLs → each loads the correct experience.
+4. Verify another user's profile also opens correctly.
+5. Verify no redirect sends one experience to the other.
+
+Report the exact files changed and the actual routes tested.
+
+Do not claim completion without testing both destinations.
+
+# BEAN FOLIO — UNIVERSAL PROFESSIONAL STUDIO TRANSFORMATION
+
+## MISSION
+
+Transform the existing BEAN Folio Studio into a powerful, universal, profession-aware workspace that supports professionals across every industry.
+
+BEAN Folio must not be limited to designers, video editors, developers, or content creators.
+
+It must support anyone who wants to create, organize, document, present, manage, and publish their professional work.
+
+**Core vision: One Studio. Every Profession. Every Type of Work.**
+
+This is an enhancement of the existing BEAN Folio product. Do not create a separate application or disconnected Studio.
+
+---
+
+# 1. UNIVERSAL STUDIO ARCHITECTURE
+
+Build a universal Studio with a shared foundation and profession-specific experiences.
+
+### Main navigation
+
+1. Overview
+2. Create
+3. My Projects
+4. Portfolio Builder
+5. Assets
+6. BEAN Intelligence
+7. Insights
+8. Templates
+9. Settings
+
+All navigation must work with the existing application routing system.
+
+### Overview dashboard
+
+Create a professional dashboard showing:
+
+- Welcome message with the user's name.
+- Profession and specialization.
+- Total projects.
+- Published projects.
+- Draft projects.
+- Portfolio views.
+- Recent activity.
+- Recently edited projects.
+- Quick-create shortcuts.
+- Recommended templates.
+- Profile completion status.
+- Recent collaboration activity, where supported.
+
+Use real user data and existing APIs. Do not fill the dashboard with fake statistics.
+
+---
+
+# 2. UNIVERSAL PROFESSION ENGINE
+
+The Studio must adapt to the user's selected profession and specializations.
+
+Support all existing profession families and profession records in the BEAN Folio database.
+
+Examples include:
+
+### Creative & Media
+- Video Editors
+- Motion Graphics Artists
+- Graphic Designers
+- Photographers
+- Filmmakers
+- Animators
+- Sound Designers
+- Music Producers
+- Illustrators
+- Content Creators
+
+### Technology & Engineering
+- Frontend Developers
+- Backend Developers
+- Full-Stack Developers
+- AI Engineers
+- Data Scientists
+- Cybersecurity Professionals
+- Cloud Engineers
+- Software Architects
+- Mechanical Engineers
+- Electrical Engineers
+- Civil Engineers
+
+### Business & Management
+- Entrepreneurs
+- Business Analysts
+- Product Managers
+- Project Managers
+- Consultants
+- Marketing Managers
+- Sales Professionals
+- HR Professionals
+- Financial Analysts
+
+### Education & Research
+- Teachers
+- Professors
+- Researchers
+- Academic Writers
+- Scientists
+- Instructional Designers
+- Trainers
+
+### Architecture & Design
+- Architects
+- Interior Designers
+- UX Designers
+- UI Designers
+- Industrial Designers
+- Landscape Designers
+- Urban Planners
+
+### Media, Writing & Communication
+- Journalists
+- Editors
+- Copywriters
+- Authors
+- Technical Writers
+- Screenwriters
+- Communication Specialists
+
+### Healthcare & Social Services
+- Doctors
+- Nurses
+- Pharmacists
+- Physiotherapists
+- Psychologists
+- Healthcare Administrators
+- Social Workers
+
+### Legal & Public Services
+- Lawyers
+- Legal Researchers
+- Advocates
+- Civil Servants
+- Public Policy Analysts
+- Government Professionals
+
+### Additional professional families
+Support agriculture, hospitality, logistics, finance, law, construction, manufacturing, sports, entertainment, beauty, skilled trades, and other existing profession categories.
+
+IMPORTANT:
+Do not hardcode this list as the complete profession database. Reuse the existing profession registry, categories, specializations, and templates. Support future professions without requiring new hardcoded UI components.
+
+---
+
+# 3. PROFESSION-AWARE CREATE WORKSPACE
+
+The Create section is the heart of Studio.
+
+When a user selects Create:
+
+1. Identify their profession and specialization.
+2. Show relevant project types.
+3. Recommend templates.
+4. Provide an appropriate creation workflow.
+5. Save work as a draft.
+6. Allow editing and publishing.
+
+### Example: Video Editor
+
+Creation options:
+- Video Editing Project
+- Showreel
+- Commercial Advertisement
+- Documentary
+- Short Film
+- Music Video
+- Motion Graphics
+- Color Grading Showcase
+
+Project fields:
+- Project title
+- Description
+- Client
+- Role
+- Software used
+- Project duration
+- Media files
+- Video preview
+- Thumbnail
+- Credits
+- Publication status
+
+### Example: Software Developer
+
+Creation options:
+- Web Application
+- Mobile Application
+- Open Source Project
+- API Development
+- AI Project
+- SaaS Product
+- Technical Case Study
+
+Project fields:
+- Project title
+- Problem statement
+- Solution
+- Technology stack
+- GitHub repository
+- Live demo
+- Screenshots
+- Architecture
+- Challenges
+- Results
+
+### Example: Architect
+
+Creation options:
+- Residential Project
+- Commercial Project
+- Interior Design
+- Landscape Design
+- Urban Planning
+- 3D Visualization
+
+Project fields:
+- Project title
+- Project type
+- Location
+- Client
+- Area and dimensions
+- Design concept
+- Drawings
+- Renderings
+- Project gallery
+- Completion status
+
+### Example: Journalist
+
+Creation options:
+- Published Article
+- Investigative Report
+- Interview
+- Documentary
+- Editorial
+- Research Story
+
+Project fields:
+- Headline
+- Publication
+- Publication date
+- Article URL
+- Author role
+- Editorial category
+- Supporting images
+- Research references
+- Story summary
+
+### General principle
+
+Each profession must have relevant fields and project workflows.
+
+Avoid showing irrelevant fields to users.
+
+Build a configurable project schema system rather than separate hardcoded creation pages for every profession.
+
+---
+
+# 4. UNIVERSAL PROJECT MANAGEMENT
+
+Create a centralized My Projects workspace.
+
+Features:
+- Grid and list views.
+- Search.
+- Filters by profession, category and status.
+- Sort by recent activity, creation date and title.
+- Draft, Published and Archived states.
+- Edit project.
+- Duplicate project.
+- Delete project with confirmation.
+- Preview project.
+- Publish and unpublish.
+- Featured project selection.
+- Project visibility controls.
+
+Each project must support profession-specific content while retaining shared project metadata.
+
+Do not break existing project records or migrations.
+
+---
+
+# 5. UNIVERSAL PORTFOLIO BUILDER
+
+Create a portfolio builder that lets every professional present their work appropriately.
+
+Support configurable sections:
+
+- Hero
+- About
+- Professional Experience
+- Skills
+- Services
+- Featured Projects
+- All Projects
+- Case Studies
+- Education
+- Certifications
+- Awards
+- Publications
+- Testimonials
+- Clients
+- Contact
+
+Profession-aware templates should determine which sections are recommended and their presentation order.
+
+Examples:
+
+- Video editors: cinematic project galleries and showreels.
+- Developers: technical projects, repositories and live demos.
+- Architects: large visual galleries and project details.
+- Journalists: article lists, publications and editorial work.
+- Consultants: case studies, achievements and services.
+- Researchers: publications, research and academic credentials.
+
+Allow users to customize:
+- Section visibility.
+- Section ordering.
+- Typography.
+- Layout.
+- Color theme.
+- Media presentation.
+- Featured content.
+
+Maintain the existing public profile and standalone website as separate experiences.
+
+Do not repeat the previous routing mistake:
+
+- `/u/<username>` = BEAN Folio public profile.
+- `/site/<username>` = standalone published website.
+
+Do not merge these experiences.
+
+---
+
+# 6. UNIVERSAL ASSET LIBRARY
+
+Build a shared asset manager.
+
+Support:
+- Images
+- Videos
+- Audio
+- PDFs
+- Documents
+- Presentations
+- Design files
+- Project attachments
+
+Features:
+- Upload.
+- Preview.
+- Search.
+- Organize into folders.
+- Attach assets to projects.
+- Replace files.
+- Delete with confirmation.
+- Display storage usage.
+- Show file metadata.
+
+Respect existing upload endpoints, storage providers, file limits, permissions and security checks.
+
+Do not introduce a new storage service unnecessarily.
+
+---
+
+# 7. BEAN INTELLIGENCE INTEGRATION
+
+Integrate BEAN Intelligence into the existing Studio as an assistant, not a separate disconnected application.
+
+Provide profession-aware assistance:
+
+- Improve project descriptions.
+- Generate professional summaries.
+- Write case studies.
+- Suggest project titles.
+- Improve portfolio presentation.
+- Generate service descriptions.
+- Organize project information.
+- Suggest missing portfolio sections.
+- Help convert raw project notes into structured project content.
+- Improve writing quality.
+
+The assistant must understand the selected profession, project context and current editing task.
+
+Privacy:
+- Respect existing consent requirements.
+- Do not send private portfolio data without appropriate user consent.
+- Preserve existing AI provider configuration.
+- Do not introduce Ollama.
+
+Do not use fake AI responses or placeholder model integrations.
+
+---
+
+# 8. TEMPLATES MARKETPLACE
+
+Create a template discovery experience.
+
+Categories:
+- By profession.
+- By specialization.
+- By project type.
+- By portfolio layout.
+- By industry.
+
+Each template should include:
+- Preview.
+- Name.
+- Description.
+- Profession compatibility.
+- Supported sections.
+- Layout style.
+- Apply template action.
+
+Templates must be configurable and extensible.
+
+Do not overwrite user content when applying a template.
+
+---
+
+# 9. INSIGHTS & ANALYTICS
+
+Create a real analytics dashboard.
+
+Show available metrics:
+- Profile views.
+- Portfolio website visits.
+- Project views.
+- Project engagement.
+- Referral sources, where tracked.
+- Popular projects.
+- Audience trends.
+
+Clearly distinguish profile analytics from standalone website analytics.
+
+Use actual tracked events and existing data.
+
+Do not invent analytics or display fabricated numbers.
+
+---
+
+# 10. DESIGN SYSTEM
+
+Maintain BEAN Folio's existing visual identity.
+
+### Visual direction
+
+- Obsidian black.
+- Champagne gold accents.
+- Premium glassmorphism.
+- Minimal editorial layouts.
+- Professional typography.
+- Refined spacing.
+- Subtle transitions.
+- Responsive bento-grid components.
+
+The Studio should feel like a premium professional operating workspace.
+
+### UI requirements
+
+- Desktop-first workspace with responsive tablet and mobile layouts.
+- Consistent sidebar navigation.
+- Clear active states.
+- Reusable components.
+- Functional dropdowns and buttons.
+- Proper loading, empty and error states.
+- Accessible controls.
+- No overlapping elements.
+- No unnecessary scrollbars.
+- No broken responsive layouts.
+
+Avoid unnecessary visual redesign of existing BEAN Folio areas outside Studio.
+
+---
+
+# 11. TECHNICAL IMPLEMENTATION
+
+Before coding, inspect the current repository.
+
+Understand:
+- Existing application architecture.
+- Existing Studio components.
+- Profession registry.
+- Profession and specialization database models.
+- Project models.
+- Portfolio models.
+- Existing API routes.
+- Authentication and authorization.
+- Upload infrastructure.
+- AI gateway.
+- Existing routing and navigation.
+- Existing design system.
+
+Build on the existing architecture.
+
+Technical requirements:
+- Reuse existing database entities wherever possible.
+- Use shared, configurable profession schemas.
+- Use reusable project creation components.
+- Use server-side validation.
+- Enforce ownership and access control.
+- Preserve existing authentication.
+- Prevent unauthorized project access.
+- Keep draft content private.
+- Preserve existing data.
+- Add migrations only when necessary.
+- Add indexes where justified.
+- Avoid unnecessary API duplication.
+
+Do not replace working infrastructure just to simplify implementation.
+
+---
+
+# 12. STRICT SCOPE AND PROTECTION
+
+This is a Studio transformation, not a complete application rewrite.
+
+Do not:
+- Delete existing features.
+- Change unrelated navigation.
+- Break public profile URLs.
+- Break standalone websites.
+- Change user authentication.
+- Remove existing integrations.
+- Replace working database models.
+- Delete existing user projects.
+- Introduce fake data.
+- Introduce fake AI.
+- Change unrelated UI.
+- Claim untested features are complete.
+
+Preserve all existing user data, project records, portfolio settings and published content.
+
+---
+
+# 13. EXECUTION PHASES
+
+Implement in controlled phases.
+
+### Phase 1 — Audit and Architecture
+Inspect the current application and prepare a component/API/data reuse map.
+
+### Phase 2 — Universal Studio Foundation
+Build Overview, navigation, My Projects and shared workspace components.
+
+### Phase 3 — Profession Engine
+Connect the existing profession registry and implement dynamic profession-aware workflows.
+
+### Phase 4 — Create Workspace
+Implement universal project creation and configurable profession-specific fields.
+
+### Phase 5 — Portfolio Builder
+Integrate profession-aware sections and templates.
+
+### Phase 6 — Asset Library
+Connect existing media storage and project attachments.
+
+### Phase 7 — BEAN Intelligence
+Implement contextual AI assistance using the existing AI gateway.
+
+### Phase 8 — Templates and Insights
+Build template discovery and real analytics.
+
+### Phase 9 — Verification
+Run regression tests and inspect every changed screen.
+
+Do not stop after producing static UI.
+
+---
+
+# 14. ACCEPTANCE CRITERIA
+
+The transformation is complete only when:
+
+1. Existing users can access the updated Studio.
+2. Every existing profession can access an appropriate workspace.
+3. New professions can be added through configuration and registry data.
+4. Project creation adapts to the selected profession.
+5. Projects save correctly and survive refreshes.
+6. Existing projects remain accessible.
+7. Portfolio sections can be customized.
+8. Assets upload and persist correctly.
+9. AI assistance uses the configured real model.
+10. Analytics display real data.
+11. Public profile and standalone website routes remain independent.
+12. Mobile and desktop layouts work.
+13. Existing authentication and permissions remain intact.
+14. No existing user data is lost.
+15. Production build, TypeScript, lint and regression tests pass.
+
+## FINAL DELIVERY REPORT
+
+Provide:
+- Existing architecture findings.
+- New Studio modules.
+- Profession families and professions supported.
+- Components and API routes changed.
+- Database changes and migrations.
+- Features actually implemented.
+- Tests executed and their results.
+- Known limitations.
+- Screenshots of the finished Studio.
+
+Clearly separate implemented, partially implemented and pending features.
+
+**Final product vision: BEAN Folio Studio must become the universal professional workspace where anyone—from a video editor or software engineer to a doctor, journalist, architect, teacher or entrepreneur—can create and manage their professional identity and showcase their work.**
+
+# BEAN FOLIO — TRANSFORM EXISTING STUDIO INTO A UNIVERSAL PROFESSION-AWARE STUDIO
+
+## OBJECTIVE
+
+Transform the EXISTING Studio feature in BEAN Folio into a universal professional workspace that adapts to every profession and specialization.
+
+IMPORTANT: Studio already exists in the main navigation.
+
+Do NOT create another Studio, another dashboard, another application, or another navigation entry.
+
+Modify and enhance the existing Studio only.
+
+The goal is to remove profession-specific limitations and make the current Studio useful for ALL professionals.
+
+## 1. FIRST: AUDIT THE EXISTING STUDIO
+
+Before coding, inspect:
+
+- Existing Studio page and components.
+- Current Studio navigation and workflows.
+- Project creation and editing functionality.
+- Existing profession and specialization registry.
+- User profile and profession data.
+- Existing project types and schemas.
+- Portfolio integration.
+- Templates and asset management.
+- Existing API routes and database models.
+
+Identify which existing features are unnecessarily tailored to specific professions.
+
+Preserve working functionality and extend it.
+
+## 2. UNIVERSAL PROFESSION ADAPTATION
+
+The existing Studio must dynamically adapt to the user's selected profession and specialization.
+
+Examples:
+
+**Video Editor**
+- Video projects
+- Showreels
+- Advertisements
+- Motion graphics
+- Color grading
+- Film projects
+
+**Software Developer**
+- Web applications
+- Mobile applications
+- APIs
+- Open-source projects
+- AI projects
+- Technical case studies
+
+**Doctor / Healthcare Professional**
+- Qualifications
+- Clinical experience
+- Research publications
+- Certifications
+- Professional achievements
+- Healthcare projects
+
+**Architect**
+- Architectural projects
+- Building designs
+- Floor plans
+- 3D renders
+- Interior designs
+- Project documentation
+
+**Journalist**
+- Articles
+- Investigative reports
+- Interviews
+- Publications
+- Editorial projects
+- Documentaries
+
+**Teacher / Professor**
+- Teaching experience
+- Courses
+- Educational resources
+- Research
+- Certifications
+- Academic achievements
+
+**Entrepreneur**
+- Businesses
+- Products
+- Ventures
+- Case studies
+- Business achievements
+- Leadership experience
+
+Also support engineers, lawyers, accountants, designers, researchers, consultants, marketing professionals, photographers, writers, students, freelancers, and every other profession in the existing BEAN Folio profession registry.
+
+Do not restrict the platform to these examples.
+
+## 3. UNIVERSAL STUDIO CORE
+
+Maintain the existing Studio interface and its current navigation structure wherever possible.
+
+Make the existing capabilities profession-independent:
+
+- Create and manage professional work.
+- Add new projects or professional records.
+- Edit existing work.
+- Upload supporting media and documents.
+- Organize projects into categories.
+- Save drafts.
+- Publish and unpublish.
+- Manage featured work.
+- Preview projects.
+- Manage portfolio content.
+
+Adapt the creation forms, available fields, project categories and recommended templates based on profession.
+
+## 4. DYNAMIC PROJECT CREATION
+
+Create a configurable profession-aware creation engine.
+
+When a user clicks the existing Create Project action:
+
+1. Read the user's profession and specialization.
+2. Display relevant project categories.
+3. Recommend appropriate templates.
+4. Show profession-specific input fields.
+5. Allow optional custom fields.
+6. Save the project using the existing project infrastructure.
+7. Allow the user to edit and publish it.
+
+Use shared components and configurable schemas instead of creating separate hardcoded Studio pages for each profession.
+
+A user must not see irrelevant fields from another profession.
+
+For example, a doctor should not be asked for a GitHub repository, and a developer should not be asked for clinical experience.
+
+## 5. PROFESSION-SPECIFIC TEMPLATES
+
+Adapt the existing template functionality to support all professions.
+
+Templates should be discoverable by:
+
+- Profession.
+- Specialization.
+- Industry.
+- Project type.
+- Presentation style.
+
+Every template should have:
+- Name.
+- Description.
+- Preview.
+- Compatible professions.
+- Supported content fields.
+- Apply template action.
+
+Applying a template must never overwrite existing user content without confirmation.
+
+## 6. UNIVERSAL CONTENT AND ASSET SUPPORT
+
+Support different professional content types:
+
+- Images.
+- Videos.
+- Audio.
+- PDFs.
+- Documents.
+- Presentations.
+- Design files.
+- Research materials.
+- Project attachments.
+- External project links.
+
+Reuse existing upload and storage infrastructure.
+
+Preserve current upload permissions, size limits, validation and security.
+
+## 7. PORTFOLIO INTEGRATION
+
+Studio must make it easy to convert professional work into portfolio content.
+
+Users should be able to:
+
+- Select projects to feature.
+- Edit project presentation.
+- Control public visibility.
+- Publish and unpublish work.
+- Preview how work appears in their portfolio.
+
+Maintain the existing separation:
+
+- `/u/<username>` = BEAN Folio public profile.
+- `/site/<username>` = standalone website.
+
+Do not modify this routing behavior.
+
+## 8. BEAN INTELLIGENCE
+
+Enhance the existing BEAN Intelligence integration with profession awareness.
+
+It should help users:
+
+- Write professional project descriptions.
+- Organize project information.
+- Create case studies.
+- Improve professional summaries.
+- Suggest relevant portfolio content.
+- Improve presentation quality.
+- Generate suitable content structures.
+
+Use the existing configured AI gateway and consent system.
+
+Do not create fake AI responses or introduce Ollama.
+
+## 9. DESIGN REQUIREMENTS
+
+Preserve the existing BEAN Folio Studio visual identity.
+
+- Obsidian black.
+- Champagne gold accents.
+- Existing glassmorphic design.
+- Premium professional appearance.
+- Responsive layouts.
+- Consistent existing navigation.
+- Clear project cards and editing interfaces.
+- Proper empty, loading and error states.
+
+Do not redesign the entire application.
+
+Make only the UI changes necessary to support universal professional workflows.
+
+## 10. TECHNICAL REQUIREMENTS
+
+- Use the existing profession registry as the source of truth.
+- Use configurable schemas for profession-specific project fields.
+- Reuse existing APIs, database models and components.
+- Add new models or migrations only when genuinely necessary.
+- Preserve existing project data.
+- Maintain backward compatibility.
+- Enforce project ownership and permissions.
+- Keep private and draft work private.
+- Support future professions without hardcoding new pages.
+
+## 11. TESTING
+
+Test at least these different professional profiles:
+
+1. Video Editor.
+2. Software Developer.
+3. Doctor.
+4. Architect.
+5. Journalist.
+6. Teacher.
+7. Entrepreneur.
+8. Researcher.
+
+For each profession, verify:
+
+- Correct project categories.
+- Relevant creation fields.
+- Template recommendations.
+- Save and edit functionality.
+- Upload functionality.
+- Draft and publishing functionality.
+- Portfolio integration.
+
+Also test that switching professions does not corrupt or delete existing projects.
+
+## STRICT INSTRUCTIONS
+
+Do not:
+- Create a second Studio.
+- Add another Studio navigation entry.
+- Replace the existing Studio with an unrelated dashboard.
+- Remove current functionality.
+- Change unrelated application pages.
+- Delete user data.
+- Break existing APIs.
+- Change public profile or standalone website routing.
+- Use fake content to simulate implementation.
+
+## FINAL DELIVERABLE
+
+Transform the existing Studio into a genuinely universal, profession-aware workspace.
+
+The same Studio must intelligently adapt to every profession while preserving a consistent BEAN Folio experience.
+
+Report the actual files modified, functionality implemented, professions tested, regression results and remaining limitations.
+
+Do not claim completion based on static UI alone.
+
+## ADDITIONAL REQUIREMENT — PROFILE PICTURE IN STANDALONE WEBSITE
+
+Display the user's existing profile picture/avatar on their standalone published portfolio website.
+
+### Requirements
+
+1. Fetch the profile picture from the user's existing BEAN Folio profile data.
+2. Display it prominently in the website's hero/header section.
+3. Position it attractively alongside the user's name, profession and introduction.
+4. Maintain the original image quality and aspect ratio.
+5. Use a circular or professionally rounded presentation depending on the selected website template.
+6. Make the image responsive across desktop, tablet and mobile.
+7. If the user has no profile picture, display a graceful initials-based fallback.
+8. When the user changes their BEAN Folio profile picture, reflect the updated picture on the standalone website.
+9. Ensure the image loads correctly on the published website, including after refresh.
+10. Respect existing image privacy and visibility settings.
+
+### Important
+
+- Reuse the existing profile avatar and image storage infrastructure.
+- Do not create a separate avatar upload system.
+- Do not modify the existing BEAN Folio profile picture.
+- Do not break website customization or existing templates.
+- Preserve the existing website design and branding.
+- Apply the avatar consistently to existing and newly created standalone websites.
+
+### Verification
+
+Test `/site/ebin` and other user websites to confirm the correct profile picture appears, updates correctly, and works on mobile and desktop.
+
+# GIFTZ — INCREASE PROMPT INPUT LIMIT
+
+## Objective
+Increase the existing GIFTZ prompt composer limit from 4,000 characters to 50,000 characters.
+
+This must be implemented in the actual frontend and backend validation, not just by changing the displayed counter.
+
+## 1. Prompt Composer
+- Increase maximum prompt length to 50,000 characters.
+- Update the character counter from `0/4000` to `0/50000`.
+- Allow users to paste long, detailed website-generation prompts.
+- Preserve multiline text, paragraphs, headings, numbered lists, Markdown and formatting.
+- Ensure large prompts do not cause UI lag or freezing.
+- Maintain a comfortable editing experience for long prompts.
+- Make the textarea expand appropriately or use an internal scrollbar.
+- Keep the Send action accessible.
+
+## 2. Backend and API
+Inspect all prompt-length restrictions across:
+- Frontend validation.
+- API request schemas.
+- Backend validation.
+- AI gateway.
+- Prompt construction.
+- Database fields, if prompts are persisted.
+- Streaming and generation handlers.
+
+Increase compatible limits consistently.
+
+Do not leave hidden 4,000-character restrictions in other layers.
+
+## 3. Long-Prompt Processing
+- Preserve the complete user prompt.
+- Never silently truncate content.
+- Preserve the original order and structure.
+- Handle long prompts without losing the beginning or ending.
+- Return a clear validation error if the configured limit is exceeded.
+- Ensure the complete prompt reaches the configured GIFTZ generation model.
+
+## 4. Performance and Reliability
+- Handle large request bodies safely.
+- Avoid unnecessary repeated prompt copies.
+- Preserve streaming generation.
+- Handle request timeouts appropriately.
+- Display useful errors when generation fails.
+- Do not break existing short prompts.
+
+## 5. Testing
+Test prompts of:
+- 4,000 characters.
+- 10,000 characters.
+- 20,000 characters.
+- 40,000 characters.
+- 50,000 characters.
+- More than 50,000 characters.
+
+Verify:
+- Correct character counter.
+- Complete prompt submission.
+- No silent truncation.
+- Backend accepts prompts within the limit.
+- Prompts above the limit receive a clear error.
+- Generated output uses the complete submitted instructions.
+
+## Strict Scope
+- Do not redesign GIFTZ.
+- Do not remove existing features or actions.
+- Do not delete previous chats or generation history.
+- Do not reset conversations.
+- Do not change the configured AI model.
+- Do not introduce another AI provider.
+- Preserve all existing functionality.
+
+## Completion Report
+Report every modified file, all prompt limits updated, API validation results, and actual long-prompt tests.
+
+Do not claim success based only on the frontend character counter.
+
+# GIFTZ CRITICAL FIX — THEME TOKEN PATCH VALIDATION FAILURE
+
+## Exact failure
+
+A website generation request failed with:
+
+`This request could not be turned into a safe change plan:
+Step "Configure glassmorphism effects" (theme.tokens) must carry a token patch.`
+
+The website remained unchanged.
+
+## Objective
+
+Fix the actual GIFTZ planning and execution pipeline so valid design instructions, especially theme and visual-design changes, produce valid, complete and executable change plans.
+
+Do not work around the validator or weaken safety checks.
+
+## 1. Investigate the root cause
+
+Inspect:
+- GIFTZ planner.
+- Safe change-plan schema.
+- `theme.tokens` action definition.
+- Glassmorphism configuration action.
+- Token patch generation.
+- Planner-to-executor contract.
+- Validation and repair/retry pipeline.
+- Existing theme token types and defaults.
+
+Identify why the planner generated a `theme.tokens` step without the required token patch.
+
+## 2. Fix token patch generation
+
+Every `theme.tokens` operation must include a valid token patch conforming to the existing schema.
+
+Support relevant design properties, including:
+- Background colors.
+- Surface colors.
+- Primary and secondary accents.
+- Text colors.
+- Borders.
+- Border radius.
+- Shadows.
+- Blur and glass effects.
+- Typography tokens.
+- Spacing tokens.
+- Interactive states.
+
+Use existing theme token names and types. Do not invent incompatible token properties.
+
+Glassmorphism configuration must produce the actual required token patch rather than an empty or incomplete action.
+
+## 3. Improve planner validation and repair
+
+When a planner action is incomplete:
+
+1. Identify the invalid step.
+2. Retrieve the exact schema requirements.
+3. Repair the missing token patch.
+4. Validate the repaired action.
+5. Continue planning if valid.
+
+If repair fails, return a precise error explaining the missing field.
+
+Do not silently discard the theme operation.
+
+## 4. Preserve the safety system
+
+- Keep existing safe change-plan validation.
+- Do not bypass validation.
+- Do not automatically approve unsafe operations.
+- Do not convert failed plans into unrestricted code execution.
+- Validate every generated patch before execution.
+
+## 5. Test actual website generation
+
+Use the failed cinematic portfolio request as a regression test.
+
+Test:
+- Obsidian background.
+- Champagne gold accents.
+- Glassmorphism.
+- Typography changes.
+- Border and shadow tokens.
+- Multiple combined theme changes.
+- Existing theme preservation.
+- Invalid token rejection.
+
+Verify that:
+1. The planner generates a complete token patch.
+2. The validator accepts valid patches.
+3. The executor applies the patch.
+4. The website actually changes.
+5. Invalid patches remain safely rejected.
+
+## 6. Strict preservation requirements
+
+- Do not delete previous chats.
+- Do not delete previous GIFTZ actions.
+- Do not reset conversations.
+- Do not reset the website.
+- Do not change the configured AI model.
+- Do not redesign unrelated components.
+- Preserve existing website content and user data.
+
+## Completion report
+
+Provide the exact root cause, files changed, token schema used, regression tests and an actual browser verification of a successful glassmorphism theme update.
+
+Do not claim success merely because the planner returns a valid JSON response.

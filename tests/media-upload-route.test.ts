@@ -1,0 +1,155 @@
+/// <reference types="bun-types" />
+/**
+ * Media upload ROUTE — regression tests for the HTTP boundary
+ * (src/app/api/media/upload/route.ts), proving the endpoint exists and
+ * behaves per contract:
+ *
+ *   POST multipart, field "file":
+ *   - no/invalid session        → 401
+ *   - authenticated, no file    → 400
+ *   - authenticated, valid PNG  → 200 { media: { id, kind, mime, size, url } }
+ *   - authenticated, garbage    → 400 (UploadError, nothing stored)
+ *
+ * The route was historically deleted from the tree while src/lib/client.ts
+ * kept calling it (every upload in the app 405'd), so these tests pin the
+ * route's existence AND its wire contract.
+ *
+ * Tests run against a DEDICATED QA account (not the demo account) and clean
+ * up every row/object they create. The account starts with a fresh 30/hour
+ * upload quota, so the tests never starve the demo user's bucket.
+ *
+ * Run: bun test tests/media-upload-route.test.ts
+ */
+import { describe, expect, test, beforeAll, afterAll, mock } from "bun:test";
+import { NextRequest } from "next/server";
+
+// Route handlers called directly run outside a Next request scope, so
+// next/headers' cookies() has no store. The upload route only READS the
+// session cookie; this mock serves a MUTABLE token so both the anonymous
+// (401) and authenticated (200) paths exercise the real handler logic.
+let cookieToken: string | undefined;
+mock.module("next/headers", () => ({
+  cookies: async () => ({
+    get: (name: string) =>
+      cookieToken && name === "bean_session" ? { name, value: cookieToken } : undefined,
+    set: () => undefined,
+  }),
+}));
+
+import { db } from "@/lib/db";
+import { createSession, hashPassword } from "@/lib/auth";
+import { deleteObject } from "@/lib/storage";
+import { POST as uploadRoute } from "@/app/api/media/upload/route";
+
+const QA_EMAIL = "qa-upload-route@beanfolio.test";
+
+/** 1x1 transparent PNG — passes magic-byte sniffing as image/png. */
+const PNG_BYTES = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+  "base64"
+);
+
+let qaUserId = "";
+
+beforeAll(async () => {
+  const user = await db.user.create({
+    data: {
+      email: QA_EMAIL,
+      name: "QA Upload Route",
+      passwordHash: await hashPassword("qa-only-password-123"),
+    },
+  });
+  qaUserId = user.id;
+});
+
+afterAll(async () => {
+  // Remove everything this file created: media rows + stored objects,
+  // sessions, then the QA user itself.
+  if (qaUserId) {
+    const media = await db.mediaAsset.findMany({
+      where: { ownerId: qaUserId },
+      select: { id: true, storagePath: true },
+    });
+    for (const m of media) {
+      await db.mediaAsset.delete({ where: { id: m.id } }).catch(() => {});
+      await deleteObject(m.storagePath).catch(() => {});
+    }
+    await db.session.deleteMany({ where: { userId: qaUserId } }).catch(() => {});
+    await db.user.delete({ where: { id: qaUserId } }).catch(() => {});
+  }
+  cookieToken = undefined;
+});
+
+function multipartRequest(filename: string, file: File | null, ip: string): NextRequest {
+  const form = new FormData();
+  if (file) form.append("file", file);
+  return new NextRequest("http://localhost:3000/api/media/upload", {
+    method: "POST",
+    headers: { "x-forwarded-for": ip },
+    body: form,
+  });
+}
+
+describe("POST /api/media/upload — route contract", () => {
+  test("401 without a session cookie (route exists and is guarded)", async () => {
+    cookieToken = undefined;
+    const res = await uploadRoute(
+      multipartRequest(
+        "x.png",
+        new File([new Uint8Array(PNG_BYTES)], "x.png", { type: "image/png" }),
+        "198.51.100.71"
+      )
+    );
+    expect(res.status).toBe(401);
+  });
+
+  test("400 when authenticated but no file part is present", async () => {
+    cookieToken = await createSession(qaUserId);
+    const res = await uploadRoute(multipartRequest("none", null, "198.51.100.72"));
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error?: string };
+    // Message pinned loosely: the route's wording evolved, the contract (400,
+    // missing-`file`-field reason) did not.
+    expect(body.error).toMatch(/Missing file/);
+  });
+
+  test("200 happy path returns the exact media contract and stores the row", async () => {
+    cookieToken = await createSession(qaUserId);
+    const res = await uploadRoute(
+      multipartRequest(
+        "pixel.png",
+        new File([new Uint8Array(PNG_BYTES)], "pixel.png", { type: "image/png" }),
+        "198.51.100.73"
+      )
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      media?: { id: string; kind: string; mime: string; size: number; url: string };
+    };
+    expect(body.media).toBeDefined();
+    expect(body.media!.kind).toBe("IMAGE");
+    expect(body.media!.mime).toBe("image/png");
+    expect(body.media!.size).toBe(PNG_BYTES.length);
+    expect(body.media!.url).toBe(`/api/media/${body.media!.id}/raw`);
+
+    // The row really exists, owned by the session user, READY status.
+    const row = await db.mediaAsset.findUnique({ where: { id: body.media!.id } });
+    expect(row).not.toBeNull();
+    expect(row!.ownerId).toBe(qaUserId);
+    expect(row!.status).toBe("READY");
+  });
+
+  test("400 for unrecognizable binary garbage (UploadError path), nothing stored", async () => {
+    cookieToken = await createSession(qaUserId);
+    const garbage = new Uint8Array(256);
+    garbage.fill(0); // NUL bytes — never text, never a known magic
+    const res = await uploadRoute(
+      multipartRequest("junk.bin", new File([garbage], "junk.bin", { type: "application/octet-stream" }), "198.51.100.74")
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error?: string };
+    expect(body.error).toMatch(/Unsupported|unrecognized/);
+    const rows = await db.mediaAsset.findMany({ where: { ownerId: qaUserId, filename: "junk.bin" } });
+    expect(rows.length).toBe(0);
+  });
+});

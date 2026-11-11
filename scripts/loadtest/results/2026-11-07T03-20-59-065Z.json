@@ -1,0 +1,91 @@
+{
+  "meta": {
+    "tool": "run-local.ts (bun, stdlib)",
+    "startedAt": "2026-11-07T03:19:51.793Z",
+    "finishedAt": "2026-11-07T03:20:59.064Z",
+    "partial": false,
+    "dryRun": false,
+    "scenarios": [
+      "publish"
+    ]
+  },
+  "environment": {
+    "platform": "linux 5.10.134-013.15.kangaroo.al8.x86_64 x64",
+    "cpus": 2,
+    "totalMemGiB": 3.9,
+    "bun": "1.3.14"
+  },
+  "config": {
+    "baseUrl": "http://localhost:3000",
+    "maxVu": 8,
+    "durationPerPhaseS": 15,
+    "warmupS": 5,
+    "runTimeoutS": 3600,
+    "slo": {
+      "publicP95Ms": 500,
+      "writeP95Ms": 1000,
+      "hardErrorRate": 0.001
+    }
+  },
+  "credentialsUsed": {
+    "auth": "demo@beanfolio.app",
+    "publish": "pub-e2e-1027@beanfolio.test"
+  },
+  "scenarios": [
+    {
+      "name": "publish",
+      "describe": "publish↔unpublish toggle on the DEDICATED fixture account (writes — opt-in)",
+      "phases": [
+        {
+          "label": "1 VUs",
+          "vus": 1,
+          "durationS": 65,
+          "requests": 16,
+          "rps": 0.2,
+          "p50": 16,
+          "p95": 106,
+          "p99": 106,
+          "hardErrors": 0,
+          "errorRate": 0,
+          "client4xx": 0,
+          "rateLimited429": 0,
+          "verdict": "PASS",
+          "statusHist": {
+            "200": 16
+          },
+          "endpoints": [
+            {
+              "endpoint": "POST /api/me/site/publish",
+              "count": 8,
+              "p50": 18,
+              "p95": 19,
+              "hardErrors": 0,
+              "client4xx": 0,
+              "rateLimited": 0
+            },
+            {
+              "endpoint": "POST /api/me/site/unpublish",
+              "count": 8,
+              "p50": 13,
+              "p95": 106,
+              "hardErrors": 0,
+              "client4xx": 0,
+              "rateLimited": 0
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "totals": {
+    "requests": 16,
+    "hardErrors": 0,
+    "rateLimited429": 0,
+    "client4xx": 0
+  },
+  "thresholdBreach": false,
+  "notes": [
+    "No media paths harvested from /api/discover — browse mix redistributed that share to discover.",
+    "No public profile fixtures visible anonymously (demo profiles are excluded by design) — browse profile/shell shares were served as discover requests."
+  ]
+}

@@ -1,0 +1,83 @@
+{
+  "meta": {
+    "tool": "run-local.ts (bun, stdlib)",
+    "startedAt": "2026-11-07T03:14:11.808Z",
+    "finishedAt": "2026-11-07T03:15:24.039Z",
+    "partial": false,
+    "dryRun": false,
+    "scenarios": [
+      "publish"
+    ]
+  },
+  "environment": {
+    "platform": "linux 5.10.134-013.15.kangaroo.al8.x86_64 x64",
+    "cpus": 2,
+    "totalMemGiB": 3.9,
+    "bun": "1.3.14"
+  },
+  "config": {
+    "baseUrl": "http://localhost:3000",
+    "maxVu": 8,
+    "durationPerPhaseS": 15,
+    "warmupS": 5,
+    "runTimeoutS": 3600,
+    "slo": {
+      "publicP95Ms": 500,
+      "writeP95Ms": 1000,
+      "hardErrorRate": 0.001
+    }
+  },
+  "credentialsUsed": {
+    "auth": "demo@beanfolio.app",
+    "publish": "pub-e2e-1027@beanfolio.test"
+  },
+  "scenarios": [
+    {
+      "name": "publish",
+      "describe": "publish↔unpublish toggle on the DEDICATED fixture account (writes — opt-in)",
+      "phases": [
+        {
+          "label": "1 VUs",
+          "vus": 1,
+          "durationS": 65,
+          "requests": 1,
+          "rps": 0,
+          "p50": 10,
+          "p95": 10,
+          "p99": 10,
+          "hardErrors": 0,
+          "errorRate": 0,
+          "client4xx": 1,
+          "rateLimited429": 0,
+          "verdict": "PASS",
+          "statusHist": {
+            "400": 1
+          },
+          "endpoints": [
+            {
+              "endpoint": "POST /api/me/site/publish",
+              "count": 1,
+              "p50": 10,
+              "p95": 10,
+              "hardErrors": 0,
+              "client4xx": 1,
+              "rateLimited": 0
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "totals": {
+    "requests": 1,
+    "hardErrors": 0,
+    "rateLimited429": 0,
+    "client4xx": 1
+  },
+  "thresholdBreach": false,
+  "notes": [
+    "publish scenario stopped early: fixture account has no saved draft (400).",
+    "No media paths harvested from /api/discover — browse mix redistributed that share to discover.",
+    "No public profile fixtures visible anonymously (demo profiles are excluded by design) — browse profile/shell shares were served as discover requests."
+  ]
+}

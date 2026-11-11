@@ -1,0 +1,671 @@
+     1→/**
+     2→ * BEAN Folio — demo fixture seeder.
+     3→ *
+     4→ * Creates CLEARLY-MARKED demo accounts (User.isDemo = true) and fixture
+     5→ * content so the product can be explored with realistic data. This is demo
+     6→ * data, not production content: it is only created when this script is run
+     7→ * explicitly (`bun run scripts/seed.ts`), and `bun run scripts/seed.ts --clear`
+     8→ * removes every isDemo account and its content (real accounts are never touched).
+     9→ *
+    10→ * Passwords are hashed with the same scrypt scheme as src/lib/auth.ts.
+    11→ */
+    12→import { randomBytes, scrypt as _scrypt } from "crypto";
+    13→import { promisify } from "util";
+    14→import { copyFileSync, mkdirSync, existsSync, statSync } from "fs";
+    15→import path from "path";
+    16→import { PrismaClient } from "@prisma/client";
+    17→
+    18→const db = new PrismaClient();
+    19→const scrypt = promisify(_scrypt) as (p: string, s: string, k: number) => Promise<Buffer>;
+    20→
+    21→async function hashPassword(password: string): Promise<string> {
+    22→  const salt = randomBytes(16).toString("hex");
+    23→  const derived = await scrypt(password, salt, 64);
+    24→  return `${salt}:${derived.toString("hex")}`;
+    25→}
+    26→
+    27→const ASSETS = path.join(process.cwd(), "scripts", "seed-assets");
+    28→const UPLOADS = path.join(process.cwd(), "uploads");
+    29→
+    30→function utcDay(d: Date): string {
+    31→  return d.toISOString().slice(0, 10);
+    32→}
+    33→
+    34→let assetCounter = 0;
+    35→async function importImage(ownerId: string, file: string, filename: string) {
+    36→  const src = path.join(ASSETS, file);
+    37→  if (!existsSync(src)) throw new Error(`Missing seed asset: ${file}`);
+    38→  mkdirSync(UPLOADS, { recursive: true });
+    39→  assetCounter += 1;
+    40→  const name = `seed-${assetCounter}-${file}`; // unique per asset row — rows never share files
+    41→  copyFileSync(src, path.join(UPLOADS, name));
+    42→  const size = statSync(src).size;
+    43→  return db.mediaAsset.create({
+    44→    data: { ownerId, kind: "IMAGE", filename, mime: "image/png", size, status: "READY", storagePath: path.join("uploads", name) },
+    45→  });
+    46→}
+    47→
+    48→type SeedProject = {
+    49→  title: string;
+    50→  summary: string;
+    51→  description: string;
+    52→  category: string;
+    53→  cover: string;
+    54→  role: string;
+    55→  brief: string;
+    56→  process: string;
+    57→  challenges: string;
+    58→  outcome: string;
+    59→  tools: string[];
+    60→  skills: string[];
+    61→  externalUrl?: string;
+    62→  repoUrl?: string;
+    63→  contributors?: { name: string; role: string; contribution?: string }[];
+    64→  daysAgo: number;
+    65→};
+    66→
+    67→type SeedUser = {
+    68→  email: string;
+    69→  password: string;
+    70→  name: string;
+    71→  username: string;
+    72→  headline: string;
+    73→  bio: string;
+    74→  location: string;
+    75→  availability: string;
+    76→  professions: string[];
+    77→  skills: string[];
+    78→  avatar: string;
+    79→  projects: SeedProject[];
+    80→};
+    81→
+    82→const USERS: SeedUser[] = [
+    83→  {
+    84→    email: "demo@beanfolio.app",
+    85→    password: "demo1234",
+    86→    name: "Maya Okonkwo",
+    87→    username: "maya-edits",
+    88→    headline: "Documentary film editor — rhythm, restraint, and honest cuts",
+    89→    bio: "Ten years cutting documentaries and brand films. I look for the story under the footage — the pause before the answer, the glance that says everything. Previously at Field & Frame Studio; now independent.",
+    90→    location: "London, UK",
+    91→    availability: "Open to projects",
+    92→    professions: ["film-video", "motion-design"],
+    93→    skills: ["adobe-premiere", "davinci-resolve", "color-grading", "editing", "sound-design"],
+    94→    avatar: "avatar-maya.png",
+    95→    projects: [
+    96→      {
+    97→        title: "Night Market — Documentary Feature Cut",
+    98→        summary: "A 78-minute documentary following three vendors through one season of a city night market — assembled from 140 hours of vérité footage.",
+    99→        description:
+   100→          "Night Market began as 140 hours of observational footage shot over one season. My job was to find the film inside it: a three-strand structure following a noodle vendor, a flower seller, and a second-generation fishmonger. I built the edit around recurring visual motifs — steam, hands, change exchanged — so the three stories speak to each other without narration.",
+   101→        category: "film-video",
+   102→        cover: "cover-doc.png",
+   103→        role: "Lead editor — structure, assembly, fine cut, sound pass with composer",
+   104→        brief:
+   105→          "Directors wanted a patient, observational film with no narration and no experts. The brief to me: let the market tell its own story, keep the vendors' own words as the only voice, and land at a feature length that respects their stamina, not just ours.",
+   106→        process:
+   107→          "Phase 1 — logs and paper edits with the directors over three weeks. Phase 2 — a 4-hour assembly that we screened and ruthlessly cut. Phase 3 — the three-strand interleave, testing orderings scene by scene. Phase 4 — fine cut with the composer, tightening to the score's breath. Eleven full screenings with test audiences shaped the final rhythm.",
+   108→        challenges:
+   109→          "The biggest challenge was ethical pacing: the fishmonger's story includes a business failure, and we had to earn the right to that moment rather than cut for drama. We held it until the audience had spent enough time with him that the scene plays as dignity, not spectacle.",
+   110→        outcome:
+   111→          "Official selection at two regional documentary festivals; the film was acquired for broadcast by a regional arts channel. The directors credit the edit's structure in their festival Q&As — the three-strand motif system is now their template for future work.",
+   112→        tools: ["Adobe Premiere Pro", "DaVinci Resolve", "Pro Tools", "Frame.io"],
+   113→        skills: ["editing", "color-grading", "sound-design", "adobe-premiere", "davinci-resolve"],
+   114→        contributors: [
+   115→          { name: "Adaeze Nwosu", role: "Director", contribution: "Field direction and interview shoots" },
+   116→          { name: "Tom Reilly", role: "Original score", contribution: "Composed and performed the score to picture" },
+   117→        ],
+   118→        daysAgo: 21,
+   119→      },
+   120→      {
+   121→        title: "Meridian Films — Brand Sizzle Reel",
+   122→        summary: "A 90-second brand film for a production company's 10th anniversary — cut from a decade of their archive.",
+   123→        description:
+   124→          "Meridian Films wanted one piece that could open every pitch: ten years of their work compressed into ninety seconds that still feels like a film, not a montage. I built it on a single continuous sound idea — one heartbeat rhythm that every clip lands on — so radically different projects feel like one voice.",
+   125→        category: "film-video",
+   126→        cover: "cover-film.png",
+   127→        role: "Editor and colorist",
+   128→        brief: "Open doors. Play before every pitch meeting. Make ten years feel like one promise.",
+   129→        process:
+   130→          "I screened 400+ archive clips and built a 'spine' select reel of 40. The cut alternates scale — wide, face, detail — in a three-beat rhythm, color-unified in Resolve so 2015 footage and 2025 footage sit on the same grade. Client reviewed three versions; we tested each one cold on people who knew none of the projects.",
+   131→        challenges: "Archive quality ranged from SD to 4K HDR. Upscaling the SD material with Resolve's temporal blur kept texture without mush — the risk was making new footage look worse by comparison, solved by grading down slightly rather than up.",
+   132→        outcome: "The reel now opens every Meridian pitch. Two clients cited it in signing, and the company made it their homepage hero — the highest-completion-rate asset they've published.",
+   133→        tools: ["Adobe Premiere Pro", "DaVinci Resolve", "After Effects"],
+   134→        skills: ["editing", "color-grading", "adobe-premiere", "davinci-resolve"],
+   135→        daysAgo: 9,
+   136→      },
+   137→      {
+   138→        title: "Whale Song — Title Sequence (work in progress)",
+   139→        summary: "Exploratory title sequence for an independent short — hand-inked textures over deep-water footage.",
+   140→        description:
+   141→          "An experimental title sequence in progress: ink-in-water plates composited under typography, exploring how hand-made texture can carry a score's tension. Currently in look-development; the structure test is locked, finishing pass pending.",
+   142→        category: "motion-design",
+   143→        cover: "cover-motion.png",
+   144→        role: "Design and edit",
+   145→        brief: "Set the mood before the first line of dialogue — in under 40 seconds.",
+   146→        process: "Ink plates shot on a lightbox, scanned at 2K, composited in After Effects with the composer's stems. Typography animates on the ink's motion vectors rather than keyframes.",
+   147→        challenges: "Keeping the ink readable under type without losing either.",
+   148→        outcome: "Structure locked; finishing pass and grade scheduled. Sharing publicly for feedback on the type-in-ink balance.",
+   149→        tools: ["After Effects", "Photoshop"],
+   150→        skills: ["after-effects", "photoshop", "sound-design"],
+   151→        daysAgo: 3,
+   152→      },
+   153→    ],
+   154→  },
+   155→  {
+   156→    email: "darius@beanfolio.app",
+   157→    password: "darius-demo",
+   158→    name: "Darius Cole",
+   159→    username: "darius-builds",
+   160→    headline: "Architect — buildings that belong to their street",
+   161→    bio: "Licensed architect focused on public-facing cultural and residential work. I care about proportion, daylight, and the way a building meets the pavement. RIBA Part III, 12 years in practice.",
+   162→    location: "Manchester, UK",
+   163→    availability: "Open to collaborations",
+   164→    professions: ["architecture", "civil-engineering"],
+   165→    skills: ["sketchup", "autocad", "revit", "3d-rendering"],
+   166→    avatar: "avatar-darius.png",
+   167→    projects: [
+   168→      {
+   169→        title: "Riverside Pavilion — Competition Winner",
+   170→        summary: "A timber-and-glass reading pavilion on a flood-sensitive riverbank — winning entry in an open two-stage competition.",
+   171→        description:
+   172→          "The pavilion sits in a flood plain, so the brief's contradiction — open to the river, safe from the river — drove the design. The reading room floats one storey up on a robust concrete plinth that doubles as flood defense and riverside seating. Timber glulam frames carry a glass roof that makes the room feel like part of the tree canopy.",
+   173→        category: "architecture",
+   174→        cover: "cover-arch.png",
+   175→        role: "Design lead — concept, planning package, competition materials",
+   176→        brief: "An open civic room for reading, rest, and small events that the river cannot evict.",
+   177→        process:
+   178→          "Two-stage open competition. Stage 1: massing studies tested against 1-in-100-year flood levels; the lifted-floor strategy came from modelling the site's winter photographs. Stage 2: developed design with full environmental strategy — the glulam frame is visually calibrated so the glass roof reads as foliage from inside.",
+   179→        challenges:
+   180→          "The plinth had to be flood defense, furniture, and civic gesture at once. We resolved it by stepping its edge to the exact surveyed flood line — defence where needed, seating where not — so it reads as generosity, not a wall.",
+   181→        outcome:
+   182→          "First place from 74 entries; the council adopted the scheme for RIBA-stage 4 development. The jury citation singled out the flood-line stepping detail.",
+   183→        tools: ["AutoCAD", "Revit", "SketchUp", "Twinmotion"],
+   184→        skills: ["sketchup", "autocad", "revit", "3d-rendering"],
+   185→        contributors: [
+   186→          { name: "Hana Yusuf", role: "Structural engineer", contribution: "Glulam frame and flood plinth structure" },
+   187→        ],
+   188→        daysAgo: 14,
+   189→      },
+   190→      {
+   191→        title: "Halcyon House — Interior Retrofit",
+   192→        summary: "A 1930s semi transformed for a multigenerational family — oak stair, daylight shaft, and one quiet material palette.",
+   193→        description:
+   194→          "A full interior retrofit of a 1930s semi for three generations under one roof. The organising idea is a single oak stair rising through a double-height daylight shaft — the family's vertical street. Everything else stays quiet: lime plaster, oak, and one warm white so the family's life provides the color.",
+   195→        category: "architecture",
+   196→        cover: "cover-interior.png",
+   197→        role: "Architect — design, detailing, site architect through completion",
+   198→        brief: "Give each generation privacy without isolating anyone; make the house feel bigger than its footprint.",
+   199→        process:
+   200→          "Existing-house survey, then a 'daylight first' planning round: the stair shaft was positioned by studying the sun path for 12 months. Joinery was detailed with a local workshop and dry-fitted before final finishing on site.",
+   201→        challenges: "Party-wall constraints limited structural moves; the daylight shaft was threaded through the existing roof structure by mirroring the stair against a lightwell instead of cutting new openings.",
+   202→        outcome: "Completed on budget. The family's grandmother moved in for the first winter and uses the stair landing as her reading room — the exact intent of the design.",
+   203→        tools: ["Revit", "SketchUp", "AutoCAD"],
+   204→        skills: ["sketchup", "revit", "autocad"],
+   205→        daysAgo: 6,
+   206→      },
+   207→    ],
+   208→  },
+   209→  {
+   210→    email: "ines@beanfolio.app",
+   211→    password: "ines-demo1",
+   212→    name: "Inés Ferreira",
+   213→    username: "ines-shoots",
+   214→    headline: "Photographer — cities at night, products with patience",
+   215→    bio: "Editorial and commercial photographer. Two slow obsessions: how cities behave after midnight, and how an object looks when you give it an hour. Available for commissions worldwide.",
+   216→    location: "Lisbon, Portugal",
+   217→    availability: "Open to commissions",
+   218→    professions: ["photography"],
+   219→    skills: ["portrait-photography", "food-photography", "lightroom", "long-exposure", "retouching"],
+   220→    avatar: "avatar-ines.png",
+   221→    projects: [
+   222→      {
+   223→        title: "Crossings — Night Street Series",
+   224→        summary: "A 24-image black-and-white series on pedestrian crossings at midnight — shot across three cities over two winters.",
+   225→        description:
+   226→          "Crossings studies the brief moment a city stops: pedestrian crossings at midnight, when the lights blink and whoever is waiting becomes a portrait. Twenty-four final images from three cities, all shot on the same 35mm lens, all between 23:40 and 00:20, so the series keeps one temperature of silence.",
+   227→        category: "photography",
+   228→        cover: "cover-street.png",
+   229→        role: "Photographer — concept through printing",
+   230→        brief: "A personal series with one rule: same lens, same hour, no cropping into subjects' faces without consent.",
+   231→        process:
+   232→          "Scouted crossings by transit maps and night-bus routes. Each location was shot at least three nights before it earned a frame. Film scanned, printed in the darkroom, then drum-scanned for the series' exhibition set — the print is the final edit, not the file.",
+   233→        challenges: "Rain is the series' best collaborator and worst enemy: wet asphalt doubles the crosswalk lights, but three shoots were lost to weather. The final set keeps six rain frames deliberately.",
+   234→        outcome: "Exhibited at a Lisbon gallery for six weeks; 14 of 24 prints sold. A selection of 8 images was licensed by a city-culture magazine for their print annual.",
+   235→        tools: ["Leica M6", "Ilford HP5", "Lightroom"],
+   236→        skills: ["long-exposure", "lightroom", "photography", "retouching"],
+   237→        daysAgo: 17,
+   238→      },
+   239→      {
+   240→        title: "Matte & Steam — Product Story",
+   241→        summary: "A launch campaign for a ceramic pour-over set — twelve hero images built around one hour of light per frame.",
+   242→        description:
+   243→          "Commercial campaign for a small ceramics studio's pour-over line. The studio's brief was 'patient' — so every frame gets one hour of window light, moved once. Twelve final images: six hero shots, four detail studies, two in-situ kitchen scenes.",
+   244→        category: "photography",
+   245→        cover: "cover-product.png",
+   246→        role: "Photographer and retoucher",
+   247→        brief: "Make a small studio's first product launch look like it has a decade of confidence.",
+   248→        process:
+   249→          "Prop styling session with the founders to choose surfaces (dark stone, raw linen). One-light-hour workflow per frame, with steam captured live between pours. Retouching limited to dust and color consistency — the ceramics' imperfections stay.",
+   250→        challenges: "Steam and soft light fight each other; backlit steam blows out. Solved with a black flag two metres behind the pour line so the steam reads against darkness while the ceramic keeps its shadow side.",
+   251→        outcome: "The set anchored the launch; the studio sold out its first production run in nine days and reused the crop system for their next two products.",
+   252→        tools: ["Phase One", "Lightroom", "Capture One"],
+   253→        skills: ["food-photography", "lightroom", "retouching", "photography"],
+   254→        daysAgo: 5,
+   255→      },
+   256→    ],
+   257→  },
+   258→  {
+   259→    email: "kofi@beanfolio.app",
+   260→    password: "kofi-demo1",
+   261→    name: "Kofi Mensah",
+   262→    username: "kofi-codes",
+   263→    headline: "Full-stack engineer — real-time systems, calm interfaces",
+   264→    bio: "I build data-heavy products that stay fast and legible: real-time dashboards, trading tools, and the unglamorous infrastructure that keeps them honest. TypeScript, React, Node, Postgres.",
+   265→    location: "Accra, Ghana",
+   266→    availability: "Open to full-time and contract",
+   267→    professions: ["software-dev"],
+   268→    skills: ["react", "typescript", "nodejs", "python", "data-analysis"],
+   269→    avatar: "avatar-kofi.png",
+   270→    projects: [
+   271→      {
+   272→        title: "Ledgerly — Real-time Finance Dashboard",
+   273→        summary: "A live financial overview for a 40-person fintech: sub-100ms updates, 30k daily events, zero missed alerts since launch.",
+   274→        description:
+   275→          "Ledgerly replaces a weekly spreadsheet ritual with a live dashboard: cash position, burn, receivables, and anomaly alerts streamed over websockets. I designed the event pipeline (ingest → normalize → project), the websocket fan-out, and the entire React front end with a deliberate 'calm mode' for non-finance staff.",
+   276→        category: "software-dev",
+   277→        cover: "cover-dashboard.png",
+   278→        role: "Lead engineer — architecture, backend, and front end",
+   279→        brief: "Every number the leadership team trusts must be less than two minutes old, and the dashboard must never make anyone panic-read a wrong total.",
+   280→        process:
+   281→          "Week 1–2: event modeling with the finance team — we mapped their spreadsheet formulas first and translated them into projections. Week 3–6: ingest pipeline and snapshot store. Week 7–9: React front end with optimistic states and a documented 'staleness badge' so users always know data age.",
+   282→        challenges:
+   283→          "The hardest problem was correctness under late-arriving events: a payment recorded at 4pm for the morning must recompute the day without double-counting. Solved with idempotent event IDs and a replay-safe projection layer.",
+   284→        outcome:
+   285→          "Adopted company-wide in week one. Finance close time dropped from 3 days to 4 hours; zero missed anomaly alerts in the first two quarters. Open-sourced the replay-safe projection layer under the company's GitHub.",
+   286→        tools: ["TypeScript", "React", "Node.js", "PostgreSQL", "Redis"],
+   287→        skills: ["typescript", "react", "nodejs", "data-analysis"],
+   288→        externalUrl: "https://ledgerly.example.com",
+   289→        repoUrl: "https://github.com/kofi-mensah/ledgerly-projections",
+   290→        contributors: [{ name: "Ama Boateng", role: "Product designer", contribution: "Dashboard layout and alert UX" }],
+   291→        daysAgo: 11,
+   292→      },
+   293→    ],
+   294→  },
+   295→  {
+   296→    email: "lena@beanfolio.app",
+   297→    password: "lena-demo1",
+   298→    name: "Lena Park",
+   299→    username: "lena-cooks",
+   300→    headline: "Chef — coastal tasting menus, zero-waste kitchens",
+   301→    bio: "Chef de cuisine turned consultant. My menus start at the harbour and end at the compost bin — nothing good gets wasted. Formerly head of development at an award-winning coastal restaurant.",
+   302→    location: "Busan, South Korea",
+   303→    availability: "Open to consulting",
+   304→    professions: ["culinary"],
+   305→    skills: ["menu-development", "food-photography", "pastry"],
+   306→    avatar: "avatar-lena.png",
+   307→    projects: [
+   308→      {
+   309→        title: "Coastal Autumn — Tasting Menu Development",
+   310→        summary: "A nine-course coastal tasting menu built on bycatch and root-to-leaf cooking — 71% food-cost-to-waste reduction across the season.",
+   311→        description:
+   312→          "A season-long project developing a nine-course tasting menu around what the fleet actually lands — including bycatch most kitchens refuse. Every course documents its waste stream: shrimp shells become the glaze for course six, course-nine's pastry trim becomes the tea served with the bill.",
+   313→        category: "culinary",
+   314→        cover: "cover-dish.png",
+   315→        role: "Menu development lead — R&D, supplier relationships, staff training",
+   316→        brief: "A menu that could only exist this season, this coast — and a kitchen that throws away almost nothing.",
+   317→        process:
+   318→          "Six weeks of supplier work with two day-boats to understand real catches before writing a single dish. Then a 14-plate R&D sprint — every candidate dish costed for both ingredients and waste. Final menu trained through three full staff tastings with documented prep timelines.",
+   319→        challenges: "Bycatch is unpredictable by nature. The menu needed a substitution lattice — every course has a documented 'plan B' plate, so service never 86s a course because the boat came in light.",
+   320→        outcome: "Ran for one season at 92% seat occupancy; kitchen waste down 71% by weight against the previous menu. Two dishes were written up in national food press; the substitution lattice is now taught to the brigade of the restaurant that commissioned it.",
+   321→        tools: ["Menu engineering workbook", "Canon R5 (documentation)"],
+   322→        skills: ["menu-development", "food-photography"],
+   323→        contributors: [{ name: "Jun-ho Seok", role: "Sous chef", contribution: "Fermentation program and service training" }],
+   324→        daysAgo: 8,
+   325→      },
+   326→    ],
+   327→  },
+   328→  {
+   329→    email: "theo@beanfolio.app",
+   330→    password: "theo-demo1",
+   331→    name: "Theo Marchetti",
+   332→    username: "theo-draws",
+   333→    headline: "Illustrator — picture books, ink and watercolor",
+   334→    bio: "I draw stories that breathe: picture books, editorial spots, and the occasional mural. Ink first, watercolor after, always drawn by hand.",
+   335→    location: "Bologna, Italy",
+   336→    availability: "Open to book projects",
+   337→    professions: ["illustration", "art"],
+   338→    skills: ["watercolor", "digital-illustration", "sketching", "oil-painting"],
+   339→    avatar: "avatar-theo.png",
+   340→    projects: [
+   341→      {
+   342→        title: "The Paper Boat — Picture Book",
+   343→        summary: "A 40-page picture book about a fox who sails a paper boat to return the moon's reflection — ink, watercolor, and one gold leaf per spread.",
+   344→        description:
+   345→          "The Paper Boat is my second picture book as author-illustrator: a small fox notices the moon has lost its reflection in the river, and sails a paper boat downstream to give it back. Forty pages, hand-inked and watercolored at double size, with a single point of gold leaf hidden in every spread.",
+   346→        category: "illustration",
+   347→        cover: "cover-illustration.png",
+   348→        role: "Author and illustrator — story, all 40 spreads, cover",
+   349→        brief: "A bedtime book with one rule from my editor: the gold leaf must never be explained — children find it, adults forget to look.",
+   350→        process:
+   351→          "Thirty thumbnail passes to find the page-turn rhythm, then full-size pencil roughs for the whole book before any final art. Inked with dip pen at double size, watercolor washes in three limited mixes, gold applied last. The endpapers are drawn as one continuous river that wraps the cover.",
+   352→        challenges: "Page 23 nearly sank the book: the night river needed to feel vast without a single drop of black. Solved by building the darkness from layered teal-violet washes and letting the paper's white do the moon's work.",
+   353→        outcome: "Published autumn season; 12,000 copies in first printing, reprinted twice. Shortlisted for a national illustration award; the original art toured three libraries.",
+   354→        tools: ["Dip pen & ink", "Watercolor", "Gold leaf", "Procreate (layout only)"],
+   355→        skills: ["watercolor", "sketching", "digital-illustration"],
+   356→        daysAgo: 4,
+   357→      },
+   358→    ],
+   359→  },
+   360→  {
+   361→    email: "priya@beanfolio.app",
+   362→    password: "priya-demo",
+   363→    name: "Priya Sharma",
+   364→    username: "priya-designs",
+   365→    headline: "Product designer — systems thinking, motion with meaning",
+   366→    bio: "I design product interfaces and the motion that makes them feel honest. Design systems, prototyping, and the research habit of asking why twice.",
+   367→    location: "Bengaluru, India",
+   368→    availability: "Open to projects",
+   369→    professions: ["ui-ux", "motion-design"],
+   370→    skills: ["figma", "prototyping", "ux-research", "brand-design"],
+   371→    avatar: "avatar-priya.png",
+   372→    projects: [
+   373→      {
+   374→        title: "Aurora — Product Motion & Design System",
+   375→        summary: "A 120-component design system with a motion language of nine primitives — adopted by four product teams in one quarter.",
+   376→        description:
+   377→          "Aurora is the design system for a mid-size SaaS platform, rebuilt from a folder of one-off components into 120 documented components plus a motion language: nine easing/duration primitives that encode the product's personality (responsive, never showy). The system ships as Figma libraries plus coded tokens, so design and engineering drift stays visible.",
+   378→        category: "ui-ux",
+   379→        cover: "cover-motion.png",
+   380→        role: "Design lead — system architecture, motion language, documentation",
+   381→        brief: "Four teams, four dialects, one product. Make consistency the easiest path, not the policed one.",
+   382→        process:
+   383→          "Started with a component audit — every button variant in production, photographed side by side (there were 31). Wrote the token layer first, then rebuilt components against it. Motion began as a research detour: 12 user sessions showed our modals felt 'sneaky' — the fix was a motion vocabulary where entrances state their origin.",
+   384→        challenges: "Adoption is the real design problem. Figma libraries alone drifted from code within weeks, so the system publishes coded tokens through the same PR pipeline — a component isn't 'done' until both sides ship.",
+   385→        outcome: "Four teams onboarded in one quarter; new-feature design time down roughly 30% by the teams' own tracking. The motion primitives doc became the most-visited internal design page.",
+   386→        tools: ["Figma", "Storybook", "Framer Motion"],
+   387→        skills: ["figma", "prototyping", "brand-design", "ux-research"],
+   388→        contributors: [{ name: "Rahul Verma", role: "Design technologist", contribution: "Token pipeline and Storybook integration" }],
+   389→        daysAgo: 2,
+   390→      },
+   391→    ],
+   392→  },
+   393→  {
+   394→    email: "marco@beanfolio.app",
+   395→    password: "marco-demo",
+   396→    name: "Marco Bellini",
+   397→    username: "marco-tells",
+   398→    headline: "Brand & campaign strategist — stories that sell softly",
+   399→    bio: "I build brand platforms and launch campaigns for founders who hate advertising. Strategy first, words second, media last. 15 years across food, culture, and tech.",
+   400→    location: "Milan, Italy",
+   401→    availability: "Open to consulting",
+   402→    professions: ["marketing", "graphic-design"],
+   403→    skills: ["copywriting", "content-strategy", "seo", "brand-design", "project-management"],
+   404→    avatar: "avatar-marco.png",
+   405→    projects: [
+   406→      {
+   407→        title: "Ferro & Fiamma — Brand Platform & Launch",
+   408→        summary: "Naming, identity direction, and launch campaign for a wood-fired bakery — sold out first month with zero paid ads.",
+   409→        description:
+   410→          "A complete brand platform for a wood-fired bakery: name, voice, identity direction, and a launch campaign built on one honest idea — 'slow fire'. We named it, wrote it, art-directed the identity with a lettering artist, and launched with a five-poster street campaign and a 90-second film instead of paid ads.",
+   411→        category: "marketing",
+   412→        cover: "cover-campaign.png",
+   413→        role: "Strategy and creative direction",
+   414→        brief: "The bakers can make people queue; they can't make people understand why. Build the brand that explains the queue.",
+   415→        process:
+   416→          "Two weeks inside the bakery before writing a word — the platform came from their hands, not a workshop. Naming tested against street pronunciation. Identity direction given as a 40-page 'rules of fire' book (palette, type behavior, photography law) executed by two freelancers I commissioned. Launch: five city-center posters, one film, one press letter — all from the same copy deck.",
+   417→        challenges: "Craft brands drown in rustic clichés. The strategy banned wheat-ear iconography, kraft paper, and chalkboard scripts outright — the identity had to earn 'artisanal' through typography and fire alone.",
+   418→        outcome: "First month sold out; the queue photo became the brand's proof asset. Zero paid media spend. The 'rules of fire' book is now used to brief every freelancer without me in the room.",
+   419→        tools: ["Figma", "Notion", "Google Workspace"],
+   420→        skills: ["copywriting", "content-strategy", "brand-design", "project-management"],
+   421→        contributors: [
+   422→          { name: "Chiara Fontana", role: "Lettering artist", contribution: "Custom wordmark and poster lettering" },
+   423→          { name: "Inés Ferreira", role: "Launch photography", contribution: "Campaign photography" },
+   424→        ],
+   425→        daysAgo: 13,
+   426→      },
+   427→      {
+   428→        title: "Northlight Coffee — Packaging & Positioning",
+   429→        summary: "Repositioned a struggling specialty roaster around altitude honesty — new positioning, packaging copy system, and a 40% repeat-purchase lift.",
+   430→        description:
+   431→          "Northlight's coffee was excellent and invisible. The repositioning replaced vague origin mythology with altitude honesty: every bag states the exact farm elevation and what that altitude does in the cup. I wrote the packaging copy system (11 SKUs), the shelf story, and the wholesale one-pager.",
+   432→        category: "marketing",
+   433→        cover: "cover-brand.png",
+   434→        role: "Positioning and verbal identity",
+   435→        brief: "Say something true about coffee that a tired person can read in four seconds.",
+   436→        process:
+   437→          "Shelf audits of 30 competitor SKUs, farmer interviews through their import partner, then a positioning sprint with the founders. The copy system was written as rules — not final copy — so their team can add SKUs without diluting the voice.",
+   438→        challenges: "Altitude claims drift toward precision theater. Every number on the bag is traceable to import documents, and the copy system includes a 'we can't verify it' fallback line for future lots.",
+   439→        outcome: "Repeat-purchase rate up 40% in six months (their Shopify cohort data); two wholesale accounts signed on the strength of the one-pager alone.",
+   440→        tools: ["Illustrator", "Figma"],
+   441→        skills: ["copywriting", "content-strategy", "seo"],
+   442→        daysAgo: 27,
+   443→      },
+   444→    ],
+   445→  },
+   446→];
+   447→
+   448→// ---------- seed logic ----------
+   449→
+   450→async function clear() {
+   451→  const demo = await db.user.findMany({ where: { isDemo: true }, select: { id: true } });
+   452→  for (const u of demo) {
+   453→    await db.user.delete({ where: { id: u.id } }); // cascades to owned content
+   454→  }
+   455→  console.log(`Cleared ${demo.length} demo users (and their content).`);
+   456→  process.exit(0);
+   457→}
+   458→
+   459→async function main() {
+   460→  if (process.argv.includes("--clear")) await clear();
+   461→
+   462→  const existing = await db.user.count({ where: { isDemo: true } });
+   463→  if (existing > 0) {
+   464→    console.log(`Seed skipped: ${existing} demo users already exist. Run with --clear to reset fixture data.`);
+   465→    return;
+   466→  }
+   467→
+   468→  console.log("Seeding BEAN Folio demo fixtures (isDemo=true)...");
+   469→
+   470→  const created: { user: { id: string; username: string }; projects: { id: string; title: string }[] }[] = [];
+   471→  const passwordCache = new Map<string, string>();
+   472→
+   473→  for (const su of USERS) {
+   474→    const passwordHash = passwordCache.get(su.password) ?? (await hashPassword(su.password));
+   475→    passwordCache.set(su.password, passwordHash);
+   476→
+   477→    const user = await db.user.create({
+   478→      data: {
+   479→        email: su.email,
+   480→        passwordHash,
+   481→        name: su.name,
+   482→        username: su.username,
+   483→        headline: su.headline,
+   484→        bio: su.bio,
+   485→        location: su.location,
+   486→        availability: su.availability,
+   487→        contactEmail: su.email,
+   488→        onboarded: true,
+   489→        isDemo: true,
+   490→        aiConsent: false,
+   491→        createdAt: new Date(Date.now() - 60 * 24 * 3600 * 1000),
+   492→      },
+   493→    });
+   494→
+   495→    const avatar = await importImage(user.id, su.avatar, `${su.username}-avatar.png`);
+   496→    const cover = await importImage(user.id, su.projects[0].cover, `${su.username}-profile-cover.png`);
+   497→    await db.user.update({ where: { id: user.id }, data: { avatarMediaId: avatar.id, coverMediaId: cover.id } });
+   498→
+   499→    const profRows = await db.profession.findMany({ where: { slug: { in: su.professions } } });
+   500→    const skillRows = await db.skill.findMany({ where: { slug: { in: su.skills } } });
+   501→    await db.profileProfession.createMany({
+   502→      data: profRows.map((p) => ({ userId: user.id, professionId: p.id })),
+   503→    });
+   504→    await db.profileSkill.createMany({
+   505→      data: skillRows.map((s) => ({ userId: user.id, skillId: s.id })),
+   506→    });
+   507→
+   508→    const projects: { id: string; title: string }[] = [];
+   509→    for (const sp of su.projects) {
+   510→      const coverAsset = await importImage(user.id, sp.cover, `${sp.title.slice(0, 40)}-cover.png`);
+   511→      const publishedAt = new Date(Date.now() - sp.daysAgo * 24 * 3600 * 1000);
+   512→      const project = await db.project.create({
+   513→        data: {
+   514→          ownerId: user.id,
+   515→          title: sp.title,
+   516→          summary: sp.summary,
+   517→          description: sp.description,
+   518→          category: sp.category,
+   519→          status: "PUBLISHED",
+   520→          visibility: "PUBLIC",
+   521→          coverMediaId: coverAsset.id,
+   522→          brief: sp.brief,
+   523→          process: sp.process,
+   524→          challenges: sp.challenges,
+   525→          outcome: sp.outcome,
+   526→          role: sp.role,
+   527→          tools: JSON.stringify(sp.tools),
+   528→          externalUrl: sp.externalUrl,
+   529→          repoUrl: sp.repoUrl,
+   530→          publishedAt,
+   531→          createdAt: new Date(publishedAt.getTime() - 14 * 24 * 3600 * 1000),
+   532→          updatedAt: publishedAt,
+   533→          skills: {
+   534→            create: (await db.skill.findMany({ where: { slug: { in: sp.skills } } })).map((s) => ({ skillId: s.id })),
+   535→          },
+   536→          media: { create: [{ mediaId: coverAsset.id, order: 0, caption: "Cover" }] },
+   537→          contributors: { create: (sp.contributors ?? []).map((c) => ({ name: c.name, role: c.role, contribution: c.contribution })) },
+   538→        },
+   539→      });
+   540→      projects.push({ id: project.id, title: project.title });
+   541→    }
+   542→
+   543→    created.push({ user: { id: user.id, username: su.username }, projects });
+   544→    console.log(`  + ${su.name} (@${su.username}) with ${projects.length} project(s)`);
+   545→  }
+   546→
+   547→  // Maya's draft (Studio shows a draft tab; PRIVATE + DRAFT, no cover)
+   548→  const maya = created[0];
+   549→  await db.project.create({
+   550→    data: {
+   551→      ownerId: maya.user.id,
+   552→      title: "Winter Reel — selecting moments",
+   553→      summary: "Rough assembly for the annual winter reel. Not ready for eyes yet.",
+   554→      description: "Pulling candidates from this year's client work. Structure undecided — three acts vs. one continuous breath.",
+   555→      category: "film-video",
+   556→      status: "DRAFT",
+   557→      visibility: "PRIVATE",
+   558→      tools: JSON.stringify(["Adobe Premiere Pro"]),
+   559→    },
+   560→  });
+   561→
+   562→  // Follows between demo users (fixture graph)
+   563→  const byUsername = Object.fromEntries(created.map((c) => [c.user.username, c.user.id]));
+   564→  const followPairs: [string, string][] = [
+   565→    ["kofi-codes", "maya-edits"],
+   566→    ["maya-edits", "ines-shoots"],
+   567→    ["ines-shoots", "maya-edits"],
+   568→    ["darius-builds", "ines-shoots"],
+   569→    ["priya-designs", "kofi-codes"],
+   570→    ["kofi-codes", "priya-designs"],
+   571→    ["marco-tells", "lena-cooks"],
+   572→    ["theo-draws", "ines-shoots"],
+   573→    ["lena-cooks", "marco-tells"],
+   574→    ["maya-edits", "darius-builds"],
+   575→  ];
+   576→  for (const [a, b] of followPairs) {
+   577→    await db.follow.create({ data: { followerId: byUsername[a], followingId: byUsername[b] } });
+   578→  }
+   579→
+   580→  // Saves (fixture engagement — counts read live from these rows)
+   581→  const projId = (username: string, n: number) => created.find((c) => c.user.username === username)!.projects[n].id;
+   582→  const savePairs: [string, string][] = [
+   583→    ["kofi-codes", projId("ines-shoots", 0)],
+   584→    ["kofi-codes", projId("maya-edits", 0)],
+   585→    ["priya-designs", projId("maya-edits", 1)],
+   586→    ["ines-shoots", projId("theo-draws", 0)],
+   587→    ["marco-tells", projId("ines-shoots", 1)],
+   588→    ["darius-builds", projId("maya-edits", 0)],
+   589→    ["theo-draws", projId("lena-cooks", 0)],
+   590→  ];
+   591→  for (const [u, p] of savePairs) {
+   592→    await db.savedProject.create({ data: { userId: byUsername[u], projectId: p } });
+   593→  }
+   594→
+   595→  // Views (fixture — deduped per viewer per UTC day, same rule as the API)
+   596→  const allProjects = created.flatMap((c) => c.projects.map((p) => ({ ...p, owner: c.user.username })));
+   597→  const viewers = created.map((c) => c.user.id);
+   598→  let viewCount = 0;
+   599→  for (let d = 13; d >= 0; d--) {
+   600→    const day = utcDay(new Date(Date.now() - d * 24 * 3600 * 1000));
+   601→    // deterministic pseudo-random spread so the insights series has natural shape
+   602→    for (let i = 0; i < 3 + ((d * 7) % 4); i++) {
+   603→      const proj = allProjects[(d * 5 + i * 3) % allProjects.length];
+   604→      const viewer = viewers[(d + i) % viewers.length];
+   605→      try {
+   606→        await db.projectView.create({ data: { projectId: proj.id, viewerUserId: viewer, viewerKey: `u:${viewer}`, day } });
+   607→        viewCount++;
+   608→      } catch {
+   609→        /* unique collision — dedup working */
+   610→      }
+   611→    }
+   612→  }
+   613→  // a few anonymous viewer keys
+   614→  for (let i = 0; i < 12; i++) {
+   615→    const proj = allProjects[(i * 5) % allProjects.length];
+   616→    const day = utcDay(new Date(Date.now() - (i % 6) * 24 * 3600 * 1000));
+   617→    try {
+   618→      await db.projectView.create({ data: { projectId: proj.id, viewerKey: `a:seed-anon-${i % 5}`, day } });
+   619→      viewCount++;
+   620→    } catch {
+   621→      /* dedup */
+   622→    }
+   623→  }
+   624→  // profile views between demo users (deduped per viewer per UTC day)
+   625→  for (const c of created) {
+   626→    for (const v of viewers) {
+   627→      if (v === c.user.id) continue;
+   628→      try {
+   629→        await db.profileView.create({
+   630→          data: { profileUserId: c.user.id, viewerKey: `u:${v}`, day: utcDay(new Date()) },
+   631→        });
+   632→      } catch {
+   633→        /* dedup */
+   634→      }
+   635→    }
+   636→  }
+   637→
+   638→  // One pending inquiry to the demo account (Connect inbox demo)
+   639→  await db.inquiry.create({
+   640→    data: {
+   641→      senderId: byUsername["marco-tells"],
+   642→      recipientId: byUsername["maya-edits"],
+   643→      type: "COLLABORATION",
+   644→      subject: "Short film title sequence — paid collaboration",
+   645→      message:
+   646→        "Hi Maya — I'm producing a 12-minute short for a client and your Night Market cut is exactly the restraint we're after. Budget is confirmed and the edit window would be three weeks from March. Interested in a call this week?",
+   647→    },
+   648→  });
+   649→  await db.notification.create({
+   650→    data: {
+   651→      userId: byUsername["maya-edits"],
+   652→      type: "INQUIRY",
+   653→      payload: JSON.stringify({
+   654→        actor: "Marco Bellini",
+   655→        actorUsername: "marco-tells",
+   656→        subject: "Short film title sequence — paid collaboration",
+   657→      }),
+   658→    },
+   659→  });
+   660→
+   661→  console.log(`Seed complete: ${created.length} demo users, ${allProjects.length} published projects + 1 draft, ${followPairs.length} follows, ${savePairs.length} saves, ${viewCount} deduped views.`);
+   662→  console.log("Demo sign-in: demo@beanfolio.app / demo1234 (fixture data only).");
+   663→}
+   664→
+   665→main()
+   666→  .catch((e) => {
+   667→    console.error(e);
+   668→    process.exit(1);
+   669→  })
+   670→  .finally(() => db.$disconnect());
+   671→

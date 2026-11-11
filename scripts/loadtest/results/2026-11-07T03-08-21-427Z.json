@@ -1,0 +1,241 @@
+{
+  "meta": {
+    "tool": "run-local.ts (bun, stdlib)",
+    "startedAt": "2026-11-07T03:06:49.946Z",
+    "finishedAt": "2026-11-07T03:08:21.427Z",
+    "partial": false,
+    "dryRun": false,
+    "scenarios": [
+      "browse"
+    ]
+  },
+  "environment": {
+    "platform": "linux 5.10.134-013.15.kangaroo.al8.x86_64 x64",
+    "cpus": 2,
+    "totalMemGiB": 3.9,
+    "bun": "1.3.14"
+  },
+  "config": {
+    "baseUrl": "http://localhost:3000",
+    "maxVu": 100,
+    "durationPerPhaseS": 20,
+    "warmupS": 10,
+    "runTimeoutS": 3600,
+    "slo": {
+      "publicP95Ms": 500,
+      "writeP95Ms": 1000,
+      "hardErrorRate": 0.001
+    }
+  },
+  "credentialsUsed": {
+    "auth": "bean-e2e@beanfolio.app",
+    "publish": "pub-e2e-1027@beanfolio.test"
+  },
+  "scenarios": [
+    {
+      "name": "browse",
+      "describe": "public read mix: discover 40% / profile 20% / media 15% / shell 10% / professions 10% / ops 5%",
+      "phases": [
+        {
+          "label": "5 VUs",
+          "vus": 5,
+          "durationS": 10,
+          "requests": 234,
+          "rps": 23.4,
+          "p50": 11,
+          "p95": 24,
+          "p99": 61,
+          "hardErrors": 0,
+          "errorRate": 0,
+          "client4xx": 0,
+          "rateLimited429": 0,
+          "verdict": "PASS",
+          "statusHist": {
+            "200": 234
+          },
+          "endpoints": [
+            {
+              "endpoint": "GET /api/discover",
+              "count": 201,
+              "p50": 11,
+              "p95": 23,
+              "hardErrors": 0,
+              "client4xx": 0,
+              "rateLimited": 0
+            },
+            {
+              "endpoint": "GET /api/health",
+              "count": 10,
+              "p50": 9,
+              "p95": 24,
+              "hardErrors": 0,
+              "client4xx": 0,
+              "rateLimited": 0
+            },
+            {
+              "endpoint": "GET /api/professions",
+              "count": 23,
+              "p50": 8,
+              "p95": 18,
+              "hardErrors": 0,
+              "client4xx": 0,
+              "rateLimited": 0
+            }
+          ]
+        },
+        {
+          "label": "10 VUs",
+          "vus": 10,
+          "durationS": 20,
+          "requests": 948,
+          "rps": 47.4,
+          "p50": 10,
+          "p95": 27,
+          "p99": 107,
+          "hardErrors": 0,
+          "errorRate": 0,
+          "client4xx": 0,
+          "rateLimited429": 0,
+          "verdict": "PASS",
+          "statusHist": {
+            "200": 948
+          },
+          "endpoints": [
+            {
+              "endpoint": "GET /api/discover",
+              "count": 807,
+              "p50": 11,
+              "p95": 27,
+              "hardErrors": 0,
+              "client4xx": 0,
+              "rateLimited": 0
+            },
+            {
+              "endpoint": "GET /api/professions",
+              "count": 99,
+              "p50": 7,
+              "p95": 42,
+              "hardErrors": 0,
+              "client4xx": 0,
+              "rateLimited": 0
+            },
+            {
+              "endpoint": "GET /api/health",
+              "count": 42,
+              "p50": 8,
+              "p95": 15,
+              "hardErrors": 0,
+              "client4xx": 0,
+              "rateLimited": 0
+            }
+          ]
+        },
+        {
+          "label": "50 VUs",
+          "vus": 50,
+          "durationS": 20,
+          "requests": 3185,
+          "rps": 159.3,
+          "p50": 88,
+          "p95": 403,
+          "p99": 506,
+          "hardErrors": 0,
+          "errorRate": 0,
+          "client4xx": 0,
+          "rateLimited429": 0,
+          "verdict": "PASS",
+          "statusHist": {
+            "200": 3185
+          },
+          "endpoints": [
+            {
+              "endpoint": "GET /api/health",
+              "count": 168,
+              "p50": 90,
+              "p95": 408,
+              "hardErrors": 0,
+              "client4xx": 0,
+              "rateLimited": 0
+            },
+            {
+              "endpoint": "GET /api/discover",
+              "count": 2713,
+              "p50": 91,
+              "p95": 407,
+              "hardErrors": 0,
+              "client4xx": 0,
+              "rateLimited": 0
+            },
+            {
+              "endpoint": "GET /api/professions",
+              "count": 304,
+              "p50": 68,
+              "p95": 338,
+              "hardErrors": 0,
+              "client4xx": 0,
+              "rateLimited": 0
+            }
+          ]
+        },
+        {
+          "label": "100 VUs",
+          "vus": 100,
+          "durationS": 40,
+          "requests": 6599,
+          "rps": 165,
+          "p50": 354,
+          "p95": 776,
+          "p99": 940,
+          "hardErrors": 0,
+          "errorRate": 0,
+          "client4xx": 0,
+          "rateLimited429": 0,
+          "verdict": "FAIL",
+          "statusHist": {
+            "200": 6599
+          },
+          "endpoints": [
+            {
+              "endpoint": "GET /api/professions",
+              "count": 641,
+              "p50": 253,
+              "p95": 632,
+              "hardErrors": 0,
+              "client4xx": 0,
+              "rateLimited": 0
+            },
+            {
+              "endpoint": "GET /api/health",
+              "count": 357,
+              "p50": 343,
+              "p95": 750,
+              "hardErrors": 0,
+              "client4xx": 0,
+              "rateLimited": 0
+            },
+            {
+              "endpoint": "GET /api/discover",
+              "count": 5601,
+              "p50": 361,
+              "p95": 787,
+              "hardErrors": 0,
+              "client4xx": 0,
+              "rateLimited": 0
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "totals": {
+    "requests": 10966,
+    "hardErrors": 0,
+    "rateLimited429": 0,
+    "client4xx": 0
+  },
+  "thresholdBreach": true,
+  "notes": [
+    "No media paths harvested from /api/discover — browse mix redistributed that share to discover.",
+    "No public profile fixtures visible anonymously (demo profiles are excluded by design) — browse profile/shell shares were served as discover requests."
+  ]
+}

@@ -1,0 +1,982 @@
+// BEAN Folio — PostgreSQL target schema (Phase A: zero-app-change mirror)
+//
+// This is the migration companion to `schema.prisma` (SQLite). It is byte-for-byte
+// the same data model — identical models, fields, constraints and indexes — with
+// only the datasource provider switched. Keeping the model identical means the
+// generated Prisma client has exactly the same TypeScript surface, so the
+// application code, zod schemas and ETL all run unchanged against PostgreSQL.
+//
+// Re-sync note (post-cutover audit fix): the mirror had drifted behind
+// schema.prisma — it was missing the avatar/cover focal-point fields, the
+// experienceLevel field, the account-recovery fields, the Project.coverMedia
+// relation + category index, and the whole SiteDesign / SiteMaterial /
+// SiteRevision / PasswordResetToken set. All are added here so a client
+// generated from THIS schema has exactly the same surface as one generated
+// from schema.prisma (the Vercel build generates from this file).
+//
+// Re-sync note (LAXII, 2026-11): the mirror was also missing the entire LAXII
+// AI-studio set — LaxiiConversation / LaxiiMessage / LaxiiImageVersion /
+// LaxiiUsage / LaxiiResume — and the inverse relations on User (laxiiConversations,
+// laxiiUsage, laxiiResumes) and MediaAsset (laxiiVersions). Both schemas now
+// hold the same 38 models; scripts/check-postgres-schema-readiness.ts expects
+// the matching 38-table inventory.
+//
+// Usage (only on a host with a real PostgreSQL instance):
+//   1. cp prisma/schema.postgres.prisma prisma/schema.prisma        (after committing the SQLite one)
+//   2. Set DATABASE_URL=postgresql://user:pass@host:5432/beanfolio
+//   3. bunx prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script > pg-migration/01_schema.sql
+//   4. Apply 01_schema.sql, then run scripts/migrate-to-postgres.ts (import),
+//      then scripts/verify-postgres-migration.ts.
+//
+// Phase B (AFTER cutover, separate PR — see docs/database.md §6): switch
+// status/visibility/kind/type/role String columns to native Prisma `enum` blocks,
+// `tools` → String[] , `Notification.payload` / `AuditEvent.meta` → Json, and add
+// tsvector/GIN search columns. Each of those changes the generated client surface,
+// so they deliberately do NOT ship in the same change as the engine swap.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  // Production connection budget (P4 reliability — exhaustion posture):
+  // each Next instance opens `connection_limit` Postgres connections. The
+  // TOTAL across all instances + workers must stay under the database's
+  // max_connections (managed providers cap it: e.g. Supabase small ≈ 60 on
+  // the direct port, far more via their pooled port). RULE OF THUMB:
+  //   connection_limit = floor(max_connections * 0.8 / instance_count)
+  // and ALWAYS deploy against a pooler (pgBouncer / provider pooler) at
+  // more than ~2 instances — docs/ops/DEPLOYMENT_TIERS.md. Under exhaustion
+  // Prisma queues queries with `pool_timeout` (default 10s) and then fails
+  // the request — the queue worker and rate limiter degrade per design
+  // (docs/ops/RUNBOOK.md §DB saturation) instead of cascading.
+  connection_limit = 10
+  pool_timeout     = 10
+}
+
+// ---------- Identity ----------
+
+model User {
+  id                String    @id @default(cuid())
+  email             String    @unique
+  passwordHash      String
+  name              String
+  username          String?   @unique
+  headline          String?
+  bio               String?
+  location          String?
+  avatarMediaId     String?
+  coverMediaId      String?
+  coverPositionY    Int       @default(50) // cover focal point: object-position Y in %
+  avatarFit         String    @default("cover") // cover | contain
+  avatarZoom        Int       @default(100) // avatar zoom in % (contain mode)
+  avatarPosX        Int       @default(50) // avatar focal X in %
+  avatarPosY        Int       @default(50) // avatar focal Y in %
+  availability      String? // e.g. "Open to opportunities"
+  experienceLevel   String? // optional self-described level, e.g. "Early career" | "Mid-career" | "Senior"
+  contactEmail      String?
+  websiteUrl        String?
+  profileVisibility String    @default("PUBLIC") // PUBLIC | PRIVATE
+  aiConsent         Boolean   @default(false)
+  onboarded         Boolean   @default(false)
+  isDemo            Boolean   @default(false) // true = fixture account from scripts/seed.ts
+  role              String    @default("USER") // USER | ADMIN (reserved for moderation)
+  deletedAt         DateTime?
+  // ---------- Account recovery (forgot password) ----------
+  // Only the SHA-256 of the normalized recovery key is stored — the plaintext
+  // key is shown to the user exactly once (at setup/rotation) and never
+  // persisted, logged or emailed. See src/lib/recovery.ts.
+  recoveryKeyHash   String?
+  recoveryKeySetAt  DateTime?
+  // ---------- Google OAuth (direct OIDC — src/lib/auth/google-oauth.ts) ----------
+  // Google identity (`sub` claim) for accounts linked through "Continue with
+  // Google". Null for password-only accounts. Linking is explicit and never
+  // overwrites a password (docs/google-auth.md).
+  googleId          String?   @unique
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  sessions          Session[]
+  passwordResets    PasswordResetToken[]
+  professions       ProfileProfession[]
+  skills            ProfileSkill[]
+  mediaAssets       MediaAsset[]
+  laxiiConversations LaxiiConversation[]
+  laxiiUsage        LaxiiUsage[]
+  laxiiResumes      LaxiiResume[]
+  projects          Project[]
+  collections       Collection[]
+  savedProjects     SavedProject[]
+  followsGiven      Follow[]            @relation("follower")
+  followsReceived   Follow[]            @relation("following")
+  inquiriesSent     Inquiry[]           @relation("inquirySender")
+  inquiriesReceived Inquiry[]           @relation("inquiryRecipient")
+  notifications     Notification[]
+  profileViews      ProfileView[]
+  blocksMade        Block[]             @relation("blocker")
+  blocksReceived    Block[]             @relation("blocked")
+  reportsMade       Report[]
+  aiConversations   AiConversation[]
+  aiUsage           AiUsage[]
+  agentTasks        AgentTask[]
+  agentArtifacts    AgentArtifact[]
+  exportJobs        ExportJob[]
+  deletionRequests  DeletionRequest[]
+  auditEvents       AuditEvent[]
+  siteMaterials     SiteMaterial[]
+  siteRevisions     SiteRevision[]
+  siteDesign        SiteDesign?
+  giftzRepositories GiftzRepository[]
+  siteStudioSessions SiteStudioSession[] @relation("siteStudioSessions")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt]) // retention sweep: purge expired sessions
+}
+
+model Profession {
+  id       String @id @default(cuid())
+  slug     String @unique
+  label    String
+  group    String // LEGACY flat-group label (e.g. "Film & Motion", "Design") — kept for backward compatibility
+  order    Int    @default(0)
+
+  // Universal taxonomy (additive): hierarchical family + descriptive metadata.
+  // Loose slug reference (no FK) matches the codebase's curated-taxonomy style;
+  // seeds insert families before professions.
+  familySlug  String? // ProfessionFamily.slug — null for legacy rows until reseeded
+  description String? // one-line scope note (planner grounding / directory)
+  aliases     String? // JSON string[] of alternate labels (search/matching only)
+  active      Boolean @default(true) // retired slugs stay queryable but hidden from pickers
+
+  profiles ProfileProfession[]
+
+  @@index([familySlug])
+}
+
+// ---------- Universal profession taxonomy (additive) ----------
+// Hierarchical, expandable profession system: family → profession → specialism.
+// Expansion is data-driven (seeds), never code changes. The legacy flat
+// Profession.group label is retained so the existing UI keeps receiving a
+// backward-compatible flat {slug,label,group} list.
+model ProfessionFamily {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  label       String
+  description String?
+  order       Int      @default(0)
+  createdAt   DateTime @default(now())
+}
+
+// A specialism narrows a profession (e.g. "Broadcast Journalist" under
+// "Journalism"). Loose professionSlug reference, indexed for directory reads.
+model Specialism {
+  id             String   @id @default(cuid())
+  slug           String   @unique
+  professionSlug String // Profession.slug (loose reference)
+  label          String
+  order          Int      @default(0)
+
+  @@index([professionSlug])
+}
+
+model ProfileProfession {
+  userId       String
+  professionId String
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  profession   Profession @relation(fields: [professionId], references: [id], onDelete: Cascade)
+
+  @@id([userId, professionId])
+}
+
+model Skill {
+  id       String @id @default(cuid())
+  slug     String @unique
+  label    String
+
+  profiles ProfileSkill[]
+  projects ProjectSkill[]
+}
+
+model ProfileSkill {
+  userId  String
+  skillId String
+  user    User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skill   Skill @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@id([userId, skillId])
+}
+
+// ---------- Media ----------
+
+model MediaAsset {
+  id          String   @id @default(cuid())
+  ownerId     String
+  owner       User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  kind        String // IMAGE | VIDEO | AUDIO | DOCUMENT
+  filename    String
+  mime        String
+  size        Int
+  width       Int?
+  height      Int?
+  status      String   @default("READY") // READY | FAILED
+  storagePath String // path under /uploads
+  createdAt   DateTime @default(now())
+
+  projectMedia ProjectMedia[]
+  projectCovers Project[]
+  siteMaterials SiteMaterial[]
+  laxiiVersions LaxiiImageVersion[]
+  agentArtifacts AgentArtifact[]
+
+  @@index([ownerId])
+  // PENDING-upload sweep (queue/handlers.ts): status + createdAt window scan.
+  @@index([status, createdAt])
+}
+
+// ---------- Projects ----------
+
+model Project {
+  id           String    @id @default(cuid())
+  ownerId      String
+  owner        User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  title        String
+  summary      String?
+  description  String?
+  category     String? // profession slug
+  status       String    @default("DRAFT") // DRAFT | PUBLISHED
+  visibility   String    @default("PUBLIC") // PUBLIC | UNLISTED | PRIVATE
+  coverMediaId String?
+  brief        String?
+  process      String?
+  challenges   String?
+  outcome      String?
+  role         String? // creator's contribution
+  tools        String? // JSON string array of tool names (SQLite has no array type)
+  // Universal Studio (additive, optional): JSON envelope with the project's
+  // profession-aware metadata — { kind, templateId, fields, custom }. Nullable
+  // so every pre-existing project stays valid untouched; parsed defensively at
+  // the serializer boundary (lib/serialize.ts).
+  customFields String?
+  externalUrl  String?
+  repoUrl      String?
+  publishedAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  coverMedia   MediaAsset? @relation(fields: [coverMediaId], references: [id], onDelete: SetNull)
+
+  skills       ProjectSkill[]
+  media        ProjectMedia[]
+  contributors Contributor[]
+  savedBy      SavedProject[]
+  collections  CollectionItem[]
+  views        ProjectView[]
+  inquiries    Inquiry[]
+
+  @@index([ownerId])
+  @@index([status, visibility, publishedAt])
+  @@index([category]) // category-filtered discovery/search queries
+}
+
+model ProjectSkill {
+  projectId String
+  skillId   String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  skill     Skill   @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@id([projectId, skillId])
+  @@index([skillId]) // skill-side joins in search/discovery
+}
+
+model ProjectMedia {
+  projectId String
+  mediaId   String
+  order     Int     @default(0)
+  caption   String?
+
+  project Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  media   MediaAsset @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+
+  @@id([projectId, mediaId])
+  @@index([mediaId]) // media delete ref-count lookups
+}
+
+model Contributor {
+  id           String  @id @default(cuid())
+  projectId    String
+  project      Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId       String?
+  name         String
+  role         String?
+  contribution String?
+
+  @@index([projectId])
+}
+
+// ---------- Discovery ----------
+
+model SavedProject {
+  userId    String
+  projectId String
+  createdAt DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@id([userId, projectId])
+  @@index([projectId]) // project-side saved counts / moderation lookups
+}
+
+model Collection {
+  id          String   @id @default(cuid())
+  ownerId     String
+  owner       User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  isPublic    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items CollectionItem[]
+}
+
+model CollectionItem {
+  collectionId String
+  projectId    String
+  addedAt      DateTime @default(now())
+
+  collection Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  project    Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@id([collectionId, projectId])
+  @@index([projectId]) // profile page item filters
+}
+
+model Follow {
+  followerId  String
+  followingId String
+  createdAt   DateTime @default(now())
+
+  follower  User @relation("follower", fields: [followerId], references: [id], onDelete: Cascade)
+  following User @relation("following", fields: [followingId], references: [id], onDelete: Cascade)
+
+  @@id([followerId, followingId])
+  @@index([followingId])
+}
+
+// ---------- Connections ----------
+
+model Inquiry {
+  id          String    @id @default(cuid())
+  senderId    String
+  recipientId String
+  projectId   String?
+  type        String    @default("INQUIRY") // INQUIRY | COLLABORATION | INVITE
+  subject     String
+  message     String
+  status      String    @default("PENDING") // PENDING | ACCEPTED | DECLINED
+  createdAt   DateTime  @default(now())
+  respondedAt DateTime?
+
+  sender    User     @relation("inquirySender", fields: [senderId], references: [id], onDelete: Cascade)
+  recipient User     @relation("inquiryRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  @@index([recipientId])
+  @@index([senderId])
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String // FOLLOW | INQUIRY | INQUIRY_RESPONSE | SAVE | SYSTEM
+  payload   String    @default("{}") // JSON string
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@index([userId, readAt]) // unread-count queries
+}
+
+model Block {
+  blockerId String
+  blockedId String
+  createdAt DateTime @default(now())
+
+  blocker User @relation("blocker", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked User @relation("blocked", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  @@id([blockerId, blockedId])
+  @@index([blockedId]) // visibility-filter OR-scan on public routes
+}
+
+model Report {
+  id         String   @id @default(cuid())
+  reporterId String
+  reporter   User     @relation(fields: [reporterId], references: [id], onDelete: Cascade)
+  targetType String // PROJECT | PROFILE | MESSAGE
+  targetId   String
+  reason     String
+  details    String?
+  status     String   @default("OPEN") // OPEN | REVIEWED | RESOLVED
+  createdAt  DateTime @default(now())
+
+  @@index([reporterId])
+  @@index([targetType, targetId])
+  @@index([status])
+}
+
+// ---------- Insights ----------
+// Dedup rule: one view per viewerKey per UTC day per target. Counts are ESTIMATED.
+
+model ProjectView {
+  id           String   @id @default(cuid())
+  projectId    String
+  project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  viewerUserId String? // plain scalar (no FK) so anonymous tracking stays lightweight
+  viewerKey    String // "u:<userId>" for signed-in, "a:<anonCookie>" otherwise
+  day          String // UTC "YYYY-MM-DD"
+  createdAt    DateTime @default(now())
+
+  @@unique([projectId, viewerKey, day])
+  @@index([projectId])
+}
+
+model ProfileView {
+  id            String   @id @default(cuid())
+  profileUserId String
+  profile       User     @relation(fields: [profileUserId], references: [id], onDelete: Cascade)
+  viewerKey     String
+  day           String
+  createdAt     DateTime @default(now())
+
+  @@unique([profileUserId, viewerKey, day])
+  @@index([profileUserId])
+}
+
+// ---------- AI ----------
+
+model AiConversation {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String   @default("New conversation")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages AiMessage[]
+
+  @@index([userId])
+}
+
+model AiMessage {
+  id             String         @id @default(cuid())
+  conversationId String
+  conversation   AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           String // USER | ASSISTANT | SYSTEM
+  content        String
+  createdAt      DateTime       @default(now())
+
+  @@index([conversationId])
+}
+
+model AiUsage {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  feature   String // improve | suggest | chat
+  // Documented per-call cost estimate in integer cents (0 = no metered cost).
+  // An ESTIMATE from the provider registry — never a billed amount.
+  costEstimateCents Int @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([userId, feature])
+}
+
+// ---------- LAXII — conversational AI image studio ----------
+// One conversation = one multi-turn creation thread (image or banner kind).
+// Messages record every prompt/operation; assistant messages carry the
+// generated output versions (variants) as LaxiiImageVersion rows pointing at
+// ordinary MediaAssets. The version tree (parentVersionId) is the source of
+// truth for undo/redo, regeneration and before/after comparison.
+
+model LaxiiConversation {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String   @default("New creation")
+  kind      String   @default("IMAGE") // IMAGE | BANNER | RESUME | AVATAR
+  bannerKind String? // banner category slug when kind = BANNER (e.g. "youtube-channel")
+  // Banner canvas geometry (null for IMAGE conversations)
+  canvasWidth  Int?
+  canvasHeight Int?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages LaxiiMessage[]
+  versions LaxiiImageVersion[]
+  resume   LaxiiResume?
+
+  @@index([userId, updatedAt])
+}
+
+model LaxiiMessage {
+  id             String            @id @default(cuid())
+  conversationId String
+  conversation   LaxiiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           String // USER | ASSISTANT | SYSTEM
+  text           String @default("") // the user's prompt (USER) or a system note
+  operation      String? // GENERATE | EDIT | VARIATIONS | UPSCALE | REMOVE_BACKGROUND | EXPAND | BANNER | RESTORE | RESUME_GENERATE | RESUME_TAILOR | RESUME_REPHRASE | RESUME_UPDATE
+  provider       String? // managed | gemini | openai
+  model          String? // exact provider model id used
+  status         String  @default("DONE") // DONE | FAILED
+  error          String? // user-safe failure message when status = FAILED
+  metaJson       String? // JSON: { aspect, requestedSize, refs: [...], usage, warnings }
+  createdAt      DateTime @default(now())
+
+  versions LaxiiImageVersion[]
+
+  @@index([conversationId, createdAt])
+}
+
+model LaxiiImageVersion {
+  id              String        @id @default(cuid())
+  messageId       String
+  message         LaxiiMessage  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  conversationId  String
+  conversation    LaxiiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  mediaId         String
+  media           MediaAsset    @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  parentVersionId String?
+  parent          LaxiiImageVersion?  @relation("laxiiVersionTree", fields: [parentVersionId], references: [id], onDelete: SetNull)
+  children        LaxiiImageVersion[] @relation("laxiiVersionTree")
+  isSelected      Boolean       @default(false)
+  isFavourite     Boolean       @default(false)
+  width           Int?
+  height          Int?
+  prompt          String?
+  operation       String?
+  createdAt       DateTime      @default(now())
+
+  @@index([conversationId])
+  @@index([parentVersionId])
+  @@index([mediaId])
+}
+
+model LaxiiUsage {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  feature   String // laxii.generate | laxii.edit | laxii.variations | laxii.upscale | laxii.removeBackground | laxii.expand | laxii.banner
+  provider  String
+  model     String
+  operation String
+  // Documented per-image cost estimate in integer cents (0 = no metered cost).
+  // An ESTIMATE from the provider registry — never a billed amount.
+  costEstimateCents Int @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([feature])
+}
+
+// ---------- Cross-agent orchestration (BEAN Intelligence) ----------
+// Durable task record for work delegated between agents (RIISHE → LAXII,
+// RIISHE → CODE GIFTZ, CODE GIFTZ → LAXII). One hop per delegation, always
+// user-visible; no autonomous agent-to-agent loops. stepsJson is a JSON array
+// of step records; resultJson carries the agent's structured outcome.
+// Phase 4: kind "ENGINEERING_TASK" (agent CODE_GIFTZ) uses an extended status
+// vocabulary on this same string column — QUEUED | ANALYZING | PLANNING |
+// AWAITING_APPROVAL | EXECUTING | VALIDATING | TESTING | COMPLETED | FAILED |
+// CANCELLED — plus repoId → GiftzRepository. All other consumers are unaffected.
+model AgentTask {
+  id           String     @id @default(cuid())
+  userId       String
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  agent        String // RIISHE | LAXII | CODE_GIFTZ — the agent that owns/performS the task
+  kind         String // e.g. BANNER_DESIGN | AVATAR_DESIGN | WEBSITE_DESIGN | RESEARCH
+  title        String
+  // PENDING | RUNNING | AWAITING_APPROVAL | COMPLETED | FAILED | CANCELLED
+  status       String     @default("PENDING")
+  parentTaskId String?
+  parentTask   AgentTask? @relation("agentTaskTree", fields: [parentTaskId], references: [id], onDelete: SetNull)
+  childTasks   AgentTask[] @relation("agentTaskTree")
+  stepsJson    String     @default("[]")
+  resultJson   String?
+  error        String?
+  // Phase 4 (ENGINEERING_TASK): authorized workspace repository this task runs on.
+  repoId       String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  // Phase 5: artifacts produced by this task (source) and consumed by it (destination).
+  producedArtifacts  AgentArtifact[] @relation("artifactSource")
+  consumedArtifacts  AgentArtifact[] @relation("artifactDestination")
+
+  @@index([userId, updatedAt])
+  @@index([status])
+}
+
+// ---------- Phase 5 — cross-capability artifact references ----------
+// A safe shared reference to an EXISTING MediaAsset produced by one agent task
+// and consumed by another (CODE GIFTZ ⇄ LAXII). Files are never copied or
+// moved: the row carries metadata + the mediaId only; bytes are read through
+// the storage layer behind ownership checks. Private storage paths and
+// credentials never cross a service boundary — clients see mediaId and the
+// ownership-checked /api/media/[id]/raw URL, nothing else. Status lifecycle:
+// ACTIVE (fresh, verified) → CONSUMED (integrated exactly once) | EXPIRED
+// (TTL passed) | MISSING (media row or blob gone) — resolved honestly, never
+// silently.
+model AgentArtifact {
+  id                String     @id @default(cuid())
+  userId            String
+  user              User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mediaId           String
+  media             MediaAsset @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  sourceTaskId      String?
+  sourceTask        AgentTask? @relation("artifactSource", fields: [sourceTaskId], references: [id], onDelete: SetNull)
+  destinationTaskId String?
+  destinationTask   AgentTask? @relation("artifactDestination", fields: [destinationTaskId], references: [id], onDelete: SetNull)
+  role              String     @default("ASSET") // ASSET | BANNER | HERO | ...
+  mime              String
+  width             Int?
+  height            Int?
+  sizeBytes         Int
+  // ACTIVE | CONSUMED | EXPIRED | MISSING
+  status            String     @default("ACTIVE")
+  expiresAt         DateTime?
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  @@index([userId, createdAt])
+  @@index([destinationTaskId])
+  @@index([mediaId])
+}
+
+// ---------- CODE GIFTZ Engineering workspaces (Phase 4) ----------
+// Durable registry of user-authorized repositories the engineering agent may
+// inspect and (after explicit approval) modify. Files live on disk under
+// data/giftz-workspaces/<id>; the path is ALWAYS derived from the row id and
+// never stored from user input. Deleting the row archives/removes the
+// workspace directory; completed tasks keep their repoId for history.
+model GiftzRepository {
+  id        String   @id @default(cuid())
+  ownerId   String
+  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name      String
+  // READY | ARCHIVED
+  status    String   @default("READY")
+  sizeBytes Int      @default(0)
+  fileCount Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([ownerId, updatedAt])
+}
+
+// ---------- LAXII Resume Studio ----------
+// One editable resume document per resume conversation. dataJson holds the
+// full resume JSON (JSON-Resume-schema-informed structure); factsJson keeps
+// a snapshot of EXACTLY what the user provided, so AI wording suggestions can
+// always be told apart from user facts. Exports (PDF/DOCX) are rendered
+// on demand and never overwrite this editable source.
+model LaxiiResume {
+  id             String            @id @default(cuid())
+  conversationId String            @unique
+  conversation   LaxiiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  resumeType     String            @default("ats") // ats | modern | minimal | creative | technical | fresher | experienced | role-specific
+  template       String            @default("classic") // classic | modern | minimal | creative
+  dataJson       String            @default("{}") // resume document JSON (see src/lib/laxii/resume-schema.ts)
+  factsJson      String            @default("{}") // user-provided facts snapshot (provenance)
+  aiTouchedJson  String            @default("[]") // section keys whose wording the AI touched
+  targetTitle    String?
+  jobDescription String?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  @@index([userId, updatedAt])
+}
+
+// ---------- Website Builder ----------
+// One custom website per profile. Drafts are private; only publishedConfig is
+// rendered for visitors on the public profile (the real public URL).
+
+model SiteDesign {
+  id              String    @id @default(cuid())
+  userId          String    @unique
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  draftConfig     String? // JSON SiteConfig draft — always private to the owner
+  publishedConfig String? // JSON snapshot of the config at publish time
+  status          String    @default("DRAFT") // DRAFT | PUBLISHED
+  publishedAt     DateTime?
+  // Platform-level setting (NOT part of the site snapshot): renders the small
+  // "Made with BEAN Folio · Code Giftz" attribution in the site footer. It is
+  // applied by the renderer at view time — never stored inside publishedConfig —
+  // so republishing can never duplicate it and editing content cannot corrupt it.
+  watermark       Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+// ---------- Website source materials (Code Giftz "create my own website") ----------
+// Files the user uploaded AS INPUT for a custom website build. One row per
+// uploaded MediaAsset, owned by the uploader; extractedText holds capped text
+// pulled out of PDFs/text documents server-side. Materials are private to
+// their owner and are only ever consumed by the user's own Code Giftz
+// generation requests — they never appear in any public API.
+model SiteMaterial {
+  id            String     @id @default(cuid())
+  userId        String
+  user          User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mediaId       String
+  media         MediaAsset @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  label         String // original filename (display only)
+  kind          String // IMAGE | VIDEO | AUDIO | DOCUMENT (mirrors media.kind)
+  // READY = usable content extracted; EMPTY = stored but nothing extractable
+  // (images are catalogued, video/audio are not transcribed); FAILED = the
+  // extraction itself errored.
+  extractStatus String     @default("EMPTY")
+  extractedText String? // capped extracted text (PDF/text documents)
+  note          String? // honest capability note shown to the user
+  metaJson      String? // JSON: { pages?, chars?, width?, height?, description? }
+  createdAt     DateTime   @default(now())
+
+  @@index([userId])
+}
+
+// ---------- Website draft revisions (reversible Code Giftz changes) ----------
+// A snapshot of the saved draft taken automatically right before the draft is
+// overwritten (manual save) or restored. Keeps the user's original version
+// recoverable even after a Code Giftz proposal is accepted, saved and the
+// browser session ends. Bounded per user (pruned to the newest 10).
+model SiteRevision {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  label     String // why the snapshot exists ("Before save", "Before restore")
+  config    String // JSON SiteConfig snapshot
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
+// ---------- Website Studio chat (Code Giftz conversational website coding) ----------
+// A named chat thread per user for the Visual Website Coding Studio. Messages
+// record the real conversation; assistant messages carry the ISOLATED working
+// copy (proposal) produced by the plan→execute pipeline — the proposal lives
+// ONLY in the message row (never in draftConfig) until the user explicitly
+// saves it, so previewing can never overwrite the saved or published site.
+model SiteStudioSession {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation("siteStudioSessions", fields: [userId], references: [id], onDelete: Cascade)
+  title       String   @default("New session")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  messages SiteStudioMessage[]
+
+  @@index([userId, updatedAt])
+}
+
+model SiteStudioMessage {
+  id        String            @id @default(cuid())
+  sessionId String
+  session   SiteStudioSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  role      String // USER | ASSISTANT | SYSTEM
+  text      String            @default("")
+  // Execution state for assistant turns: PENDING | RUNNING | DONE | FAILED
+  status    String            @default("DONE")
+  // ASSISTANT turns only — the isolated working copy + change inventory:
+  // { config: SiteConfig, changedFiles: [...], summary, verification, taskId }
+  proposalJson String? // null = plain reply (no changes proposed)
+  error     String? // user-safe failure message when status = FAILED
+  taskId    String? // AgentTask id driving this turn (progress polling)
+  metaJson  String? // { mode, baseConfigHash, stage }
+  createdAt DateTime          @default(now())
+
+  @@index([sessionId, createdAt])
+  @@index([taskId])
+}
+
+model AuditEvent {
+  id          String   @id @default(cuid())
+  actorUserId String?
+  actor       User?    @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  action      String // e.g. "privacy.update", "account.deletion_request", "auth.login"
+  targetType  String?
+  targetId    String?
+  meta        String   @default("{}")
+  createdAt   DateTime @default(now())
+
+  @@index([actorUserId, createdAt])
+}
+
+model ExportJob {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status      String    @default("PENDING") // PENDING | READY | FAILED
+  payload     String? // full JSON export of the user's own data
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  @@index([userId])
+}
+
+model DeletionRequest {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reason      String?
+  status      String    @default("PENDING") // PENDING | COMPLETED
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+}
+
+// ---------- Account recovery ----------
+// Single-use, short-lived password-reset authorization issued only after BOTH
+// the account email AND the account's recovery key verified server-side.
+// Only the SHA-256 of the token is stored; the plaintext token lives exactly
+// long as the client's reset attempt.
+
+model PasswordResetToken {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String    @unique // sha256 hex of the opaque token
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt]) // retention sweep
+}
+
+// ---------- Durable background jobs (Phase 2: horizontal scale) ----------
+// DB-backed queue so expensive work (AI generation, media processing,
+// maintenance sweeps) survives restarts, can run on any instance, and reports
+// honest status. Workers claim rows atomically via a status-guarded update;
+// retries use exponential backoff; DEAD = exceeded maxAttempts (dead-letter).
+// Lifecycle: QUEUED → RUNNING → SUCCEEDED | FAILED (retry, backoff) → DEAD.
+// CANCELLED is user/ops requested. dedupeKey (nullable unique) gives
+// idempotent enqueue: one active job per key (NULL keys never conflict).
+model BackgroundJob {
+  id          String    @id @default(cuid())
+  kind        String // e.g. "site.studio-turn", "media.thumbnails", "maintenance.sweep"
+  status      String    @default("QUEUED") // QUEUED | RUNNING | SUCCEEDED | FAILED | DEAD | CANCELLED
+  userId      String? // owner-scoped quota + per-user concurrency (null = system job)
+  payload     String    @default("{}") // JSON
+  runAt       DateTime  @default(now()) // earliest execution time (backoff)
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(3)
+  lastError   String?
+  claimedBy   String? // worker instance id
+  claimedAt   DateTime?
+  heartbeatAt DateTime? // liveness for stuck-RUNNING recovery
+  dedupeKey   String?   @unique // optional idempotency: one active job per key
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  finishedAt  DateTime?
+
+  @@index([status, runAt])
+  @@index([kind, status])
+  @@index([userId, createdAt])
+}
+
+// ---------- Shared rate-limit buckets (opt-in) ----------
+// Fixed-window counters for RATE_LIMIT_BACKEND=postgres deployments. The
+// default backend stays in-memory (single instance); this table lets small
+// multi-instance deployments share abuse-sensitive buckets (login, AI, upload)
+// through one atomic upsert per request without provisioning Redis. Rows are
+// pruned by the maintenance sweep. One row per (key, window).
+model RateLimitBucket {
+  key         String // e.g. "login:ip:<hash>" — always hashed/opaque
+  windowStart DateTime
+  count       Int      @default(0)
+  expiresAt   DateTime // windowStart + window; pruned by maintenance
+
+  @@id([key, windowStart])
+  @@index([expiresAt])
+}
+
+// ---------- Shared cache (opt-in) ----------
+// CACHE_BACKEND=postgres deployments share viewer-independent PUBLIC cache
+// entries (published profiles, profession taxonomy) through this table so
+// every instance reads the same data and sees the same invalidation. The
+// cache API enforces a public-key whitelist — private/per-viewer data is
+// refused at the write boundary and can never enter a shared store.
+// tags is a JSON string array (portable across providers).
+model CacheEntry {
+  key        String   @id
+  value      String // JSON payload (viewer-independent public shapes only)
+  namespace  String // first key segment ("profile", "professions") — generation scope
+  tags       String   @default("[]") // JSON string array of platform event tags
+  expiresAt  DateTime // TTL; pruned by the maintenance sweep
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([namespace])
+  @@index([expiresAt])
+}
+
+// Generation counter per namespace. Any invalidation bumps the namespace's
+// generation; each process polls these rows (single tiny SELECT, default 1s)
+// and drops its local L1 buffer for any namespace whose generation advanced —
+// so a publish/unpublish on instance A invalidates instance B's local buffer
+// within the poll interval, without a message broker.
+model CacheGeneration {
+  namespace  String   @id
+  generation Int      @default(0)
+  updatedAt  DateTime @updatedAt
+}
+// ---------- Google OAuth (direct OIDC — src/lib/auth/google-oauth.ts) ----------
+// Server-side authorization-flow records. The browser never carries state,
+// nonce or the PKCE verifier — they live here, keyed by hashes, single-use and
+// short-lived. DB-backed (not a signed cookie) so validation holds across
+// horizontally scaled instances without a shared signing secret.
+model OAuthFlow {
+  id           String   @id @default(cuid())
+  // sha256(state) — the raw state value only ever exists in the redirect URL.
+  stateHash    String   @unique
+  // PKCE verifier — server-side only; Google receives only the S256 challenge.
+  codeVerifier String
+  // sha256(nonce) — compared against the verified ID token's nonce claim.
+  nonceHash    String
+  createdAt    DateTime @default(now())
+  expiresAt    DateTime
+
+  @@index([expiresAt])
+}
+
+// A pending "link Google to your existing password account" grant. Issued ONLY
+// after the Google identity was fully verified server-side (signature, issuer,
+// audience, expiry, nonce, email_verified) and the verified email matches an
+// existing password account. Consumed by the NEXT successful password login
+// with the matching opaque cookie — the user proves account ownership once
+// with their password; the password itself is never changed by linking.
+model GoogleLink {
+  id        String   @id @default(cuid())
+  tokenHash String   @unique // sha256(opaque cookie token)
+  googleId  String
+  email     String // verified Google email this grant is scoped to
+  name      String?
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+
+  @@index([expiresAt])
+}

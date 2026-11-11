@@ -1,0 +1,918 @@
+     1→"use client";
+     2→
+     3→import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+     4→import {
+     5→  AlertTriangle,
+     6→  Check,
+     7→  Copy,
+     8→  Lightbulb,
+     9→  MessageSquare,
+    10→  PenLine,
+    11→  Plus,
+    12→  Send,
+    13→  ServerCrash,
+    14→  Settings as SettingsIcon,
+    15→  Sparkles,
+    16→  Wand2,
+    17→} from "lucide-react";
+    18→import { toast } from "sonner";
+    19→
+    20→import { Badge } from "@/components/ui/badge";
+    21→import { Button } from "@/components/ui/button";
+    22→import { Card, CardContent } from "@/components/ui/card";
+    23→import { Input } from "@/components/ui/input";
+    24→import { Label } from "@/components/ui/label";
+    25→import { Progress } from "@/components/ui/progress";
+    26→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+    27→import { Separator } from "@/components/ui/separator";
+    28→import { Skeleton } from "@/components/ui/skeleton";
+    29→import { Switch } from "@/components/ui/switch";
+    30→import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+    31→import { Textarea } from "@/components/ui/textarea";
+    32→import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+    33→
+    34→import { EmptyState } from "@/components/bean/EmptyState";
+    35→import { Spinner } from "@/components/bean/Spinner";
+    36→import { categoryLabel } from "@/components/bean/ProjectCard";
+    37→
+    38→import { api, ApiError, formatDate } from "@/lib/client";
+    39→import { navigate } from "@/lib/hash-router";
+    40→import { useSession } from "@/lib/session";
+    41→import type {
+    42→  AiCapabilitiesDTO,
+    43→  AiConversationSummary,
+    44→  AiMessageDTO,
+    45→} from "@/lib/types";
+    46→import { cn } from "@/lib/utils";
+    47→
+    48→// ------------------------------------------------------------------ helpers
+    49→
+    50→interface AiFailure {
+    51→  title: string;
+    52→  hint?: string;
+    53→  /** "retry" → same request can succeed; "settings" → user action required elsewhere. */
+    54→  action?: "retry" | "settings";
+    55→}
+    56→
+    57→/** Map any thrown value to an honest, user-safe failure description. Never fakes success. */
+    58→function aiFailure(e: unknown): AiFailure {
+    59→  if (e instanceof ApiError) {
+    60→    if (e.status === 403) {
+    61→      return {
+    62→        title: e.message,
+    63→        hint: "You can enable BEAN Intelligence on this page or in Settings → Privacy.",
+    64→        action: "settings",
+    65→      };
+    66→    }
+    67→    if (e.status === 429) {
+    68→      return { title: e.message, hint: "Daily usage resets at midnight UTC.", action: "retry" };
+    69→    }
+    70→    if (e.status === 502) {
+    71→      return { title: "The AI service is temporarily unavailable.", hint: e.message, action: "retry" };
+    72→    }
+    73→    if (e.status === 0) {
+    74→      return { title: "Network error — check your connection and try again.", action: "retry" };
+    75→    }
+    76→    return { title: e.message, action: "retry" };
+    77→  }
+    78→  return { title: "Something went wrong. Please try again.", action: "retry" };
+    79→}
+    80→
+    81→const SUGGESTED_PROMPTS = [
+    82→  "How can I improve my project descriptions?",
+    83→  "Draft a short intro I can send to a potential client",
+    84→  "Which of my projects should I feature first?",
+    85→] as const;
+    86→
+    87→const IMPROVE_FIELDS = [
+    88→  { value: "description", label: "Description" },
+    89→  { value: "summary", label: "Summary" },
+    90→  { value: "bio", label: "Bio" },
+    91→  { value: "process", label: "Process" },
+    92→  { value: "outcome", label: "Outcome" },
+    93→] as const;
+    94→
+    95→// ------------------------------------------------------------------ copy button
+    96→
+    97→function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
+    98→  const [copied, setCopied] = useState(false);
+    99→  return (
+   100→    <Button
+   101→      type="button"
+   102→      variant="outline"
+   103→      size="sm"
+   104→      disabled={!text}
+   105→      onClick={async () => {
+   106→        try {
+   107→          await navigator.clipboard.writeText(text);
+   108→          setCopied(true);
+   109→          toast.success("Copied to clipboard");
+   110→          setTimeout(() => setCopied(false), 1500);
+   111→        } catch {
+   112→          toast.error("Couldn't access the clipboard in this browser.");
+   113→        }
+   114→      }}
+   115→    >
+   116→      {copied ? <Check className="size-3.5" aria-hidden /> : <Copy className="size-3.5" aria-hidden />}
+   117→      {label}
+   118→    </Button>
+   119→  );
+   120→}
+   121→
+   122→function InlineError({ failure, onRetry }: { failure: AiFailure; onRetry?: () => void }) {
+   123→  return (
+   124→    <div role="alert" className="flex items-start gap-3 rounded-lg border border-destructive/40 bg-destructive/10 p-3">
+   125→      <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden />
+   126→      <div className="min-w-0 flex-1 text-sm">
+   127→        <p className="font-medium text-foreground">{failure.title}</p>
+   128→        {failure.hint && <p className="mt-0.5 text-muted-foreground">{failure.hint}</p>}
+   129→      </div>
+   130→      {onRetry && (
+   131→        <Button variant="outline" size="sm" onClick={onRetry}>
+   132→          Retry
+   133→        </Button>
+   134→      )}
+   135→    </div>
+   136→  );
+   137→}
+   138→
+   139→// ------------------------------------------------------------------ consent gate
+   140→
+   141→function ConsentCard({ dailyLimit, onEnabled }: { dailyLimit: number; onEnabled: () => void }) {
+   142→  const { refresh } = useSession();
+   143→  const [busy, setBusy] = useState(false);
+   144→  const [err, setErr] = useState<string | null>(null);
+   145→
+   146→  const enable = async (next: boolean) => {
+   147→    if (busy) return;
+   148→    setBusy(true);
+   149→    setErr(null);
+   150→    try {
+   151→      await api("/api/me/privacy", { method: "PATCH", json: { aiConsent: next } });
+   152→      await refresh();
+   153→      toast.success("BEAN Intelligence enabled");
+   154→      onEnabled();
+   155→    } catch (e) {
+   156→      const msg = e instanceof ApiError ? e.message : "Something went wrong. Please try again.";
+   157→      setErr(msg);
+   158→      toast.error(msg);
+   159→    } finally {
+   160→      setBusy(false);
+   161→    }
+   162→  };
+   163→
+   164→  return (
+   165→    <Card className="border-primary/40">
+   166→      <CardContent className="p-6">
+   167→        <div className="flex flex-col gap-5">
+   168→          <div className="flex items-start gap-3">
+   169→            <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-gold-soft text-primary ring-1 ring-primary/30">
+   170→              <SettingsIcon className="size-5" aria-hidden />
+   171→            </div>
+   172→            <div className="min-w-0">
+   173→              <h2 className="font-display text-lg font-semibold text-foreground">Enable BEAN Intelligence?</h2>
+   174→              <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
+   175→                BEAN Intelligence runs on a <span className="text-foreground">server-side AI provider</span>. With your
+   176→                consent, the assistant can see <span className="text-foreground">your own portfolio context only</span> —
+   177→                your profile and the projects you own, including private drafts — so its answers are grounded in your
+   178→                work. Other people&apos;s private data is never shared with the model.
+   179→              </p>
+   180→            </div>
+   181→          </div>
+   182→
+   183→          <ul className="space-y-2 rounded-lg border border-border/60 bg-background/40 p-4 text-sm text-muted-foreground">
+   184→            <li className="flex gap-2">
+   185→              <Check className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
+   186→              Consent is revocable at any time in Settings → Privacy — revoking stops all AI features immediately.
+   187→            </li>
+   188→            <li className="flex gap-2">
+   189→              <Check className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
+   190→              Usage is logged and limited to {dailyLimit} AI requests per day; conversations are stored so you can revisit them.
+   191→            </li>
+   192→            <li className="flex gap-2">
+   193→              <Check className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
+   194→              Suggestions are never applied automatically — you choose what to copy back into your portfolio.
+   195→            </li>
+   196→          </ul>
+   197→
+   198→          {err && <InlineError failure={{ title: err }} />}
+   199→
+   200→          <div className="flex items-center justify-between gap-4 rounded-lg border border-border/60 p-4">
+   201→            <div>
+   202→              <Label htmlFor="ai-consent" className="text-sm font-medium text-foreground">
+   203→                Enable BEAN Intelligence
+   204→              </Label>
+   205→              <p className="mt-0.5 text-xs text-muted-foreground">
+   206→                Explicit consent is required before any AI feature becomes active.
+   207→              </p>
+   208→            </div>
+   209→            <Switch
+   210→              id="ai-consent"
+   211→              checked={false}
+   212→              disabled={busy}
+   213→              onCheckedChange={(checked) => {
+   214→                if (checked) void enable(true);
+   215→              }}
+   216→              aria-label="Enable BEAN Intelligence"
+   217→            />
+   218→          </div>
+   219→
+   220→          <p className="text-xs text-muted-foreground/80">
+   221→            This gate exists for your privacy, not to upsell you — AI stays off until you turn it on.
+   222→          </p>
+   223→        </div>
+   224→      </CardContent>
+   225→    </Card>
+   226→  );
+   227→}
+   228→
+   229→// ------------------------------------------------------------------ chat tab
+   230→
+   231→function ChatTab({ consented, onQuotaUsed }: { consented: boolean; onQuotaUsed: () => void }) {
+   232→  const [conversations, setConversations] = useState<AiConversationSummary[]>([]);
+   233→  const [convLoading, setConvLoading] = useState(false);
+   234→  const [activeId, setActiveId] = useState<string | null>(null);
+   235→  const [thread, setThread] = useState<AiMessageDTO[]>([]);
+   236→  const [threadLoading, setThreadLoading] = useState(false);
+   237→  const [sending, setSending] = useState(false);
+   238→  const [input, setInput] = useState("");
+   239→  const [failure, setFailure] = useState<AiFailure | null>(null);
+   240→  const threadRef = useRef<HTMLDivElement>(null);
+   241→
+   242→  const refreshConversations = useCallback(async (silent = false) => {
+   243→    if (!silent) setConvLoading(true);
+   244→    try {
+   245→      const res = await api<{ conversations: AiConversationSummary[] }>("/api/ai/conversations");
+   246→      setConversations(res.conversations);
+   247→    } catch (e) {
+   248→      // A 403 here means consent was revoked — keep the list empty, never fake data.
+   249→      if (!(e instanceof ApiError && e.status === 403)) {
+   250→        if (!silent) toast.error(e instanceof ApiError ? e.message : "Couldn't load conversations.");
+   251→      }
+   252→    } finally {
+   253→      if (!silent) setConvLoading(false);
+   254→    }
+   255→  }, []);
+   256→
+   257→  useEffect(() => {
+   258→    if (consented) void refreshConversations();
+   259→  }, [consented, refreshConversations]);
+   260→
+   261→  useEffect(() => {
+   262→    const el = threadRef.current;
+   263→    if (el) el.scrollTop = el.scrollHeight;
+   264→  }, [thread, sending]);
+   265→
+   266→  const openConversation = async (id: string) => {
+   267→    if (sending) return;
+   268→    setActiveId(id);
+   269→    setThreadLoading(true);
+   270→    setFailure(null);
+   271→    try {
+   272→      const res = await api<{ conversation: { id: string; title: string; messages: AiMessageDTO[] } }>(
+   273→        `/api/ai/conversations/${id}`
+   274→      );
+   275→      setThread(res.conversation.messages);
+   276→    } catch (e) {
+   277→      setThread([]);
+   278→      setFailure(aiFailure(e));
+   279→    } finally {
+   280→      setThreadLoading(false);
+   281→    }
+   282→  };
+   283→
+   284→  const newChat = () => {
+   285→    if (sending) return;
+   286→    setActiveId(null);
+   287→    setThread([]);
+   288→    setFailure(null);
+   289→    setInput("");
+   290→  };
+   291→
+   292→  const send = async (raw: string) => {
+   293→    const message = raw.trim();
+   294→    if (!message || sending) return;
+   295→    setFailure(null);
+   296→    setSending(true);
+   297→    const optimistic: AiMessageDTO = { role: "user", content: message, createdAt: new Date().toISOString() };
+   298→    setThread((t) => [...t, optimistic]);
+   299→    setInput("");
+   300→    try {
+   301→      const res = await api<{ conversationId: string; reply: string }>("/api/ai/chat", {
+   302→        method: "POST",
+   303→        json: { conversationId: activeId ?? undefined, message },
+   304→      });
+   305→      setThread((t) => [
+   306→        ...t,
+   307→        { role: "assistant", content: res.reply, createdAt: new Date().toISOString() },
+   308→      ]);
+   309→      setActiveId(res.conversationId);
+   310→      onQuotaUsed();
+   311→      void refreshConversations(true);
+   312→    } catch (e) {
+   313→      // The optimistic message was never persisted — remove it so the thread stays honest.
+   314→      setThread((t) => t.filter((m) => m !== optimistic));
+   315→      setInput(message);
+   316→      setFailure(aiFailure(e));
+   317→    } finally {
+   318→      setSending(false);
+   319→    }
+   320→  };
+   321→
+   322→  const mobilePicker = (
+   323→    <div className="mb-4 flex items-center gap-2 md:hidden">
+   324→      <Select
+   325→        value={activeId ?? "__new"}
+   326→        onValueChange={(v) => (v === "__new" ? newChat() : void openConversation(v))}
+   327→      >
+   328→        <SelectTrigger className="h-10 flex-1" aria-label="Choose a conversation">
+   329→          <SelectValue placeholder="Conversations" />
+   330→        </SelectTrigger>
+   331→        <SelectContent>
+   332→          <SelectItem value="__new">＋ New chat</SelectItem>
+   333→          {conversations.map((c) => (
+   334→            <SelectItem key={c.id} value={c.id}>
+   335→              {c.title || "Untitled conversation"}
+   336→            </SelectItem>
+   337→          ))}
+   338→        </SelectContent>
+   339→      </Select>
+   340→      <Button variant="outline" size="icon" className="size-10 shrink-0" onClick={newChat} aria-label="Start a new chat">
+   341→        <Plus className="size-4" aria-hidden />
+   342→      </Button>
+   343→    </div>
+   344→  );
+   345→
+   346→  return (
+   347→    <div className="grid gap-4 md:grid-cols-[260px_1fr] md:gap-6">
+   348→      {mobilePicker}
+   349→
+   350→      {/* Sidebar (desktop) */}
+   351→      <aside className="hidden md:block">
+   352→        <div className="flex items-center justify-between pb-2">
+   353→          <h3 className="text-sm font-medium text-foreground">Conversations</h3>
+   354→          <Button variant="outline" size="sm" onClick={newChat}>
+   355→            <Plus className="size-3.5" aria-hidden /> New
+   356→          </Button>
+   357→        </div>
+   358→        <div className="max-h-96 space-y-1.5 overflow-y-auto pr-1" aria-busy={convLoading}>
+   359→          {convLoading ? (
+   360→            <div className="space-y-2 py-1">
+   361→              <Skeleton className="h-12 w-full" />
+   362→              <Skeleton className="h-12 w-full" />
+   363→              <Skeleton className="h-12 w-full" />
+   364→            </div>
+   365→          ) : conversations.length === 0 ? (
+   366→            <p className="px-1 py-3 text-xs leading-relaxed text-muted-foreground">
+   367→              No conversations yet. Your chats with the assistant will appear here.
+   368→            </p>
+   369→          ) : (
+   370→            conversations.map((c) => (
+   371→              <button
+   372→                key={c.id}
+   373→                type="button"
+   374→                onClick={() => void openConversation(c.id)}
+   375→                aria-current={activeId === c.id ? "true" : undefined}
+   376→                className={cn(
+   377→                  "block w-full rounded-lg border px-3 py-2.5 text-left transition-colors",
+   378→                  activeId === c.id
+   379→                    ? "border-primary/40 bg-gold-soft"
+   380→                    : "border-border/50 bg-card hover:border-primary/25 hover:bg-accent"
+   381→                )}
+   382→              >
+   383→                <p className="truncate text-sm font-medium text-foreground">{c.title || "Untitled conversation"}</p>
+   384→                <p className="mt-0.5 text-[11px] text-muted-foreground">{formatDate(c.updatedAt)}</p>
+   385→              </button>
+   386→            ))
+   387→          )}
+   388→        </div>
+   389→      </aside>
+   390→
+   391→      {/* Thread */}
+   392→      <div className="flex min-w-0 flex-col rounded-xl border border-border/60 bg-card">
+   393→        <div ref={threadRef} className="h-[420px] overflow-y-auto p-4 sm:h-[500px]" aria-live="polite">
+   394→          {failure && (
+   395→            <div className="mb-4 space-y-2">
+   396→              <InlineError failure={failure} onRetry={failure.action === "retry" ? () => setFailure(null) : undefined} />
+   397→              {failure.action === "settings" && (
+   398→                <Button variant="outline" size="sm" onClick={() => navigate("/settings")}>
+   399→                  Open Settings
+   400→                </Button>
+   401→              )}
+   402→            </div>
+   403→          )}
+   404→
+   405→          {threadLoading ? (
+   406→            <div className="space-y-4">
+   407→              <Skeleton className="h-14 w-3/4" />
+   408→              <Skeleton className="ml-auto h-10 w-1/2" />
+   409→              <Skeleton className="h-14 w-2/3" />
+   410→            </div>
+   411→          ) : thread.length === 0 ? (
+   412→            <div className="flex h-full flex-col items-center justify-center gap-4 px-4 text-center">
+   413→              <div className="grid size-12 place-items-center rounded-full bg-gold-soft text-primary">
+   414→                <Sparkles className="size-6" aria-hidden />
+   415→              </div>
+   416→              <div>
+   417→                <p className="font-display text-lg font-semibold text-foreground">Ask your portfolio assistant</p>
+   418→                <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+   419→                  It can see your own profile and projects only — try one of these to start:
+   420→                </p>
+   421→              </div>
+   422→              <div className="flex w-full max-w-md flex-col gap-2">
+   423→                {SUGGESTED_PROMPTS.map((p) => (
+   424→                  <Button
+   425→                    key={p}
+   426→                    type="button"
+   427→                    variant="outline"
+   428→                    className="h-auto justify-start whitespace-normal py-2.5 text-left text-sm"
+   429→                    disabled={sending}
+   430→                    onClick={() => void send(p)}
+   431→                  >
+   432→                    {p}
+   433→                  </Button>
+   434→                ))}
+   435→              </div>
+   436→            </div>
+   437→          ) : (
+   438→            <div className="space-y-4">
+   439→              {thread.map((m, i) => {
+   440→                const isUser = m.role === "user";
+   441→                return (
+   442→                  <div key={`${m.createdAt}-${i}`} className={cn("flex", isUser ? "justify-end" : "justify-start")}>
+   443→                    <div
+   444→                      className={cn(
+   445→                        "max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed sm:max-w-[75%]",
+   446→                        isUser
+   447→                          ? "rounded-br-md bg-primary text-primary-foreground"
+   448→                          : "rounded-bl-md border border-border/70 bg-background/60 text-foreground"
+   449→                      )}
+   450→                    >
+   451→                      <p className="whitespace-pre-wrap">{m.content}</p>
+   452→                    </div>
+   453→                  </div>
+   454→                );
+   455→              })}
+   456→              {sending && (
+   457→                <div className="flex justify-start">
+   458→                  <div className="flex items-center gap-2 rounded-2xl rounded-bl-md border border-border/70 bg-background/60 px-4 py-3">
+   459→                    <Spinner label="Assistant is thinking…" />
+   460→                  </div>
+   461→                </div>
+   462→              )}
+   463→            </div>
+   464→          )}
+   465→        </div>
+   466→
+   467→        <div className="border-t border-border/60 p-3">
+   468→          <form
+   469→            className="flex items-end gap-2"
+   470→            onSubmit={(e) => {
+   471→              e.preventDefault();
+   472→              void send(input);
+   473→            }}
+   474→          >
+   475→            <Textarea
+   476→              value={input}
+   477→              onChange={(e) => setInput(e.target.value)}
+   478→              onKeyDown={(e) => {
+   479→                if (e.key === "Enter" && !e.shiftKey) {
+   480→                  e.preventDefault();
+   481→                  void send(input);
+   482→                }
+   483→              }}
+   484→              placeholder={consented ? "Ask about your portfolio…" : "Enable BEAN Intelligence to start chatting"}
+   485→              rows={1}
+   486→              disabled={!consented || sending}
+   487→              className="max-h-32 min-h-[44px] flex-1 resize-none"
+   488→              aria-label="Message to BEAN Intelligence"
+   489→            />
+   490→            <Button type="submit" size="icon" className="size-[44px] shrink-0" disabled={!consented || sending || !input.trim()} aria-label="Send message">
+   491→              <Send className="size-4" aria-hidden />
+   492→            </Button>
+   493→          </form>
+   494→          <p className="mt-2 px-1 text-[11px] text-muted-foreground/80">
+   495→            Enter sends · Shift+Enter for a new line. The assistant sees your own profile and projects only.
+   496→          </p>
+   497→        </div>
+   498→      </div>
+   499→    </div>
+   500→  );
+   501→}
+   502→
+   503→// ------------------------------------------------------------------ quick tools tab
+   504→
+   505→function ImproveToolCard({ onQuotaUsed }: { onQuotaUsed: () => void }) {
+   506→  const [field, setField] = useState<string>("description");
+   507→  const [content, setContent] = useState("");
+   508→  const [projectContext, setProjectContext] = useState("");
+   509→  const [loading, setLoading] = useState(false);
+   510→  const [result, setResult] = useState<string | null>(null);
+   511→  const [failure, setFailure] = useState<AiFailure | null>(null);
+   512→
+   513→  const run = async () => {
+   514→    if (!content.trim() || loading) return;
+   515→    setLoading(true);
+   516→    setFailure(null);
+   517→    try {
+   518→      const res = await api<{ text: string }>("/api/ai/improve", {
+   519→        method: "POST",
+   520→        json: { field, content: content.trim(), projectContext: projectContext.trim() || undefined },
+   521→      });
+   522→      setResult(res.text);
+   523→      onQuotaUsed();
+   524→      toast.success("Draft improved — review it before using it");
+   525→    } catch (e) {
+   526→      setResult(null);
+   527→      setFailure(aiFailure(e));
+   528→    } finally {
+   529→      setLoading(false);
+   530→    }
+   531→  };
+   532→
+   533→  return (
+   534→    <Card>
+   535→      <CardContent className="p-6">
+   536→        <div className="flex items-center gap-3">
+   537→          <div className="grid size-9 place-items-center rounded-lg bg-gold-soft text-primary ring-1 ring-primary/25">
+   538→            <PenLine className="size-4" aria-hidden />
+   539→          </div>
+   540→          <div>
+   541→            <h3 className="font-display text-lg font-semibold text-foreground">Improve writing</h3>
+   542→            <p className="text-xs text-muted-foreground">Rewrite a description, summary, bio, process or outcome.</p>
+   543→          </div>
+   544→        </div>
+   545→
+   546→        <div className="mt-5 space-y-4">
+   547→          <div className="grid gap-4 sm:grid-cols-[200px_1fr]">
+   548→            <div className="space-y-1.5">
+   549→              <Label htmlFor="improve-field">Field</Label>
+   550→              <Select value={field} onValueChange={setField}>
+   551→                <SelectTrigger id="improve-field" className="w-full">
+   552→                  <SelectValue />
+   553→                </SelectTrigger>
+   554→                <SelectContent>
+   555→                  {IMPROVE_FIELDS.map((f) => (
+   556→                    <SelectItem key={f.value} value={f.value}>
+   557→                      {f.label}
+   558→                    </SelectItem>
+   559→                  ))}
+   560→                </SelectContent>
+   561→              </Select>
+   562→            </div>
+   563→            <div className="space-y-1.5">
+   564→              <Label htmlFor="improve-context">Project context (optional)</Label>
+   565→              <Input
+   566→                id="improve-context"
+   567→                value={projectContext}
+   568→                onChange={(e) => setProjectContext(e.target.value)}
+   569→                placeholder="e.g. Documentary short about harbour restorations"
+   570→                maxLength={200}
+   571→              />
+   572→            </div>
+   573→          </div>
+   574→
+   575→          <div className="space-y-1.5">
+   576→            <Label htmlFor="improve-content">Your text</Label>
+   577→            <Textarea
+   578→              id="improve-content"
+   579→              value={content}
+   580→              onChange={(e) => setContent(e.target.value)}
+   581→              rows={5}
+   582→              maxLength={6000}
+   583→              placeholder="Paste or write the text you'd like improved…"
+   584→              className="resize-y"
+   585→            />
+   586→          </div>
+   587→
+   588→          {failure && <InlineError failure={failure} onRetry={failure.action === "retry" ? () => void run() : undefined} />}
+   589→
+   590→          <div className="flex flex-wrap items-center gap-3">
+   591→            <Button onClick={() => void run()} disabled={loading || !content.trim()}>
+   592→              {loading ? <Spinner /> : <Wand2 className="size-4" aria-hidden />}
+   593→              {loading ? "Improving…" : "Improve"}
+   594→            </Button>
+   595→            <p className="text-xs text-muted-foreground">Nothing is saved to your portfolio automatically.</p>
+   596→          </div>
+   597→
+   598→          {result && (
+   599→            <div className="space-y-3 rounded-lg border border-primary/25 bg-background/40 p-4">
+   600→              <div className="grid gap-4 lg:grid-cols-2">
+   601→                <div className="min-w-0">
+   602→                  <div className="mb-2 flex items-center justify-between gap-2">
+   603→                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Original</p>
+   604→                  </div>
+   605→                  <p className="max-h-48 overflow-y-auto whitespace-pre-wrap rounded-md border border-border/60 p-3 text-sm text-muted-foreground">
+   606→                    {content.trim()}
+   607→                  </p>
+   608→                </div>
+   609→                <div className="min-w-0">
+   610→                  <div className="mb-2 flex items-center justify-between gap-2">
+   611→                    <p className="text-xs font-semibold uppercase tracking-wide text-primary">Improved</p>
+   612→                    <CopyButton text={result} />
+   613→                  </div>
+   614→                  <p className="max-h-48 overflow-y-auto whitespace-pre-wrap rounded-md border border-primary/30 bg-gold-soft/40 p-3 text-sm text-foreground">
+   615→                    {result}
+   616→                  </p>
+   617→                </div>
+   618→              </div>
+   619→            </div>
+   620→          )}
+   621→        </div>
+   622→      </CardContent>
+   623→    </Card>
+   624→  );
+   625→}
+   626→
+   627→interface SuggestResult {
+   628→  summary?: string | null;
+   629→  skills?: string[];
+   630→  category?: string | null;
+   631→}
+   632→
+   633→function SuggestToolCard({ onQuotaUsed }: { onQuotaUsed: () => void }) {
+   634→  const [title, setTitle] = useState("");
+   635→  const [description, setDescription] = useState("");
+   636→  const [loading, setLoading] = useState(false);
+   637→  const [result, setResult] = useState<SuggestResult | null>(null);
+   638→  const [failure, setFailure] = useState<AiFailure | null>(null);
+   639→
+   640→  const run = async () => {
+   641→    if (!title.trim() || loading) return;
+   642→    setLoading(true);
+   643→    setFailure(null);
+   644→    try {
+   645→      const res = await api<SuggestResult>("/api/ai/suggest", {
+   646→        method: "POST",
+   647→        json: { title: title.trim(), description: description.trim() || undefined },
+   648→      });
+   649→      setResult(res);
+   650→      onQuotaUsed();
+   651→      toast.success("Suggestions ready — copy what you like");
+   652→    } catch (e) {
+   653→      setResult(null);
+   654→      setFailure(aiFailure(e));
+   655→    } finally {
+   656→      setLoading(false);
+   657→    }
+   658→  };
+   659→
+   660→  return (
+   661→    <Card>
+   662→      <CardContent className="p-6">
+   663→        <div className="flex items-center gap-3">
+   664→          <div className="grid size-9 place-items-center rounded-lg bg-gold-soft text-primary ring-1 ring-primary/25">
+   665→            <Lightbulb className="size-4" aria-hidden />
+   666→          </div>
+   667→          <div>
+   668→            <h3 className="font-display text-lg font-semibold text-foreground">Suggest metadata</h3>
+   669→            <p className="text-xs text-muted-foreground">Propose a summary, skills and a profession category.</p>
+   670→          </div>
+   671→        </div>
+   672→
+   673→        <div className="mt-5 space-y-4">
+   674→          <div className="space-y-1.5">
+   675→            <Label htmlFor="suggest-title">Project title</Label>
+   676→            <Input
+   677→              id="suggest-title"
+   678→              value={title}
+   679→              onChange={(e) => setTitle(e.target.value)}
+   680→              maxLength={140}
+   681→              placeholder="e.g. Tidelines — a harbour restoration photo essay"
+   682→            />
+   683→          </div>
+   684→          <div className="space-y-1.5">
+   685→            <Label htmlFor="suggest-description">Description</Label>
+   686→            <Textarea
+   687→              id="suggest-description"
+   688→              value={description}
+   689→              onChange={(e) => setDescription(e.target.value)}
+   690→              rows={4}
+   691→              maxLength={6000}
+   692→              placeholder="Describe the project briefly — even a rough draft helps."
+   693→              className="resize-y"
+   694→            />
+   695→          </div>
+   696→
+   697→          {failure && <InlineError failure={failure} onRetry={failure.action === "retry" ? () => void run() : undefined} />}
+   698→
+   699→          <div className="flex flex-wrap items-center gap-3">
+   700→            <Button onClick={() => void run()} disabled={loading || !title.trim()}>
+   701→              {loading ? <Spinner /> : <Sparkles className="size-4" aria-hidden />}
+   702→              {loading ? "Suggesting…" : "Suggest"}
+   703→            </Button>
+   704→            <p className="text-xs text-muted-foreground">Nothing is saved to your portfolio automatically.</p>
+   705→          </div>
+   706→
+   707→          {result && (
+   708→            <div className="space-y-4 rounded-lg border border-primary/25 bg-background/40 p-4">
+   709→              {result.summary ? (
+   710→                <div>
+   711→                  <div className="mb-1.5 flex items-center justify-between gap-2">
+   712→                    <p className="text-xs font-semibold uppercase tracking-wide text-primary">Suggested summary</p>
+   713→                    <CopyButton text={result.summary} />
+   714→                  </div>
+   715→                  <p className="whitespace-pre-wrap rounded-md border border-border/60 p-3 text-sm text-foreground">
+   716→                    {result.summary}
+   717→                  </p>
+   718→                </div>
+   719→              ) : null}
+   720→
+   721→              {result.skills && result.skills.length > 0 ? (
+   722→                <div>
+   723→                  <div className="mb-1.5 flex items-center justify-between gap-2">
+   724→                    <p className="text-xs font-semibold uppercase tracking-wide text-primary">Suggested skills</p>
+   725→                    <CopyButton text={result.skills.join(", ")} />
+   726→                  </div>
+   727→                  <div className="flex flex-wrap gap-1.5">
+   728→                    {result.skills.map((s) => (
+   729→                      <Badge key={s} variant="outline" className="rounded-full text-xs font-normal">
+   730→                        {s}
+   731→                      </Badge>
+   732→                    ))}
+   733→                  </div>
+   734→                </div>
+   735→              ) : null}
+   736→
+   737→              {result.category ? (
+   738→                <div>
+   739→                  <div className="mb-1.5 flex items-center justify-between gap-2">
+   740→                    <p className="text-xs font-semibold uppercase tracking-wide text-primary">Suggested category</p>
+   741→                    <CopyButton text={result.category} />
+   742→                  </div>
+   743→                  <Badge className="rounded-full bg-gold-soft text-primary ring-1 ring-primary/25">
+   744→                    {categoryLabel(result.category)}
+   745→                  </Badge>
+   746→                </div>
+   747→              ) : null}
+   748→
+   749→              {!result.summary && !(result.skills && result.skills.length > 0) && !result.category ? (
+   750→                <p className="text-sm text-muted-foreground">
+   751→                  The assistant couldn&apos;t produce suggestions for this draft. Try a slightly longer description.
+   752→                </p>
+   753→              ) : null}
+   754→            </div>
+   755→          )}
+   756→        </div>
+   757→      </CardContent>
+   758→    </Card>
+   759→  );
+   760→}
+   761→
+   762→// ------------------------------------------------------------------ view
+   763→
+   764→export default function IntelligenceView() {
+   765→  const { user } = useSession();
+   766→  const [caps, setCaps] = useState<AiCapabilitiesDTO | null>(null);
+   767→  const [capsLoading, setCapsLoading] = useState(true);
+   768→  const [capsFailure, setCapsFailure] = useState<string | null>(null);
+   769→
+   770→  const loadCaps = useCallback(async () => {
+   771→    setCapsLoading(true);
+   772→    setCapsFailure(null);
+   773→    try {
+   774→      const res = await api<AiCapabilitiesDTO>("/api/ai/capabilities");
+   775→      setCaps(res);
+   776→    } catch (e) {
+   777→      setCapsFailure(e instanceof ApiError ? e.message : "Couldn't load BEAN Intelligence status.");
+   778→    } finally {
+   779→      setCapsLoading(false);
+   780→    }
+   781→  }, []);
+   782→
+   783→  useEffect(() => {
+   784→    void loadCaps();
+   785→  }, [loadCaps]);
+   786→
+   787→  const consented = useMemo(() => Boolean(user?.aiConsent), [user]);
+   788→  const showConsentGate = Boolean(caps?.consentRequired && user && !user.aiConsent);
+   789→
+   790→  if (capsLoading) {
+   791→    return (
+   792→      <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
+   793→        <Skeleton className="h-40 w-full rounded-xl" />
+   794→        <div className="mt-6 grid gap-4 md:grid-cols-[260px_1fr]">
+   795→          <Skeleton className="hidden h-72 rounded-xl md:block" />
+   796→          <Skeleton className="h-72 rounded-xl" />
+   797→        </div>
+   798→      </div>
+   799→    );
+   800→  }
+   801→
+   802→  if (capsFailure || !caps) {
+   803→    return (
+   804→      <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6">
+   805→        <EmptyState
+   806→          icon={ServerCrash}
+   807→          title="Couldn't load BEAN Intelligence"
+   808→          description={capsFailure ?? "The service status is unavailable right now."}
+   809→          action={<Button onClick={() => void loadCaps()}>Try again</Button>}
+   810→        />
+   811→      </div>
+   812→    );
+   813→  }
+   814→
+   815→  return (
+   816→    <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
+   817→      {/* Header card */}
+   818→      <Card>
+   819→        <CardContent className="p-6">
+   820→          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+   821→            <div className="flex min-w-0 items-start gap-3">
+   822→              <div className="grid size-11 shrink-0 place-items-center rounded-xl bg-gold-soft text-primary ring-1 ring-primary/30">
+   823→                <Sparkles className="size-5" aria-hidden />
+   824→              </div>
+   825→              <div className="min-w-0">
+   826→                <h1 className="font-display text-2xl font-semibold tracking-tight text-foreground">BEAN Intelligence</h1>
+   827→                <p className="mt-1 text-sm text-muted-foreground">
+   828→                  AI workspace · Provider: {caps.provider} · server-side only
+   829→                </p>
+   830→              </div>
+   831→            </div>
+   832→
+   833→            <TooltipProvider delayDuration={150}>
+   834→              <div className="w-full lg:max-w-xs">
+   835→                <div className="flex items-center justify-between text-xs">
+   836→                  <span className="font-medium text-muted-foreground">Daily usage</span>
+   837→                  <span className="text-foreground">
+   838→                    {caps.usedToday} / {caps.dailyLimit} used today
+   839→                  </span>
+   840→                </div>
+   841→                <Tooltip>
+   842→                  <TooltipTrigger asChild>
+   843→                    <Progress
+   844→                      className="mt-2"
+   845→                      value={Math.min(100, (caps.usedToday / Math.max(1, caps.dailyLimit)) * 100)}
+   846→                      aria-label={`Daily AI usage: ${caps.usedToday} of ${caps.dailyLimit}`}
+   847→                    />
+   848→                  </TooltipTrigger>
+   849→                  <TooltipContent>Counts every AI request. Resets at midnight UTC.</TooltipContent>
+   850→                </Tooltip>
+   851→                <p className="mt-1.5 text-[11px] text-muted-foreground/80">Resets at midnight UTC</p>
+   852→              </div>
+   853→            </TooltipProvider>
+   854→          </div>
+   855→
+   856→          <Separator className="my-5" />
+   857→
+   858→          <ul className="grid gap-3 sm:grid-cols-3">
+   859→            {caps.features.map((f) => (
+   860→              <li key={f.id} className="rounded-lg border border-border/60 bg-background/40 p-3">
+   861→                <p className="text-sm font-medium text-foreground">{f.label}</p>
+   862→                <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{f.description}</p>
+   863→              </li>
+   864→            ))}
+   865→          </ul>
+   866→
+   867→          {!caps.available && (
+   868→            <p className="mt-4 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-foreground">
+   869→              The AI provider isn&apos;t configured on this deployment, so BEAN Intelligence is unavailable here.
+   870→            </p>
+   871→          )}
+   872→          {consented && (
+   873→            <p className="mt-4 text-xs text-muted-foreground">
+   874→              Consent is on. You can revoke it anytime in{" "}
+   875→              <button
+   876→                type="button"
+   877→                className="underline decoration-primary/50 underline-offset-2 transition-colors hover:text-primary"
+   878→                onClick={() => navigate("/settings")}
+   879→              >
+   880→                Settings → Privacy
+   881→              </button>
+   882→              .
+   883→            </p>
+   884→          )}
+   885→        </CardContent>
+   886→      </Card>
+   887→
+   888→      {/* Honest consent gate — privacy feature, not an upsell */}
+   889→      {showConsentGate && (
+   890→        <div className="mt-6">
+   891→          <ConsentCard dailyLimit={caps.dailyLimit} onEnabled={() => void loadCaps()} />
+   892→        </div>
+   893→      )}
+   894→
+   895→      {/* Workspace */}
+   896→      {consented && caps.available ? (
+   897→        <Tabs defaultValue="chat" className="mt-6">
+   898→          <TabsList className="h-auto w-full flex-wrap sm:w-fit">
+   899→            <TabsTrigger value="chat" className="gap-1.5 px-4">
+   900→              <MessageSquare className="size-4" aria-hidden /> Chat
+   901→            </TabsTrigger>
+   902→            <TabsTrigger value="tools" className="gap-1.5 px-4">
+   903→              <Wand2 className="size-4" aria-hidden /> Quick tools
+   904→            </TabsTrigger>
+   905→          </TabsList>
+   906→          <TabsContent value="chat" forceMount className="mt-4 data-[state=inactive]:hidden">
+   907→            <ChatTab consented={consented} onQuotaUsed={() => void loadCaps()} />
+   908→          </TabsContent>
+   909→          <TabsContent value="tools" forceMount className="mt-4 space-y-4 data-[state=inactive]:hidden">
+   910→            <ImproveToolCard onQuotaUsed={() => void loadCaps()} />
+   911→            <SuggestToolCard onQuotaUsed={() => void loadCaps()} />
+   912→          </TabsContent>
+   913→        </Tabs>
+   914→      ) : null}
+   915→    </div>
+   916→  );
+   917→}
+   918→
