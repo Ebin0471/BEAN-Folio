@@ -10,8 +10,10 @@ import { NextRequest, NextResponse } from "next/server";
  * this proxy makes that PATH form work on direct requests, browser refreshes
  * and pasted links by serving the SAME SPA document at the path — with the
  * intended route carried in the `x-bean-boot-route` request header. The same
- * applies to `/u/<username>` (the BEAN Folio public profile) and `/p/<id>`
- * (project deep links) — each path form opens exactly its own experience.
+ * applies to `/u/<username>` (the BEAN Folio public profile), `/p/<id>`
+ * (project deep links) and `/site/<username>/projects/<id>` (the standalone
+ * website's own project detail pages) — each path form opens exactly its own
+ * experience, never another one's.
  *
  * Why a REWRITE (serve the document here) rather than the previous 308
  * redirect to `/?#/u/<slug>`: the client router's server snapshot was always
@@ -37,12 +39,17 @@ import { NextRequest, NextResponse } from "next/server";
  * BEAN Folio domain; nothing in this file claims otherwise.
  */
 
-const PUBLIC_PATH_SLUG_RE = /^\/(u|p|site)\/([^/]+)$/;
+const PUBLIC_PATH_SLUG_RE = /^(?:\/u\/[^/]+|\/p\/[^/]+|\/site\/[^/]+(?:\/projects\/[^/]+)?)$/;
 
-/** Only boot routes that match the public shape are ever seeded downstream. */
+/**
+ * Boot route for a public path-form URL. The route IS the requested pathname
+ * (segments preserved exactly as requested — percent-encoded where the client
+ * sent them encoded; the client decodes per segment). Covers `/u/<username>`,
+ * `/p/<id>`, `/site/<username>` and the standalone website's own project
+ * detail pages `/site/<username>/projects/<id>`.
+ */
 export function bootRouteFromPathname(pathname: string): string | null {
-  const match = PUBLIC_PATH_SLUG_RE.exec(pathname);
-  return match ? `/${match[1]}/${match[2]}` : null;
+  return PUBLIC_PATH_SLUG_RE.test(pathname) ? pathname : null;
 }
 
 /**

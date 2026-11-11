@@ -1,10 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, Children, useRef, useState } from "react";
-import { Check, ChevronDown, Globe, Mail, MapPin } from "lucide-react";
+import { ArrowLeft, Check, ChevronDown, ExternalLink, Globe, Mail, MapPin } from "lucide-react";
 
 import { categoryLabel } from "@/components/bean/ProjectCard";
-import type { ProjectCardDTO } from "@/lib/types";
 import {
   defaultMotion,
   deriveTheme,
@@ -26,8 +25,10 @@ import type {
   SiteSection,
   SiteTheme,
 } from "@/lib/site-config";
-import { ensureFontLoaded, fontStack } from "@/lib/site-fonts";
 import { BANNER_ASPECT_CLASS } from "@/lib/banner";
+import { ensureFontLoaded, fontStack } from "@/lib/site-fonts";
+import { publicSiteProjectHashUrl } from "@/lib/site-url";
+import type { FullProject, ProjectCardDTO, ProjectMediaDTO } from "@/lib/types";
 import {
   backgroundMotionCss,
   baseMotionCss,
@@ -720,10 +721,23 @@ function SiteCoverImage({
 
 // ------------------------------------------------------------------ project cards
 
+/**
+ * The project-link rule for EVERY surface of the standalone website: project
+ * links stay INSIDE the website (`#/site/<username>/projects/<id>` — the
+ * website-native detail page) and never send visitors into the BEAN Folio
+ * platform's `/p/<id>` experience. Falls back to the platform route only
+ * when the profile somehow has no username (defensive — cannot normally
+ * happen: usernames are claimed at onboarding).
+ */
+function siteProjectHref(profile: SiteRendererProfile, projectId: string): string {
+  return publicSiteProjectHashUrl(profile.username, projectId) ?? `#/p/${projectId}`;
+}
+
 function SiteProjectCard({
-  project, theme, large, hoverZoom,
+  project, profile, theme, large, hoverZoom,
 }: {
   project: ProjectCardDTO;
+  profile: SiteRendererProfile;
   theme: ResolvedTheme;
   large?: boolean;
   hoverZoom: boolean;
@@ -731,7 +745,7 @@ function SiteProjectCard({
   const featured = Boolean(large);
   return (
     <a
-      href={`#/p/${project.id}`}
+      href={siteProjectHref(profile, project.id)}
       className={cn("group block h-full overflow-hidden border", hoverZoom && "bs-hoverzoom")}
       style={cardStyle(theme)}
     >
@@ -1189,7 +1203,7 @@ export function SiteRenderer({ config, profile, projects, collections, onContact
                         <ul className="mt-5 divide-y" style={{ borderColor: border(theme) }}>
                           {list.map((p) => (
                             <li key={p.id} style={{ borderColor: border(theme) }}>
-                              <a href={`#/p/${p.id}`} className="flex items-baseline justify-between gap-4 py-3 transition-opacity hover:opacity-80">
+                              <a href={siteProjectHref(profile, p.id)} className="flex items-baseline justify-between gap-4 py-3 transition-opacity hover:opacity-80">
                                 <span className="font-semibold" style={{ color: theme.accent }}>{p.title}</span>
                                 <span className="shrink-0 text-xs uppercase tracking-wide" style={{ color: theme.muted }}>{categoryLabel(p.category)}</span>
                               </a>
@@ -1201,7 +1215,7 @@ export function SiteRenderer({ config, profile, projects, collections, onContact
                           {list.map((p, i) => (
                             <Reveal key={p.id} motion={m}>
                               <a
-                                href={`#/p/${p.id}`}
+                                href={siteProjectHref(profile, p.id)}
                                 className={cn("group grid items-center gap-6 sm:grid-cols-2", i % 2 === 1 && "sm:[&>div:first-child]:order-2", hoverZoom && "bs-hoverzoom")}
                               >
                                 <div className="overflow-hidden" style={{ aspectRatio: IMAGE_RATIO[theme.imageRatio], borderRadius: RADIUS[theme.radius] }}>
@@ -1219,12 +1233,12 @@ export function SiteRenderer({ config, profile, projects, collections, onContact
                       ) : featured ? (
                         <div className="mt-5 space-y-6">
                           <Reveal motion={m}>
-                            <SiteProjectCard project={list[0]} theme={theme} large hoverZoom={hoverZoom} />
+                            <SiteProjectCard project={list[0]} profile={profile} theme={theme} large hoverZoom={hoverZoom} />
                           </Reveal>
                           {list.length > 1 && (
                             <Reveal motion={m} stagger className={gridCols(theme, "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3")} style={gapStyle}>
                               {list.slice(1).map((p) => (
-                                <SiteProjectCard key={p.id} project={p} theme={theme} hoverZoom={hoverZoom} />
+                                <SiteProjectCard key={p.id} project={p} profile={profile} theme={theme} hoverZoom={hoverZoom} />
                               ))}
                             </Reveal>
                           )}
@@ -1232,7 +1246,7 @@ export function SiteRenderer({ config, profile, projects, collections, onContact
                       ) : (
                         <Reveal motion={m} stagger className={cn("mt-5 grid", gridCols(theme))} style={gapStyle}>
                           {list.map((p) => (
-                            <SiteProjectCard key={p.id} project={p} theme={theme} hoverZoom={hoverZoom} />
+                            <SiteProjectCard key={p.id} project={p} profile={profile} theme={theme} hoverZoom={hoverZoom} />
                           ))}
                         </Reveal>
                       )}
@@ -1378,7 +1392,7 @@ export function SiteRenderer({ config, profile, projects, collections, onContact
                           <ul className="mt-5 flex snap-x gap-4 overflow-x-auto pb-2" style={{ scrollbarWidth: "thin" }}>
                             {shots.map((p) => (
                               <li key={p.id} className="w-64 shrink-0 snap-start overflow-hidden sm:w-80" style={{ borderRadius: RADIUS[theme.radius] }}>
-                                <a href={`#/p/${p.id}`} className={cn("block", hoverZoom && "bs-hoverzoom")} style={{ aspectRatio: IMAGE_RATIO[theme.imageRatio] }}>
+                                <a href={siteProjectHref(profile, p.id)} className={cn("block", hoverZoom && "bs-hoverzoom")} style={{ aspectRatio: IMAGE_RATIO[theme.imageRatio] }}>
                                   <SiteCoverImage src={p.coverUrl} kind={p.coverKind} alt={p.title} title={p.title} theme={theme} />
                                 </a>
                               </li>
@@ -1388,7 +1402,7 @@ export function SiteRenderer({ config, profile, projects, collections, onContact
                       ) : section.layout === "masonry" ? (
                         <Reveal motion={m} stagger className="mt-5 columns-2 gap-4 sm:columns-3 [&>*]:mb-4">
                           {shots.map((p) => (
-                            <a key={p.id} href={`#/p/${p.id}`} className={cn("block break-inside-avoid overflow-hidden", hoverZoom && "bs-hoverzoom")} style={{ borderRadius: RADIUS[theme.radius] }}>
+                            <a key={p.id} href={siteProjectHref(profile, p.id)} className={cn("block break-inside-avoid overflow-hidden", hoverZoom && "bs-hoverzoom")} style={{ borderRadius: RADIUS[theme.radius] }}>
                               <SiteCoverImage src={p.coverUrl} kind={p.coverKind} alt={p.title} title={p.title} theme={theme} />
                             </a>
                           ))}
@@ -1396,7 +1410,7 @@ export function SiteRenderer({ config, profile, projects, collections, onContact
                       ) : (
                         <Reveal motion={m} stagger className={cn("mt-5 grid", gridCols(theme))} style={gapStyle}>
                           {shots.map((p) => (
-                            <a key={p.id} href={`#/p/${p.id}`} className={cn("block overflow-hidden", hoverZoom && "bs-hoverzoom")} style={{ aspectRatio: IMAGE_RATIO[theme.imageRatio], borderRadius: RADIUS[theme.radius] }}>
+                            <a key={p.id} href={siteProjectHref(profile, p.id)} className={cn("block overflow-hidden", hoverZoom && "bs-hoverzoom")} style={{ aspectRatio: IMAGE_RATIO[theme.imageRatio], borderRadius: RADIUS[theme.radius] }}>
                               <SiteCoverImage src={p.coverUrl} kind={p.coverKind} alt={p.title} title={p.title} theme={theme} />
                             </a>
                           ))}
@@ -1757,6 +1771,297 @@ export function SiteRenderer({ config, profile, projects, collections, onContact
                   className="underline-offset-4 transition-colors hover:underline"
                   title="Built with BEAN Folio — the portfolio platform"
                 >
+                  BEAN Folio
+                </a>{" "}
+                · GIFTZ
+              </span>
+            )}
+          </div>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------- website project detail page
+
+function formatSiteDate(iso: string | null): string | null {
+  if (!iso) return null;
+  try {
+    return new Intl.DateTimeFormat("en-US", { year: "numeric", month: "long", day: "numeric" }).format(new Date(iso));
+  } catch {
+    return null;
+  }
+}
+
+/** Gallery item rendering for the website project page (image / video / audio / document). */
+function SiteMediaItem({ item, theme }: { item: ProjectMediaDTO; theme: ResolvedTheme }) {
+  const radius = RADIUS[theme.radius];
+  if (item.kind === "VIDEO") {
+    return (
+      <video
+        src={item.url}
+        className="w-full"
+        style={{ borderRadius: radius, background: theme.surface }}
+        controls
+        playsInline
+        preload="metadata"
+        aria-label={item.caption ?? undefined}
+      />
+    );
+  }
+  if (item.kind === "AUDIO") {
+    return <audio src={item.url} controls preload="metadata" className="w-full" aria-label={item.caption ?? undefined} />;
+  }
+  if (item.kind === "DOCUMENT") {
+    return (
+      <a
+        href={item.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="bs-mi inline-flex items-center gap-1.5 border px-4 py-2 text-sm transition-opacity hover:opacity-80"
+        style={{ borderColor: theme.border, borderRadius: radius, color: theme.accent, ...linkProps(theme) }}
+      >
+        <ExternalLink className="size-4" aria-hidden /> Open document
+      </a>
+    );
+  }
+  return <img src={item.url} alt={item.caption ?? ""} className="w-full" style={{ borderRadius: radius }} loading="lazy" />;
+}
+
+/**
+ * SiteProjectPage — a project detail page rendered INSIDE the standalone
+ * website's own design system. Mounted at `/site/<username>/projects/<id>`,
+ * it is the website-native alternative to the platform's ProjectDetailView:
+ * the visitor never leaves the creator's website — same theme, fonts, motion
+ * and canvas as the homepage, no BEAN Folio chrome. Data arrives via the
+ * existing GET /api/projects/[id] contract (FullProject), so nothing here
+ * invents content and every visibility rule stays server-enforced.
+ */
+export function SiteProjectPage({
+  config,
+  profile,
+  project,
+  backHref,
+  watermark = true,
+}: {
+  config: SiteConfig;
+  profile: SiteRendererProfile;
+  project: FullProject;
+  /** In-site link back to the website homepage (hash form). */
+  backHref: string;
+  watermark?: boolean;
+}) {
+  const theme = useMemo(() => deriveTheme(config.theme), [config.theme]);
+  const motion = config.motion ?? defaultMotion();
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  useSiteFonts(rootRef, theme);
+  const motionCss = useMotionCss(config, motion);
+  const hoverZoom = motion.enabled && motion.hoverEffects;
+  const contentMax = CONTENT_WIDTH[theme.contentWidth];
+  const scale = TYPE_SCALE[theme.typeScale];
+
+  const headingStyle: React.CSSProperties = {
+    fontFamily: stacks(theme).heading,
+    fontWeight: HEADING_WEIGHT_NUM[theme.headingWeight],
+    letterSpacing: TRACKING[theme.letterSpacing],
+  };
+  const labelStyle: React.CSSProperties = { color: theme.muted, fontFamily: stacks(theme).accent };
+  const chipStyle: React.CSSProperties = {
+    borderColor: theme.border,
+    borderRadius: RADIUS[theme.radius],
+    color: theme.muted,
+    fontFamily: stacks(theme).accent,
+  };
+
+  const published = formatSiteDate(project.publishedAt);
+  const meta = [published, project.role?.trim() || null].filter(Boolean) as string[];
+  const gallery = project.media ?? [];
+  const fieldEntries = [
+    ...Object.entries(project.customFields?.fields ?? {}),
+    ...(project.customFields?.custom ?? []).map((c) => [c.label, c.value] as const),
+  ].filter(([, v]) => typeof v === "string" && v.trim().length > 0);
+  const narrative = (
+    [
+      ["Brief", project.brief],
+      ["Process", project.process],
+      ["Challenges", project.challenges],
+      ["Outcome", project.outcome],
+    ] as const
+  ).filter(([, body]) => typeof body === "string" && body.trim().length > 0);
+  const chips = [...new Set([...(project.skills ?? []), ...(project.tools ?? [])])].filter((s) => s.trim().length > 0);
+
+  return (
+    <div
+      ref={rootRef}
+      className="bean-site min-h-full w-full overflow-x-hidden"
+      style={{
+        background: theme.gradient
+          ? `linear-gradient(${theme.gradient.angle}deg, ${theme.gradient.from}, ${theme.gradient.to})`
+          : theme.background,
+        color: theme.foreground,
+        fontFamily: stacks(theme).body,
+        lineHeight: LINE_HEIGHT[theme.lineHeight],
+        ["--bs-ease" as string]: easingCss(motion.easing),
+        ["--site-accent" as string]: theme.accent,
+        ["--site-accent2" as string]: theme.accent2,
+        ["--site-focus" as string]: theme.focus,
+        ["--site-radius" as string]: RADIUS[theme.radius],
+      }}
+    >
+      <style dangerouslySetInnerHTML={{ __html: motionCss + glassFallbackCss(theme) }} />
+      <BackgroundLayer theme={theme} motion={motion} />
+      <div
+        className="mx-auto w-full px-5 sm:px-8"
+        style={{ maxWidth: contentMax, paddingTop: "1.75rem", paddingBottom: DENSITY_GAP[theme.density] }}
+      >
+        {/* Website-native header — the ONLY navigation affordances are the
+            website's own: back to the site and the site's identity. */}
+        <nav aria-label="Website" className="flex flex-wrap items-center justify-between gap-3 pb-6">
+          <a
+            href={backHref}
+            className="bs-mi inline-flex items-center gap-1.5 text-sm transition-opacity hover:opacity-75"
+            style={{ color: theme.accent, ...linkProps(theme) }}
+          >
+            <ArrowLeft className="size-4" aria-hidden /> Back to {config.name}
+          </a>
+          <a href={backHref} className="text-sm font-semibold transition-opacity hover:opacity-75" style={labelStyle}>
+            {config.name}
+          </a>
+        </nav>
+
+        <Reveal motion={motion}>
+          <article className="pb-12">
+            <p className="text-[11px] uppercase tracking-[0.14em]" style={labelStyle}>
+              {categoryLabel(project.category)}
+            </p>
+            <h1 className={cn("mt-2 max-w-3xl text-balance leading-[1.08]", scale.h2)} style={{ ...headingStyle, color: theme.accent }}>
+              {project.title}
+            </h1>
+            {meta.length > 0 && (
+              <p className="mt-3 text-sm" style={labelStyle}>
+                {meta.join(" · ")}
+              </p>
+            )}
+            {(project.externalUrl || project.repoUrl) && (
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                {project.externalUrl && (
+                  <a href={project.externalUrl} target="_blank" rel="noopener noreferrer" className={buttonClasses(theme)} style={buttonStyle(theme)}>
+                    <Globe className="size-4" aria-hidden /> Visit live site
+                  </a>
+                )}
+                {project.repoUrl && (
+                  <a
+                    href={project.repoUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="bs-mi inline-flex items-center gap-1.5 text-sm underline-offset-4 hover:underline"
+                    style={{ color: theme.accent, ...linkProps(theme) }}
+                  >
+                    <ExternalLink className="size-4" aria-hidden /> Source code
+                  </a>
+                )}
+              </div>
+            )}
+            {project.coverUrl && (
+              <div
+                className={cn("mt-8 w-full overflow-hidden", hoverZoom && "bs-hoverzoom")}
+                style={{ aspectRatio: IMAGE_RATIO[theme.imageRatio], borderRadius: RADIUS[theme.radius] }}
+              >
+                <SiteCoverImage src={project.coverUrl} kind={project.coverKind} alt={project.title} title={project.title} theme={theme} />
+              </div>
+            )}
+            {project.summary && (
+              <p className="mt-8 max-w-2xl text-lg leading-relaxed" style={{ color: theme.foreground }}>
+                {project.summary}
+              </p>
+            )}
+            {project.description && (
+              <div className="mt-5 max-w-2xl whitespace-pre-wrap text-[15px] leading-relaxed opacity-90">{project.description}</div>
+            )}
+
+            {fieldEntries.length > 0 && (
+              <dl className="mt-8 grid gap-x-8 gap-y-4 sm:grid-cols-2" style={{ maxWidth: "42rem" }}>
+                {fieldEntries.map(([label, value]) => (
+                  <div key={label}>
+                    <dt className="text-xs uppercase tracking-wide" style={labelStyle}>
+                      {label}
+                    </dt>
+                    <dd className="mt-1 text-sm opacity-90">{value}</dd>
+                  </div>
+                ))}
+              </dl>
+            )}
+
+            {narrative.map(([label, body]) => (
+              <section key={label} className="mt-9 max-w-2xl">
+                <h2 className="text-sm font-semibold uppercase tracking-[0.14em]" style={{ ...headingStyle, color: theme.accent }}>
+                  {label}
+                </h2>
+                <p className="mt-3 whitespace-pre-wrap text-[15px] leading-relaxed opacity-90">{body}</p>
+              </section>
+            ))}
+
+            {chips.length > 0 && (
+              <div className="mt-9 flex flex-wrap gap-2">
+                {chips.map((s) => (
+                  <span key={s} className="border px-3 py-1 text-sm" style={chipStyle}>
+                    {s}
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {gallery.length > 0 && (
+              <section className="mt-10">
+                <h2 className="text-sm font-semibold uppercase tracking-[0.14em]" style={{ ...headingStyle, color: theme.accent }}>
+                  Gallery
+                </h2>
+                <Reveal motion={motion} stagger className="mt-5 grid gap-5 sm:grid-cols-2">
+                  {gallery.map((item) => (
+                    <figure key={item.id} className="min-w-0">
+                      <SiteMediaItem item={item} theme={theme} />
+                      {item.caption && (
+                        <figcaption className="mt-2 text-xs" style={labelStyle}>
+                          {item.caption}
+                        </figcaption>
+                      )}
+                    </figure>
+                  ))}
+                </Reveal>
+              </section>
+            )}
+
+            {project.contributors.length > 0 && (
+              <section className="mt-10 max-w-2xl">
+                <h2 className="text-sm font-semibold uppercase tracking-[0.14em]" style={{ ...headingStyle, color: theme.accent }}>
+                  Contributors
+                </h2>
+                <ul className="mt-4 space-y-2">
+                  {project.contributors.map((c) => (
+                    <li key={c.id} className="text-sm opacity-90">
+                      <span className="font-semibold" style={{ color: theme.accent }}>
+                        {c.name}
+                      </span>
+                      {c.role ? <span style={labelStyle}> · {c.role}</span> : null}
+                      {c.contribution ? <span className="opacity-80"> — {c.contribution}</span> : null}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+          </article>
+        </Reveal>
+
+        <footer className="mt-6 pt-6 text-xs opacity-70" style={{ borderTop: theme.divider === "none" ? "none" : `1px solid ${theme.border}` }}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span>
+              {config.name} · {profile.name}
+            </span>
+            {watermark && (
+              <span aria-label="Made with BEAN Folio · GIFTZ">
+                Made with{" "}
+                <a href="#/" className="underline-offset-4 transition-colors hover:underline" title="Built with BEAN Folio — the portfolio platform">
                   BEAN Folio
                 </a>{" "}
                 · GIFTZ

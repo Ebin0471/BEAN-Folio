@@ -14,13 +14,14 @@ import {
  * Minimal hash router. The whole SPA lives under the `/` route, so URLs look
  * like `/#/u/ada`, `/#/studio/<id>/edit`. Deep links and back/forward work.
  *
- * Public ROUTE-FORM addresses (`/u/ada`, `/p/<id>`, `/site/ada`) are
- * first-class too: src/proxy.ts serves this same SPA document at those paths
- * with the intended route in the `x-bean-boot-route` header. The server
- * renders THAT route's shell (so a published website never paints the
- * Discover feed first), the client hydrates straight into it, and the address
- * bar keeps the exact URL the creator shares. Legacy `/?#/u/ada` deep links
- * are canonicalized to the route form below.
+ * Public ROUTE-FORM addresses (`/u/ada`, `/p/<id>`, `/site/ada`, and the
+ * website's own project pages `/site/ada/projects/<id>`) are first-class
+ * too: src/proxy.ts serves this same SPA document at those paths with the
+ * intended route in the `x-bean-boot-route` header. The server renders THAT
+ * route's shell (so a published website never paints the Discover feed
+ * first), the client hydrates straight into it, and the address bar keeps
+ * the exact URL the creator shares. Legacy `/?#/u/ada` deep links are
+ * canonicalized to the route form below.
  */
 
 export function parseHash(hash: string): string {
@@ -32,8 +33,13 @@ export function parseHash(hash: string): string {
   return p || "/";
 }
 
-/** Public routes that may boot directly from the URL PATH (see proxy.ts). */
-const PUBLIC_BOOT_RE = /^\/(u|p|site)\/([^/]+)$/;
+/**
+ * Public routes that may boot directly from the URL PATH (see proxy.ts).
+ * `/site/<username>/projects/<projectId>` — the standalone website's own
+ * project detail page — is a deeper public shape than the other routes but
+ * still bounded and enumerable (never an open wildcard).
+ */
+const PUBLIC_BOOT_RE = /^(?:\/u\/[^/]+|\/p\/[^/]+|\/site\/[^/]+(?:\/projects\/[^/]+)?)$/;
 
 /**
  * The active route. A URL fragment always wins (in-app navigation runs on the
@@ -46,13 +52,21 @@ export function currentPath(): string {
   if (typeof window === "undefined") return "/";
   const hash = window.location.hash;
   if (hash) return parseHash(hash);
-  const boot = PUBLIC_BOOT_RE.exec(window.location.pathname);
-  if (boot) {
-    try {
-      return `/${boot[1]}/${decodeURIComponent(boot[2])}`;
-    } catch {
-      return `/${boot[1]}/${boot[2]}`;
-    }
+  const pathname = window.location.pathname;
+  if (PUBLIC_BOOT_RE.test(pathname)) {
+    // Decode each segment exactly as parseHash consumers expect — the proxy
+    // passes the requested path through percent-encoded.
+    const segments = pathname
+      .slice(1)
+      .split("/")
+      .map((segment) => {
+        try {
+          return decodeURIComponent(segment);
+        } catch {
+          return segment;
+        }
+      });
+    return `/${segments.join("/")}`;
   }
   return "/";
 }

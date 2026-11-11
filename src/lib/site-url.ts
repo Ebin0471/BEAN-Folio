@@ -24,6 +24,10 @@
  *    adds the "#"), internal links, SEO canonical paths and API responses
  *    that describe the route (the publish/unpublish/me-site endpoints return
  *    it as publicUrl).
+ *  - publicSiteProjectPath() → `/site/<username>/projects/<projectId>`
+ *    Router path form for the WEBSITE'S OWN project detail pages — the
+ *    website-native alternative to the platform's `/p/<projectId>`. Same
+ *    usage rules as publicSitePath.
  *  - publicSiteHashUrl()   → `#/site/<username>`
  *  - publicProfilePath()   → `/u/<username>`
  *  - publicProfileHashUrl() → `#/u/<username>`
@@ -73,6 +77,52 @@ export function publicSitePath(username: string | null | undefined): string | nu
 export function publicSiteHashUrl(username: string | null | undefined): string | null {
   const path = publicSitePath(username);
   return path ? `#${path}` : null;
+}
+
+// ------------------------------------------------- website project detail
+
+/**
+ * The standalone WEBSITE's own project detail route:
+ * `/site/<username>/projects/<projectId>`.
+ *
+ * The identifier is the project's stable database id (the Project model has no
+ * human slug — the id IS the canonical, never-changing identifier). This route
+ * keeps a visitor INSIDE the creator's standalone website: same design system,
+ * no platform chrome, no redirect to the platform's `/p/<projectId>` page
+ * (which remains the platform's own independent project address).
+ */
+export function publicSiteProjectPath(
+  username: string | null | undefined,
+  projectId: string | null | undefined
+): string | null {
+  const name = username?.trim().toLowerCase();
+  const id = projectId?.trim();
+  return name && id ? `/site/${encodeURIComponent(name)}/projects/${encodeURIComponent(id)}` : null;
+}
+
+/** Hash form of the website project route — for literal href attributes and in-app links. */
+export function publicSiteProjectHashUrl(
+  username: string | null | undefined,
+  projectId: string | null | undefined
+): string | null {
+  const path = publicSiteProjectPath(username, projectId);
+  return path ? `#${path}` : null;
+}
+
+/**
+ * Fully-qualified canonical URL of a website project page, e.g.
+ * `https://beanfolio.com/site/ada/projects/<id>`. Same explicit-origin policy
+ * as publicSiteAbsoluteUrl — no window/request fallback, null for unusable
+ * inputs.
+ */
+export function publicSiteProjectAbsoluteUrl(
+  username: string | null | undefined,
+  projectId: string | null | undefined,
+  origin: string | null | undefined
+): string | null {
+  const path = publicSiteProjectPath(username, projectId);
+  if (!path || !origin) return null;
+  return `${stripTrailingSlash(origin)}${path}`;
 }
 
 /** The BEAN Folio public PROFILE's route: `/u/<username>`. */

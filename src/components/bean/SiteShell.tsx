@@ -55,6 +55,7 @@ import ProjectDetailView from "@/views/ProjectDetailView";
 import FolioView from "@/views/FolioView";
 import PublicProfileView from "@/views/PublicProfileView";
 import PublishedSiteView from "@/views/PublishedSiteView";
+import SiteProjectDetailView from "@/views/SiteProjectDetailView";
 import IntelligenceView from "@/views/IntelligenceView";
 import ConnectView from "@/views/ConnectView";
 import InsightsView from "@/views/InsightsView";
@@ -514,7 +515,7 @@ function LegacyRouteRedirect({ to }: { to: string }) {
 
 function Router() {
   const { segments } = useHashRouteSafe();
-  const [a, b, c] = segments;
+  const [a, b, c, d] = segments;
   const segKey = segments.join("/");
 
   const view = useMemo(() => {
@@ -547,7 +548,23 @@ function Router() {
         // The standalone published WEBSITE — the creator's own custom site at
         // its own address. Fully independent of the profile above: the two
         // routes never render each other's experience (see lib/site-url).
-        return b ? <PublishedSiteView username={decodeURIComponent(b)} /> : <NotFound />;
+        //
+        // /site/<username>                  → the website homepage
+        // /site/<username>/projects/<id>    → the WEBSITE-NATIVE project detail
+        //   page: same site design system, platform chrome suppressed, NEVER a
+        //   redirect into the platform's /p/<id> experience. Only this exact
+        //   deep shape is a website route; anything else under /site/<user>/
+        //   is honestly not-found.
+        if (!b) return <NotFound />;
+        if (c === "projects") {
+          return d ? (
+            <SiteProjectDetailView username={decodeURIComponent(b)} projectId={decodeURIComponent(d)} />
+          ) : (
+            <NotFound />
+          );
+        }
+        if (c) return <NotFound />;
+        return <PublishedSiteView username={decodeURIComponent(b)} />;
       case "intelligence":
         return <RequireAuth label="RIISHE"><IntelligenceView /></RequireAuth>;
       case "laxii":
@@ -581,7 +598,7 @@ function Router() {
       default:
         return <NotFound />;
     }
-  }, [a, b, c, segKey]);
+  }, [a, b, c, d, segKey]);
 
   return view;
 }

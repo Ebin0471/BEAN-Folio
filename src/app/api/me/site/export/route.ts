@@ -76,7 +76,31 @@ export const GET = handler(async (req: NextRequest) => {
       where: { ownerId: user.id, status: "PUBLISHED", visibility: "PUBLIC" },
       orderBy: [{ publishedAt: "desc" }, { updatedAt: "desc" }],
       take: 60,
-      select: { id: true, title: true, summary: true, category: true, coverMediaId: true },
+      // Detail-page fields: the exported project pages render the same public
+      // content the live /site/<username>/projects/<id> page shows. Same
+      // PUBLIC-visibility filter as the cards — drafts/private stay excluded.
+      select: {
+        id: true,
+        title: true,
+        summary: true,
+        category: true,
+        coverMediaId: true,
+        description: true,
+        role: true,
+        tools: true,
+        brief: true,
+        process: true,
+        challenges: true,
+        outcome: true,
+        externalUrl: true,
+        repoUrl: true,
+        publishedAt: true,
+        skills: { include: { skill: { select: { label: true } } } },
+        media: {
+          orderBy: { order: "asc" },
+          select: { mediaId: true, caption: true, order: true, media: { select: { kind: true } } },
+        },
+      },
     }),
     db.collection.findMany({
       where: { ownerId: user.id, isPublic: true },
@@ -128,6 +152,37 @@ export const GET = handler(async (req: NextRequest) => {
     coverUrl: mediaUrl(p.coverMediaId),
   });
 
+  const parseTools = (json: string | null): string[] => {
+    if (!json) return [];
+    try {
+      const v = JSON.parse(json);
+      return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+    } catch {
+      return [];
+    }
+  };
+
+  /** Top-level export projects carry the detail fields for project-<id>.html pages. */
+  const toDetailProject = (p: (typeof projects)[number]) => ({
+    id: p.id,
+    title: p.title,
+    summary: p.summary,
+    category: p.category,
+    coverUrl: mediaUrl(p.coverMediaId),
+    description: p.description,
+    role: p.role,
+    tools: parseTools(p.tools),
+    skills: p.skills.map((s) => s.skill.label),
+    brief: p.brief,
+    process: p.process,
+    challenges: p.challenges,
+    outcome: p.outcome,
+    externalUrl: p.externalUrl,
+    repoUrl: p.repoUrl,
+    publishedAt: p.publishedAt?.toISOString() ?? null,
+    media: p.media.map((m) => ({ url: mediaUrl(m.mediaId), kind: m.media.kind, caption: m.caption })),
+  });
+
   /**
    * Owner-scoped media loader: the MediaAsset row MUST belong to the session
    * user — anything else (including nonexistent ids) yields null and the
@@ -147,7 +202,7 @@ export const GET = handler(async (req: NextRequest) => {
   const { files, warnings } = await buildSiteExport({
     config,
     profile: exportProfile,
-    projects: projects.map(toCard),
+    projects: projects.map(toDetailProject),
     collections: collections.map((c) => ({
       id: c.id,
       name: c.name,

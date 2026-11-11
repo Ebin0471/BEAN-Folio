@@ -79,6 +79,23 @@ export interface ExportProject {
   summary: string | null;
   category: string | null;
   coverUrl: string | null;
+  /**
+   * Detail-page fields — top-level projects carry them (the export route
+   * loads the same public fields the live project page shows); collection
+   * items carry cards only. All optional so older callers stay valid.
+   */
+  description?: string | null;
+  role?: string | null;
+  tools?: string[];
+  skills?: string[];
+  brief?: string | null;
+  process?: string | null;
+  challenges?: string | null;
+  outcome?: string | null;
+  externalUrl?: string | null;
+  repoUrl?: string | null;
+  publishedAt?: string | null;
+  media?: { url: string | null; kind: string; caption: string | null }[];
 }
 
 export interface ExportCollection {
@@ -760,7 +777,7 @@ async function projectCardHtml(ctx: Ctx, p: ExportProject, large: boolean): Prom
   </div>`;
   const img = `<div style="width:100%; overflow:hidden; aspect-ratio:${IMAGE_RATIO[theme.imageRatio]};">${await coverImgHtml(ctx, p.coverUrl, p.title, p.title)}</div>`;
   // bs-hoverzoom mirrors the React renderer's card image-zoom micro-motion.
-  return `<a id="project-${esc(p.id)}" class="bs-card${ctx.siteMotion.hoverEffects ? " bs-hoverzoom" : ""}${ctx.theme.glass?.enabled && ctx.theme.glass.targets.cards ? " bs-glass-card" : ""}" href="#project-${esc(p.id)}">${img}${body}</a>`;
+  return `<a id="project-${esc(p.id)}" class="bs-card${ctx.siteMotion.hoverEffects ? " bs-hoverzoom" : ""}${ctx.theme.glass?.enabled && ctx.theme.glass.targets.cards ? " bs-glass-card" : ""}" href="./project-${esc(p.id)}.html">${img}${body}</a>`;
 }
 
 async function sectionHtml(ctx: Ctx, section: SiteSection): Promise<string> {
@@ -851,7 +868,7 @@ async function sectionHtml(ctx: Ctx, section: SiteSection): Promise<string> {
       else if (section.layout === "list") {
         inner = `<ul class="bs-rows">${list
           .map(
-            (p) => `<li><a class="bs-row-link" href="#project-${esc(p.id)}"><span class="bs-row-title">${esc(p.title)}</span><span class="bs-row-cat">${esc(categoryLabel(p.category))}</span></a></li>`
+            (p) => `<li><a class="bs-row-link" href="./project-${esc(p.id)}.html"><span class="bs-row-title">${esc(p.title)}</span><span class="bs-row-cat">${esc(categoryLabel(p.category))}</span></a></li>`
           )
           .join("")}</ul>`;
       } else if (section.layout === "editorial") {
@@ -860,7 +877,7 @@ async function sectionHtml(ctx: Ctx, section: SiteSection): Promise<string> {
             list.map(async (p, i) => {
               const media = `<div class="bs-editorial-media" style="overflow:hidden; aspect-ratio:${IMAGE_RATIO[theme.imageRatio]}; border-radius:${RADIUS[theme.radius]};">${await coverImgHtml(ctx, p.coverUrl, p.title, p.title)}</div>`;
               const text = `<div><p class="bs-cat-label">${esc(categoryLabel(p.category))}</p><h3 class="bs-editorial-title">${esc(p.title)}</h3>${p.summary ? `<p class="bs-editorial-summary">${esc(p.summary)}</p>` : ""}</div>`;
-              return revealWrap(m, `<a class="bs-editorial-row${i % 2 === 1 ? " odd" : ""}${ctx.siteMotion.hoverEffects ? " bs-hoverzoom" : ""}" href="#project-${esc(p.id)}">${media}${text}</a>`);
+              return revealWrap(m, `<a class="bs-editorial-row${i % 2 === 1 ? " odd" : ""}${ctx.siteMotion.hoverEffects ? " bs-hoverzoom" : ""}" href="./project-${esc(p.id)}.html">${media}${text}</a>`);
             })
           )
         ).join("")}</div>`;
@@ -948,10 +965,10 @@ async function sectionHtml(ctx: Ctx, section: SiteSection): Promise<string> {
         shots.length === 0
           ? `<p class="bs-muted" style="margin-top:1rem; font-size:0.875rem;">No images to show yet.</p>`
           : section.layout === "strip"
-            ? revealWrap(m, `<ul class="bs-strip">${(await Promise.all(shots.map(async (p) => `<li><a href="#project-${esc(p.id)}" class="${ctx.siteMotion.hoverEffects ? "bs-hoverzoom" : ""}" style="display:block; aspect-ratio:${IMAGE_RATIO[theme.imageRatio]}; overflow:hidden; border-radius:${RADIUS[theme.radius]};">${await coverImgHtml(ctx, p.coverUrl, p.title, p.title)}</a></li>`))).join("")}</ul>`)
+            ? revealWrap(m, `<ul class="bs-strip">${(await Promise.all(shots.map(async (p) => `<li><a href="./project-${esc(p.id)}.html" class="${ctx.siteMotion.hoverEffects ? "bs-hoverzoom" : ""}" style="display:block; aspect-ratio:${IMAGE_RATIO[theme.imageRatio]}; overflow:hidden; border-radius:${RADIUS[theme.radius]};">${await coverImgHtml(ctx, p.coverUrl, p.title, p.title)}</a></li>`))).join("")}</ul>`)
             : section.layout === "masonry"
-              ? staggerWrap(m, await Promise.all(shots.map(async (p) => `<a href="#project-${esc(p.id)}" class="${ctx.siteMotion.hoverEffects ? "bs-hoverzoom" : ""}">${await coverImgHtml(ctx, p.coverUrl, p.title, p.title)}</a>`)), { className: "bs-masonry" })
-              : staggerWrap(m, await Promise.all(shots.map(async (p) => `<a href="#project-${esc(p.id)}" class="${ctx.siteMotion.hoverEffects ? "bs-hoverzoom" : ""}" style="display:block; overflow:hidden; aspect-ratio:${IMAGE_RATIO[theme.imageRatio]}; border-radius:${RADIUS[theme.radius]};">${await coverImgHtml(ctx, p.coverUrl, p.title, p.title)}</a>`)), { className: `bs-grid ${cols}` });
+              ? staggerWrap(m, await Promise.all(shots.map(async (p) => `<a href="./project-${esc(p.id)}.html" class="${ctx.siteMotion.hoverEffects ? "bs-hoverzoom" : ""}">${await coverImgHtml(ctx, p.coverUrl, p.title, p.title)}</a>`)), { className: "bs-masonry" })
+              : staggerWrap(m, await Promise.all(shots.map(async (p) => `<a href="./project-${esc(p.id)}.html" class="${ctx.siteMotion.hoverEffects ? "bs-hoverzoom" : ""}" style="display:block; overflow:hidden; aspect-ratio:${IMAGE_RATIO[theme.imageRatio]}; border-radius:${RADIUS[theme.radius]};">${await coverImgHtml(ctx, p.coverUrl, p.title, p.title)}</a>`)), { className: `bs-grid ${cols}` });
       return `<section class="bs-section">${revealWrap(m, head + inner)}</section>`;
     }
 
@@ -1227,6 +1244,134 @@ ${ctx.siteMotion.enabled && ctx.siteMotion.scrollProgress ? '<div class="bs-prog
 </html>`;
 }
 
+// ------------------------------------------------------------------ project detail pages
+
+function exportDate(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  try {
+    return new Intl.DateTimeFormat("en-US", { year: "numeric", month: "long", day: "numeric" }).format(new Date(iso));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A project detail page for the exported static site — the export's own
+ * equivalent of the live `/site/<username>/projects/<id>` page. Reuses the
+ * page shell (masthead, background, footer, generated stylesheet) and swaps
+ * the body for the project's REAL data (the same public fields the live
+ * project page renders), styled by the same theme. Cards across the site
+ * link here via `./project-<id>.html`, so the exported website keeps its
+ * own project navigation instead of dead in-page anchors.
+ */
+async function buildProjectDetailHtml(
+  ctx: Ctx,
+  project: ExportProject,
+  opts: { title: string; description: string; fontsHref: string | null; watermark: boolean; contentVarStyle: string; bgLayer: string; stylesPath: string; siteJsPath: string; logoHtml: string }
+): Promise<string> {
+  const { theme } = ctx;
+  const published = exportDate(project.publishedAt);
+  const meta = [published, project.role?.trim() || null].filter(Boolean) as string[];
+  const gallery = (project.media ?? []).filter((m) => m.kind === "IMAGE" && m.url);
+  const chips = [...new Set([...(project.skills ?? []), ...(project.tools ?? [])])].filter((s) => s.trim().length > 0);
+  const narrative = (
+    [
+      ["Brief", project.brief],
+      ["Process", project.process],
+      ["Challenges", project.challenges],
+      ["Outcome", project.outcome],
+    ] as [string, string | null][]
+  ).filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].trim().length > 0);
+
+  const coverHtml = project.coverUrl
+    ? `<div style="margin-top:2rem; width:100%; overflow:hidden; aspect-ratio:${IMAGE_RATIO[theme.imageRatio]}; border-radius:${RADIUS[theme.radius]};">${await coverImgHtml(ctx, project.coverUrl, project.title, project.title)}</div>`
+    : "";
+  const galleryHtml = gallery.length
+    ? `<section style="margin-top:2.5rem;">
+        <h2 class="bs-meta-label" style="font-size:0.875rem; font-weight:600; color:${theme.accent};">Gallery</h2>
+        <div style="margin-top:1.25rem; display:grid; gap:1.25rem; grid-template-columns:repeat(auto-fit, minmax(min(260px, 100%), 1fr));">
+          ${(await Promise.all(gallery.map(async (m) => `<figure style="margin:0; min-width:0;"><div style="overflow:hidden; border-radius:${RADIUS[theme.radius]};">${await coverImgHtml(ctx, m.url, m.caption ?? project.title, project.title)}</div>${m.caption ? `<figcaption class="bs-muted" style="margin-top:0.5rem; font-size:0.75rem;">${esc(m.caption)}</figcaption>` : ""}</figure>`))).join("")}
+        </div>
+      </section>`
+    : "";
+  const linksHtml =
+    project.externalUrl || project.repoUrl
+      ? `<div class="bs-cta-row" style="margin-top:1.5rem; justify-content:flex-start;">
+          ${project.externalUrl ? `<a class="bs-btn bs-mi${theme.glass?.enabled && theme.glass.targets.buttons ? " bs-glass-btn" : ""}" href="${esc(project.externalUrl)}" target="_blank" rel="noopener noreferrer">${ICONS.globe} Visit live site</a>` : ""}
+          ${project.repoUrl ? `<a class="bs-btn bs-mi${theme.glass?.enabled && theme.glass.targets.buttons ? " bs-glass-btn" : ""}" href="${esc(project.repoUrl)}" target="_blank" rel="noopener noreferrer">${ICONS.globe} Source code</a>` : ""}
+        </div>`
+      : "";
+  const chipsHtml = chips.length
+    ? `<div style="margin-top:2.25rem; display:flex; flex-wrap:wrap; gap:0.5rem;">${chips.map((s) => `<span style="border:1px solid ${theme.border}; border-radius:${RADIUS[theme.radius]}; padding:0.25rem 0.75rem; font-size:0.875rem; color:${theme.muted};">${esc(s)}</span>`).join("")}</div>`
+    : "";
+  const narrativeHtml = narrative
+    .map(
+      ([label, body]) =>
+        `<section style="margin-top:2.25rem; max-width:44rem;"><h2 class="bs-meta-label" style="font-size:0.875rem; font-weight:600; color:${theme.accent};">${esc(label)}</h2><p style="margin-top:0.75rem; white-space:pre-wrap; line-height:1.65; opacity:0.92;">${esc(body)}</p></section>`
+    )
+    .join("");
+
+  const navPages = planPageFiles(ctx.config).filter((p) => p.page.visible !== false);
+  const navLinks =
+    navPages.length > 1
+      ? navPages
+          .map((p) => `<a class="bs-nav-link bs-mi" href="${p.isHome ? "./index.html" : `./${p.file}.html`}">${esc(p.page.name)}</a>`)
+          .join("")
+      : "";
+  const masthead = `<header class="bs-masthead${theme.navLayout === "stacked" ? " stacked" : ""}${theme.navLayout === "centered" ? " centered" : ""}${
+    theme.glass?.enabled && theme.glass.targets.nav ? " bs-glass" : ""
+  }" style="${theme.glass?.enabled && theme.glass.targets.nav ? "" : `border-top: none;`}">
+    <p class="bs-site-name">${opts.logoHtml ? `${opts.logoHtml}<span class="bs-sr-only">${esc(ctx.config.name)}</span>` : esc(ctx.config.name)}</p>
+    <nav class="bs-site-nav" aria-label="Site pages">${navLinks}<span class="bs-handle">@${esc(ctx.profile.username ?? ctx.profile.name)}</span></nav>
+  </header>`;
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(opts.title)}</title>
+<meta name="description" content="${esc(opts.description.slice(0, 300))}">
+${opts.fontsHref ? `<link rel="preconnect" href="https://fonts.googleapis.com">\n<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n<link rel="stylesheet" href="${esc(opts.fontsHref)}">` : ""}
+<link rel="stylesheet" href="${esc(opts.stylesPath)}">
+<script src="${esc(opts.siteJsPath)}" defer></script>
+<noscript><style>.bean-site .bs-reveal,.bean-site .bs-reveal .bs-sh,.bean-site .bs-reveal .bs-w{opacity:1 !important;transform:none !important;filter:none !important;clip-path:none !important;transition:none !important}</style></noscript>
+</head>
+<body>
+${ctx.siteMotion.enabled && ctx.siteMotion.scrollProgress ? '<div class="bs-progress" aria-hidden="true"></div>' : ""}
+<div class="bean-site bs-bg-host" style="${esc(opts.contentVarStyle)}">
+  ${opts.bgLayer}
+  <div class="bs-content-wrap">
+    ${masthead}
+    <div>
+      <nav aria-label="Back to site" style="padding-top:0.5rem;">
+        <a class="bs-nav-link bs-mi" href="./index.html" style="color:${theme.accent};">&#8592; Back to ${esc(ctx.config.name)}</a>
+      </nav>
+      <article style="padding:1.5rem 0 3rem;">
+        <p class="bs-cat-label">${esc(categoryLabel(project.category))}</p>
+        <h1 class="bs-h1" style="font-size:clamp(1.75rem, 4vw, 2.75rem);">${esc(project.title)}</h1>
+        ${meta.length > 0 ? `<p class="bs-meta-label" style="margin-top:0.75rem;">${meta.map(esc).join(" · ")}</p>` : ""}
+        ${linksHtml}
+        ${coverHtml}
+        ${project.summary ? `<p style="margin-top:2rem; max-width:44rem; font-size:1.125rem; line-height:1.6;">${esc(project.summary)}</p>` : ""}
+        ${project.description ? `<p style="margin-top:1.25rem; max-width:44rem; white-space:pre-wrap; line-height:1.65; opacity:0.92;">${esc(project.description)}</p>` : ""}
+        ${narrativeHtml}
+        ${chipsHtml}
+        ${galleryHtml}
+      </article>
+    </div>
+    <footer class="bs-footer">
+      <div class="bs-footer-row">
+        <span>${esc(ctx.config.name)} · ${esc(ctx.profile.name)}</span>
+        ${opts.watermark ? `<span aria-label="Made with BEAN Folio · GIFTZ">Made with BEAN Folio · GIFTZ</span>` : ""}
+      </div>
+    </footer>
+  </div>
+</div>
+</body>
+</html>`;
+}
+
 // ------------------------------------------------------------------ README & manifest
 
 function buildReadme(input: SiteExportInput, source: "draft" | "published", warnings: string[], externalFonts: boolean, fileNames: string[]): string {
@@ -1408,6 +1553,28 @@ export async function buildSiteExport(input: SiteExportInput): Promise<SiteExpor
     files.push({ path: `${plan.file}.html`, data: Buffer.from(html, "utf8") });
   }
 
+  // ---- project detail pages (the website's OWN project pages, exported)
+  // Each public project gets a real standalone page (project-<id>.html) built
+  // from the SAME design system — every project card links here, mirroring
+  // /site/<username>/projects/<id> on the live site.
+  for (const p of projects) {
+    for (const m of p.media ?? []) {
+      if (m.kind === "IMAGE" && m.url) await ctx.assets.resolve(m.url);
+    }
+    const html = await buildProjectDetailHtml(ctx, p, {
+      title: `${p.title} — ${config.name}`,
+      description: p.summary || p.description || description,
+      fontsHref,
+      watermark,
+      contentVarStyle,
+      bgLayer,
+      stylesPath: "./assets/styles.css",
+      siteJsPath: "./assets/site.js",
+      logoHtml,
+    });
+    files.push({ path: `project-${p.id}.html`, data: Buffer.from(html, "utf8") });
+  }
+
   // ---- styles + script
   files.push({ path: "assets/styles.css", data: Buffer.from(buildStylesheet(theme, motion, config), "utf8") });
   files.push({ path: "assets/site.js", data: Buffer.from(buildSiteJs(motion), "utf8") });
@@ -1459,7 +1626,8 @@ export async function buildSiteExport(input: SiteExportInput): Promise<SiteExpor
       "Inquiry/contact form → replaced with mailto: links (no backend in a static site)",
       "Follow / follower counts / saves / platform insights are not exported",
       "RIISHE AI features are platform-only",
-      "Project detail pages are not generated — cards link to in-page anchors",
+      "Project structured/custom studio fields render on the live site but are not exported",
+      "Project gallery videos, audio and documents are not bundled — image media only",
       "Static snapshot: content does not update without re-exporting",
     ],
     exportNotes: assets.warnings,

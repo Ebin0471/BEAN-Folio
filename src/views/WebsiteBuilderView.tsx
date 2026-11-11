@@ -183,12 +183,22 @@ function PreviewFrame({
   marker,
   refreshKey = 0,
   onRenderError,
+  onAnchorClick,
 }: {
   label: string;
   children: React.ReactNode;
   marker?: string;
   refreshKey?: number;
   onRenderError?: () => void;
+  /**
+   * Intercepted site-project anchors (`#/site/...`) inside the preview.
+   * The preview iframe has NO navigation context (portal-rendered into a
+   * srcdoc document), so without this a project link would silently do
+   * nothing — or, before the website-native routes existed, leak the visitor
+   * into the platform's /p/<id> page. The builder forwards the href so the
+   * REAL standalone website project page can be opened from the preview.
+   */
+  onAnchorClick?: (href: string) => void;
 }) {
   const frameRef = useRef<HTMLIFrameElement>(null);
   const rootRef = useRef<ReturnType<typeof import("react-dom/client").createRoot> | null>(null);
@@ -240,6 +250,25 @@ function PreviewFrame({
     setDoc(frameDoc);
     setLoaded(true);
   }, []);
+
+  useEffect(() => {
+    if (!doc || !onAnchorClick) return;
+    // Capture-phase delegation: intercept the site's OWN project links inside
+    // the preview and hand them to the builder (in-page anchors like
+    // #bs-contact keep their default in-frame behavior).
+    const handler = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      const anchor = target?.closest?.("a[href]") as HTMLAnchorElement | null;
+      if (!anchor) return;
+      const href = anchor.getAttribute("href") ?? "";
+      if (href.startsWith("#/site/")) {
+        event.preventDefault();
+        onAnchorClick(href);
+      }
+    };
+    doc.addEventListener("click", handler, true);
+    return () => doc.removeEventListener("click", handler, true);
+  }, [doc, onAnchorClick]);
 
   useEffect(() => {
     if (!doc) return;
@@ -311,6 +340,7 @@ function DeviceStage({
   marker,
   refreshKey,
   onRenderError,
+  onAnchorClick,
   children,
 }: {
   deviceWidth: number | "100%";
@@ -319,6 +349,7 @@ function DeviceStage({
   marker?: string;
   refreshKey?: number;
   onRenderError?: () => void;
+  onAnchorClick?: (href: string) => void;
   children: React.ReactNode;
 }) {
   const outerRef = useRef<HTMLDivElement>(null);
@@ -362,7 +393,7 @@ function DeviceStage({
               : undefined
           }
         >
-          <PreviewFrame label={label} marker={marker} refreshKey={refreshKey} onRenderError={onRenderError}>{children}</PreviewFrame>
+          <PreviewFrame label={label} marker={marker} refreshKey={refreshKey} onRenderError={onRenderError} onAnchorClick={onAnchorClick}>{children}</PreviewFrame>
         </div>
       </div>
     </div>
@@ -2264,6 +2295,14 @@ export default function WebsiteBuilderView() {
                 marker="canvas"
                 refreshKey={previewNonce}
                 onRenderError={() => setPreviewError(true)}
+                onAnchorClick={(href) => {
+                  // The preview canvas has no navigation context: project links
+                  // open the REAL website-native project page in a new tab
+                  // (/site/<username>/projects/<id> — proxy-served path form),
+                  // never the BEAN Folio platform project page.
+                  const path = href.startsWith("#") ? href.slice(1) : href;
+                  if (path.startsWith("/site/")) window.open(path, "_blank", "noopener");
+                }}
               >
                 {previewChildren(previewConfig, { interactive: mode === "customization" })}
               </DeviceStage>
