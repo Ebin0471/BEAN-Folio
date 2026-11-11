@@ -133,34 +133,75 @@ Local `main` keeps the full local history — **it must NEVER be pushed**
 (its history contains historical `db/custom.db` blobs with password hashes
 and private user media).
 
-### Initial connection (once the owner provides authorization)
+Remote of record: **`https://github.com/Ebin0471/BEAN-Folio.git`** — the
+owner-confirmed PRIVATE repository (connected 2026-11-11).
+
+### Initial connection — COMPLETED 2026-11-11
 
 ```bash
-git remote add origin <PRIVATE-REPO-URL>          # the existing bean-folio repo
+git remote add origin https://github.com/Ebin0471/BEAN-Folio.git  # owner-confirmed PRIVATE repo
 git push -u origin github-clean:main              # clean snapshot becomes GitHub main
 git ls-remote origin refs/heads/main              # MUST equal `git rev-parse github-clean`
 ```
 
-- Repository stays PRIVATE. No duplicate repos.
-- The token used for pushing is fine-grained, scoped to this repo
-  (Contents: Read & Write), stored outside the repository, never committed.
+Executed 2026-11-11: remote `main` verified ==
+`845641afbacc1a6caea78b4420a8c6572d8668c7` (800 source files, leak scan
+clean, repo PRIVATE).
 
-### Publishing a new verified snapshot after future tasks
+- Repository stays PRIVATE. No duplicate repos.
+- Credential: GitHub CLI OAuth token (owner-authorized device flow,
+  scopes `repo`, `read:org`) stored in gh's local keyring OUTSIDE the
+  repository, never committed; revocable at github.com/settings/applications.
+
+### Mandatory synchronization after every completed task (owner directive, 2026-11-11)
+
+**Syncing to GitHub is REQUIRED after every completed task that changes BEAN
+Folio — a task is not complete until its source changes are published to
+`origin/main` and hash-verified.** It applies to the ENTIRE platform (all
+modules, APIs, schemas, tests, docs — never selected modules only).
 
 ```bash
+# after the descriptive commit on local main:
 scripts/ops/publish-github-clean.sh "checkpoint: <what + why>"   # audits + syncs + commits
-git push origin github-clean:main
-git ls-remote origin refs/heads/main                             # must equal local github-clean HEAD
+git push origin github-clean:main                                # safe fast-forward only
+git ls-remote origin refs/heads/main                             # MUST equal `git rev-parse github-clean`
 ```
+
+Per-task loop: tests/lint/build checks → full diff review (accidental
+deletions, unrelated modifications, secrets, private data) → descriptive
+commit → publish script → push → **hash-verify** → end-of-task report.
+
+### No silent synchronization failures
+
+If authorization expires, the network fails, tests fail, the push is
+rejected, or the remote differs: NEVER claim synchronization succeeded.
+Keep local changes and commits safe, report the exact failure, and state
+the next recovery action. **Never reset or delete local work just to make
+a push succeed.** No force-push, no remote history rewrite, no overwriting
+other commits — ever.
+
+### End-of-task report (required every task)
+
+- What was changed.
+- Tests and checks performed.
+- Local commit hash.
+- GitHub remote commit hash (`git ls-remote`).
+- Whether both hashes match.
+- Files intentionally excluded (runtime data — see "Security exclusions").
+- Any unresolved issues.
 
 ### Every future development session
 
-- Start: `git branch --show-current` → `git fetch origin` → inspect remote
-  changes → pull ONLY when fast-forward-safe → never discard local
-  uncommitted work → detect conflicts before merging.
+- Start: `git remote -v` (verify origin) → `git fetch origin` → compare
+  local vs `origin/main` commit hashes and trees → inspect uncommitted
+  changes (`git status --porcelain`) → identify whether the workspace is
+  behind the remote → preserve any uncommitted or newer local work → pull
+  ONLY when fast-forward-safe. **On conflict: STOP and resolve safely —
+  never discard work automatically.**
 - End: run regression suites (§5) → lint → review the diff → descriptive
-  commit → push → **verify the remote hash matches the local commit
-  (`git ls-remote`) before claiming any backup happened.**
+  commit → `publish-github-clean.sh` → push → **verify the remote hash
+  matches the published commit (`git ls-remote`) before claiming any
+  synchronization happened** → file the end-of-task report (above).
 
 ### New workspace recovery
 
