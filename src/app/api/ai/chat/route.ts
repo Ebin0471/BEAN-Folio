@@ -7,6 +7,7 @@ import { aiComplete, aiGate, AiProviderError } from "@/lib/ai";
 import { riisheSystemPrompt } from "@/lib/intelligence/personas";
 import { buildPortfolioContext } from "@/lib/intelligence/context";
 import { detectDelegationIntent, prepareDelegation } from "@/lib/intelligence/delegation";
+import { runAutomationIntent, detectAutomationIntent } from "@/lib/riishe/actions";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -67,8 +68,39 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
   ];
 
   try {
+    // ---- Automation intents (additive; delegation above keeps precedence).
+    // When the message asks RIISHE to DO something inside the platform
+    // (discover creators, prepare enquiries, schedule reminders, run
+    // reports…), the automation layer executes it against real data and
+    // returns a grounded reply + a structured action card for the existing
+    // renderer. Every external side effect (sending an enquiry) still
+    // requires an explicit confirmation afterwards. A bookkeeping failure
+    // here falls back to the normal advisory chat path below — never a
+    // failed turn.
+    let automationOutcome: Awaited<ReturnType<typeof runAutomationIntent>> | null = null;
+    const delegationIntent = detectDelegationIntent(message);
+    if (!delegationIntent) {
+      const automationIntent = detectAutomationIntent(message);
+      if (automationIntent) {
+        try {
+          automationOutcome = await runAutomationIntent(user, automationIntent);
+        } catch (e) {
+          console.error("[ai-chat] automation intent failed, falling back to advisory chat:", e instanceof Error ? e.message : e);
+        }
+      }
+    }
+
+    const replySystemPrompt = automationOutcome
+      ? `${systemPrompt}
+
+AUTOMATION MODE — the user's request was executed against their real BEAN Folio data. Reply STRICTLY inside this grounding block:
+${automationOutcome.grounding}
+
+${automationOutcome.replyInstruction}`
+      : systemPrompt;
+
     const { text: reply } = await aiComplete(
-      systemPrompt,
+      replySystemPrompt,
       llmMessages.map((m) => ({ role: m.role, content: m.content })),
       { agent: "RIISHE", feature: "chat", userId: user.id }
     );
@@ -79,10 +111,9 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
     // Nothing is generated or changed automatically — the user reviews and
     // executes in the target agent's studio.
     let delegation: Record<string, unknown> | undefined;
-    const intent = detectDelegationIntent(message);
-    if (intent) {
+    if (delegationIntent) {
       try {
-        const { taskId, plan } = await prepareDelegation(user, intent, message);
+        const { taskId, plan } = await prepareDelegation(user, delegationIntent, message);
         delegation = {
           taskId,
           kind: plan.kind,
@@ -113,7 +144,12 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
 
     await db.aiUsage.create({ data: { userId: user.id, feature: "chat" } });
 
-    return ok({ conversationId: conversation.id, reply, ...(delegation ? { delegation } : {}) });
+    return ok({
+      conversationId: conversation.id,
+      reply,
+      ...(delegation ? { delegation } : {}),
+      ...(automationOutcome ? { automation: automationOutcome.action } : {}),
+    });
   } catch (e) {
     if (e instanceof AiProviderError) return err(e.message, 502);
     throw e;

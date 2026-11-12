@@ -20,6 +20,7 @@ import { Textarea } from "@/components/ui/textarea";
 
 import { EmptyState } from "@/components/bean/EmptyState";
 import { Spinner } from "@/components/bean/Spinner";
+import { AutomationActionCard } from "@/components/bean/riishe/AutomationActionCard";
 
 import { api, ApiError, formatDate } from "@/lib/client";
 import { navigate } from "@/lib/hash-router";
@@ -28,6 +29,7 @@ import type {
   AiCapabilitiesDTO,
   AiConversationSummary,
   AiMessageDTO,
+  RiisheActionCard,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -148,6 +150,8 @@ function ChatTab({
     | { taskId: string; kind: string; targetAgent: string; brief: string; destinationUrl: string; destinationLabel: string }
     | null
   >(null);
+  /** Structured action card from an automation intent (same side-channel pattern as delegation). */
+  const [automation, setAutomation] = useState<RiisheActionCard | null>(null);
   const threadRef = useRef<HTMLDivElement>(null);
 
   const refreshConversations = useCallback(async (silent = false) => {
@@ -191,6 +195,7 @@ function ChatTab({
     setThreadLoading(true);
     setFailure(null);
     setDelegation(null);
+    setAutomation(null);
     try {
       const res = await api<{ conversation: { id: string; title: string; messages: AiMessageDTO[] } }>(
         `/api/ai/conversations/${id}`
@@ -210,6 +215,7 @@ function ChatTab({
     setThread([]);
     setFailure(null);
     setDelegation(null);
+    setAutomation(null);
     setConsentPrompted(false);
     setInput("");
   };
@@ -235,6 +241,7 @@ function ChatTab({
         conversationId: string;
         reply: string;
         delegation?: { taskId: string; kind: string; targetAgent: string; brief: string; destinationUrl: string; destinationLabel: string };
+        automation?: RiisheActionCard;
       }>("/api/ai/chat", {
         method: "POST",
         json: { conversationId: activeId ?? undefined, message },
@@ -245,6 +252,7 @@ function ChatTab({
       ]);
       setActiveId(res.conversationId);
       setDelegation(res.delegation ?? null);
+      setAutomation(res.automation ?? null);
       onQuotaUsed();
       void refreshConversations(true);
     } catch (e) {
@@ -434,6 +442,9 @@ function ChatTab({
                     </Button>
                   </div>
                 </div>
+              )}
+              {automation && !sending && (
+                <AutomationActionCard action={automation} onDismiss={() => setAutomation(null)} />
               )}
               {sending && (
                 <div className="flex justify-start">

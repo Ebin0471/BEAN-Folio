@@ -9,6 +9,9 @@
  *    honestly fails giftz ENGINEERING_TASK and SITE_STUDIO_TURN rows whose
  *    runner died (server restart/crash), flipping linked studio messages
  *    to FAILED.
+ *  - "riishe.automation"  — RIISHE creator-automation runs (follow-up
+ *    reminders, weekly growth summaries, opportunity radar refreshes).
+ *    Owner-scoped: the payload's userId must match the automation's owner.
  *
  * Handlers NEVER mark a job successful themselves — the worker marks
  * SUCCEEDED only when the handler resolves. All counts are logged honestly.
@@ -17,6 +20,7 @@
 import { db } from "@/lib/db";
 import { sweepStaleGiftzTasks } from "@/lib/giftz/jobs";
 import { deleteObject } from "@/lib/storage";
+import { runRiisheAutomationHandler } from "@/lib/riishe/handlers";
 import type { BackgroundJob } from "@prisma/client";
 
 import {
@@ -29,6 +33,7 @@ import {
 
 export const MAINTENANCE_SWEEP_KEY = "maintenance.sweep";
 export const SITE_STUDIO_SWEEP_KEY = "site.studio-sweep";
+export const RIISHE_AUTOMATION_KEY = "riishe.automation";
 
 /** maintenance.sweep cadence (retention purge). */
 export const SWEEP_EVERY_MS = 10 * 60_000;
@@ -56,6 +61,7 @@ export function registerBuiltInHandlers(): void {
   registered = true;
   registerHandler(MAINTENANCE_SWEEP_KEY, runMaintenanceSweepHandler);
   registerHandler(SITE_STUDIO_SWEEP_KEY, runStudioSweepHandler);
+  registerHandler(RIISHE_AUTOMATION_KEY, runRiisheAutomationHandler);
 }
 
 // ---------------------------------------------------------------------------

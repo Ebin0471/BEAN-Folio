@@ -338,3 +338,154 @@ export const DEFAULT_COVER_ADJUST: CoverAdjust = {
   posX: 50,
   posY: 50,
 };
+
+// ------------------------------------------------------------------ RIISHE automation
+// Structured action metadata RIISHE's chat returns for actionable operations.
+// The existing chat renderer displays these as inline review cards (the same
+// pattern as the delegation card). NOTHING here executes on its own — every
+// external side effect (sending an enquiry) requires an explicit user action
+// on the card or in chat.
+
+/** A creator RIISHE surfaced from REAL platform data (never invented). */
+export interface RiisheCreatorMatch {
+  person: PublicPerson;
+  /** Real, working profile route: "/u/<username>". */
+  profileUrl: string;
+  /** Explainable factors — every entry states a REAL reason this person matched. */
+  factors: string[];
+  /** 0–100 built ONLY from the explainable factors (no invented popularity). */
+  score: number;
+  /** "match" = satisfied the user's explicit criteria; "recommendation" = inferred relevance. */
+  kind: "match" | "recommendation";
+}
+
+export interface RiisheEnquiryDraftCard {
+  kind: "enquiry-draft";
+  taskId: string;
+  recipient: { name: string; username: string };
+  type: string;
+  subject: string;
+  message: string;
+  project?: { id: string; title: string } | null;
+  /** Set when a recent pending enquiry to this person already exists — send is refused. */
+  duplicateWarning?: string;
+}
+
+export interface RiisheFollowupCard {
+  kind: "followup-plan";
+  automationId: string;
+  inquiryId: string;
+  recipient: { name: string; username: string };
+  runAt: string;
+  /** The prepared follow-up draft — prepared only; sending needs explicit approval. */
+  draftSubject: string;
+  draftMessage: string;
+  autoSend: boolean;
+}
+
+export interface RiisheAutomationDTO {
+  id: string;
+  kind: string;
+  status: string;
+  targetId: string | null;
+  /** Human target label when the automation tracks a person/inquiry. */
+  targetLabel: string | null;
+  runAt: string | null;
+  repeatDays: number | null;
+  autoSend: boolean;
+  lastRunAt: string | null;
+  lastRunSummary: string | null;
+  createdAt: string;
+}
+
+export interface RiisheAutomationListCard {
+  kind: "automation-list";
+  automations: RiisheAutomationDTO[];
+}
+
+export interface RiishePendingEnquiriesCard {
+  kind: "pending-enquiries";
+  inquiries: InquiryDTO[];
+}
+
+export interface RiisheCreatorResultsCard {
+  kind: "creator-results";
+  criteria: string;
+  matches: RiisheCreatorMatch[];
+  recommendations: RiisheCreatorMatch[];
+}
+
+export interface RiisheOpportunityItem {
+  kind: "project" | "creator";
+  title: string;
+  reason: string;
+  url: string;
+  person?: PublicPerson | null;
+  project?: { id: string; title: string; category: string | null } | null;
+}
+
+export interface RiisheOpportunityCard {
+  kind: "opportunity-list";
+  items: RiisheOpportunityItem[];
+}
+
+export interface RiisheWeeklyReport {
+  since: string;
+  newFollowsMade: number;
+  newFollowersGained: number;
+  enquiriesSent: number;
+  enquiriesReceived: number;
+  enquiryResponses: number;
+  outstandingFollowUps: number;
+  savedOpportunities: number;
+  discoveredCreators: number;
+  nextActions: string[];
+}
+
+export interface RiisheWeeklyReportCard {
+  kind: "weekly-report";
+  report: RiisheWeeklyReport;
+}
+
+export interface RiisheNoteDTO {
+  id: string;
+  personId: string;
+  person: { name: string; username: string } | null;
+  status: string | null;
+  note: string;
+  createdAt: string;
+}
+
+export interface RiisheRelationshipCard {
+  kind: "relationship";
+  person: PublicPerson | null;
+  following: boolean;
+  followsYou: boolean;
+  inquiries: InquiryDTO[];
+  notes: RiisheNoteDTO[];
+  activeReminder: RiisheAutomationDTO | null;
+}
+
+export interface RiisheNotesCard {
+  kind: "notes-list";
+  notes: RiisheNoteDTO[];
+}
+
+export interface RiisheStatusCard {
+  kind: "status";
+  message: string;
+  automation?: RiisheAutomationDTO | null;
+}
+
+/** Union the existing chat renderer displays as inline review cards. */
+export type RiisheActionCard =
+  | RiisheEnquiryDraftCard
+  | RiisheFollowupCard
+  | RiisheAutomationListCard
+  | RiishePendingEnquiriesCard
+  | RiisheCreatorResultsCard
+  | RiisheOpportunityCard
+  | RiisheWeeklyReportCard
+  | RiisheRelationshipCard
+  | RiisheNotesCard
+  | RiisheStatusCard;

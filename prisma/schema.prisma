@@ -88,6 +88,8 @@ model User {
   siteDesign        SiteDesign?
   giftzRepositories GiftzRepository[]
   siteStudioSessions SiteStudioSession[] @relation("siteStudioSessions")
+  riisheAutomations  RiisheAutomation[]  @relation("riisheAutomations")
+  riisheContactNotes RiisheContactNote[] @relation("riisheContactNotes")
 }
 
 model Session {
@@ -950,4 +952,79 @@ model GoogleLink {
   expiresAt DateTime
 
   @@index([expiresAt])
+}
+
+// ---------- RIISHE creator automation (additive) ----------
+// Durable, owner-scoped automation rules the RIISHE assistant prepares at the
+// user's request through the existing chat. Automations NEVER duplicate the
+// platform's own records: enquiries always flow through the existing Inquiry
+// model/API, reminders track an EXISTING Inquiry, and notifications reuse the
+// existing Notification model (SYSTEM type). Every row is strictly scoped to
+// its owner — every read/write verifies userId.
+model RiisheAutomation {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation("riisheAutomations", fields: [userId], references: [id], onDelete: Cascade)
+  // FOLLOW_UP_REMINDER | WEEKLY_SUMMARY | OPPORTUNITY_RADAR
+  kind        String
+  // ACTIVE | PAUSED | COMPLETED | CANCELLED
+  status      String   @default("ACTIVE")
+  // For FOLLOW_UP_REMINDER: the existing Inquiry this reminder tracks.
+  targetId    String?
+  // JSON { runAt?: ISO string, repeatDays?: number } — next run + cadence.
+  scheduleJson String  @default("{}")
+  // JSON { autoSend: boolean, recipientCapDays?: number } — autoSend is ALWAYS
+  // false unless the account owner explicitly opts in.
+  configJson  String   @default("{}")
+  // JSON runtime state written by runs: { lastRunAt, lastRunSummary, autoCancelledAt? }
+  stateJson   String   @default("{}")
+  // Explicit opt-in for automatic sending of prepared follow-up drafts.
+  // Default false: the engine only PREPARES drafts; nothing is ever sent
+  // externally without the owner's explicit approval.
+  autoSend    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  runs RiisheAutomationRun[]
+
+  @@index([userId, status])
+  @@index([status, kind])
+}
+
+// Execution history for automations (one row per worker run — the durable
+// record of what the engine actually did, including honest failures).
+model RiisheAutomationRun {
+  id           String           @id @default(cuid())
+  automationId String
+  automation   RiisheAutomation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  userId       String
+  // SUCCEEDED | FAILED
+  status       String           @default("SUCCEEDED")
+  // JSON result: what was prepared/observed (drafts, counts, matches).
+  resultJson   String           @default("{}")
+  error        String?
+  createdAt    DateTime         @default(now())
+
+  @@index([automationId, createdAt])
+  @@index([userId, createdAt])
+}
+
+// User-authored PRIVATE notes about a person, owned strictly by the author.
+// personId is a loose reference to a User row (no FK) so a note about someone
+// who later deletes their account keeps the author's private history honest —
+// the note never exposes the other user's data beyond what the author wrote.
+model RiisheContactNote {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation("riisheContactNotes", fields: [userId], references: [id], onDelete: Cascade)
+  personId  String
+  // Optional collaboration status the author assigns:
+  // NEW | CONTACTED | IN_CONVERSATION | COLLABORATING | CLOSED
+  status    String?
+  note      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, personId])
+  @@index([userId, updatedAt])
 }
