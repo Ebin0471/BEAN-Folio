@@ -84,3 +84,6 @@ data/giftz-workspaces/
 # Workspace-recovery archive volumes (large binaries; RETAINED ON DISK,
 # never committed — see DEVELOPMENT_SAFETY.md)
 /upload/
+
+# Persistent GitHub authentication vault (OAuth token, gh binary) — NEVER commit
+/.github-auth/

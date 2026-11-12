@@ -36,7 +36,7 @@ git checkout --quiet github-clean
 git read-tree -u --reset main
 
 # 2) Hard security audit on the staged tree.
-leaks=$(git ls-files | grep -E '^(db/.*\.db$|\.env$|\.env\.[^.]+$|uploads/|backups/|data/laxii-tmp/|public/downloads/|pg-migration/|upload/|tool-results/)' | grep -v '^\.env\.example$' || true)
+leaks=$(git ls-files | grep -E '^(db/.*\.db$|\.env$|\.env\.[^.]+$|uploads/|backups/|data/laxii-tmp/|public/downloads/|pg-migration/|upload/|tool-results/|\.github-auth/)' | grep -v '^\.env\.example$' || true)
 if [ -n "$leaks" ]; then
   echo "FATAL: runtime data leaked into the snapshot — publish aborted:" >&2
   echo "$leaks" | sed -n '1,20p' >&2

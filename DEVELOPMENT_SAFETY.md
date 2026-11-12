@@ -150,8 +150,14 @@ clean, repo PRIVATE).
 
 - Repository stays PRIVATE. No duplicate repos.
 - Credential: GitHub CLI OAuth token (owner-authorized device flow,
-  scopes `repo`, `read:org`) stored in gh's local keyring OUTSIDE the
-  repository, never committed; revocable at github.com/settings/applications.
+  scopes `repo`, `read:org`), never committed; revocable at
+  github.com/settings/applications. Persisted since 2026-11-12 in the
+  workspace vault `/.github-auth/` (gh binary + `GH_CONFIG_DIR` keyring,
+  modes 700/600) because only `/home/z/my-project/` survives sandbox
+  recycles — `$HOME` dotfiles are wiped, which is why earlier sessions
+  had to re-authenticate. Guarded by `/.gitignore` and the publisher's
+  leak scan; activate with `scripts/ops/gh-auth.sh status`, re-auth
+  (one-time, no email OTP) via `scripts/ops/gh-device-flow.sh start`.
 
 ### Mandatory synchronization after every completed task (owner directive, 2026-11-11)
 
