@@ -31,7 +31,7 @@
  */
 import { describe, expect, test } from "bun:test";
 
-import { defaultConfig, normalizeConfig } from "../src/lib/site-config";
+import { defaultConfig, makeSection, normalizeConfig } from "../src/lib/site-config";
 import type { SiteConfig } from "../src/lib/site-config";
 import { buildSiteDigest } from "../src/lib/ai-design/digest";
 import { designPlanSchema, validatePlan, dropUngroundedConstraints, dropUnresolvableConstraints, type DesignPlan, type PlanStep } from "../src/lib/ai-design/plan";
@@ -60,7 +60,16 @@ function clone(c: SiteConfig): SiteConfig {
   return JSON.parse(JSON.stringify(c)) as SiteConfig;
 }
 
-const base = (): SiteConfig => normalizeConfig(defaultConfig("atelier")) as SiteConfig;
+const base = (): SiteConfig => {
+  const cfg = normalizeConfig(defaultConfig("atelier")) as SiteConfig;
+  // The constraint tests need TWO projects sections on the home page — the
+  // fixture builds them EXPLICITLY instead of depending on any template's
+  // composition (the default template now carries a REAL `featured` showcase
+  // section instead of a second projects slice).
+  const home = cfg.pages[0];
+  home.sections = [...home.sections, { ...makeSection("projects"), id: "projects-second" }];
+  return cfg;
+};
 
 /** Resolve the (randomized) section ids from a config instance. */
 function idsOf(c: SiteConfig): { hero: string; projects: string } {

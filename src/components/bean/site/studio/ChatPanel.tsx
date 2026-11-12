@@ -176,9 +176,19 @@ export interface StudioChatMessage {
 export interface StudioSessionSummary {
   id: string;
   title: string;
+  /** Conversation target — the product boundary (portfolio vs GIFTZ). */
+  targetKind?: string;
+  targetSiteId?: string | null;
   createdAt: string;
   updatedAt: string;
   messageCount: number;
+}
+
+/** Which product a studio conversation belongs to (and may modify). */
+export interface ChatSessionTarget {
+  kind: "portfolio" | "giftz";
+  /** GiftzSite id for giftz sessions; null = "generate a brand-new site". */
+  siteId?: string | null;
 }
 
 export interface ChatPanelProps {
@@ -203,6 +213,15 @@ export interface ChatPanelProps {
    * preferences all live here and nowhere else. */
   giftzSettings?: GiftzPrefs;
   onGiftzSettingsChange?: (next: GiftzPrefs) => void;
+  /**
+   * The product target every NEW conversation is bound to. When absent the
+   * server default ("portfolio") applies — matching the historic behavior.
+   * GIFTZ sessions pass { kind: "giftz", siteId } so their turns plan
+   * against the GiftzSite's own saved config and never the portfolio draft.
+   */
+  sessionTarget?: ChatSessionTarget;
+  /** Only list conversations bound to this product (omitted = all). */
+  sessionsTargetFilter?: "portfolio" | "giftz";
 }
 
 /**
@@ -660,6 +679,8 @@ export function ChatPanel({
   autoPreviewProposals = false,
   giftzSettings,
   onGiftzSettingsChange,
+  sessionTarget,
+  sessionsTargetFilter,
 }: ChatPanelProps) {
   const [sessions, setSessions] = useState<StudioSessionSummary[]>([]);
   const [sessionsLoaded, setSessionsLoaded] = useState(false);
@@ -681,6 +702,12 @@ export function ChatPanel({
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const configRef = useRef(currentConfig);
   const contextRef = useRef(context);
+  // Ref mirror of the session target — createSession reads the LATEST value
+  // (a site binding can change mid-session) without re-subscribing callbacks.
+  const sessionTargetRef = useRef<ChatSessionTarget | undefined>(sessionTarget);
+  useEffect(() => {
+    sessionTargetRef.current = sessionTarget;
+  }, [sessionTarget]);
   useEffect(() => {
     configRef.current = currentConfig;
   }, [currentConfig]);
@@ -693,7 +720,9 @@ export function ChatPanel({
   // ---- sessions: load on mount -------------------------------------------
   const refreshSessions = useCallback(async () => {
     try {
-      const r = await api<{ sessions: StudioSessionSummary[] }>("/api/me/site/studio/sessions");
+      const r = await api<{ sessions: StudioSessionSummary[] }>(
+        `/api/me/site/studio/sessions${sessionsTargetFilter ? `?target=${sessionsTargetFilter}` : ""}`
+      );
       setSessions(r.sessions);
       setSessionsLoaded(true);
       return r.sessions;
@@ -701,7 +730,7 @@ export function ChatPanel({
       setSessionsLoaded(true);
       return [];
     }
-  }, []);
+  }, [sessionsTargetFilter]);
 
   useEffect(() => {
     void refreshSessions();
@@ -750,7 +779,12 @@ export function ChatPanel({
       try {
         const r = await api<{ session: StudioSessionSummary }>("/api/me/site/studio/sessions", {
           method: "POST",
-          json: { ...(title ? { title } : {}) },
+          json: {
+            ...(title ? { title } : {}),
+            ...(sessionTargetRef.current
+              ? { target: { kind: sessionTargetRef.current.kind, ...(sessionTargetRef.current.siteId ? { siteId: sessionTargetRef.current.siteId } : {}) } }
+              : {}),
+          },
         });
         setSessions((prev) => [r.session, ...prev]);
         setActiveSessionId(r.session.id);

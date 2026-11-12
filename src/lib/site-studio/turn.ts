@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import type { SiteConfig } from "@/lib/site-config";
-import { normalizeConfig } from "@/lib/site-config";
+import { blankGiftzSeedConfig, normalizeConfig } from "@/lib/site-config";
 import { aiComplete, AI_DEEP_TIMEOUT_MS } from "@/lib/ai";
 import { planDesignChange } from "@/lib/ai-design/plan-core";
 import { fetchPortfolioBlock } from "@/lib/ai-design/context";
@@ -79,7 +79,11 @@ export interface StartTurnParams {
   userId: string;
   sessionId: string;
   text: string;
-  /** The builder's current draft (unsaved canvas state included). */
+  /**
+   * The builder's current draft (unsaved canvas state included). The base for
+   * PORTFOLIO sessions; ignored for GIFTZ sessions (their base is resolved
+   * from the GiftzSite's own saved config — never the portfolio draft).
+   */
   currentConfig: unknown;
   mode: "edit" | "create";
   materialIds?: string[];
@@ -142,15 +146,38 @@ export function enqueueStudioTurnSweep(): void {
 
 /** Fire a conversational turn: persists both messages + the durable task, runs the pipeline in the background. */
 export async function startStudioTurn(params: StartTurnParams): Promise<StartTurnResult> {
-  const base = normalizeConfig(params.currentConfig);
-  if (!base) throw new Error("The current website configuration is invalid.");
-
-  // Owner-scoped session check.
+  // Owner-scoped session check — resolved FIRST because the session's target
+  // decides which artifact this turn may read: a "portfolio" session plans
+  // against the builder's portfolio draft (passed in currentConfig); a "giftz"
+  // session plans against the GiftzSite's own saved config (NEVER the
+  // portfolio draft — the two products never share destructive state).
   const session = await db.siteStudioSession.findUnique({
     where: { id: params.sessionId },
-    select: { id: true, userId: true, title: true },
+    select: { id: true, userId: true, title: true, targetKind: true, targetSiteId: true },
   });
   if (!session || session.userId !== params.userId) throw new Error("Conversation not found");
+
+  let base: SiteConfig | null;
+  if (session.targetKind === "giftz") {
+    // GIFTZ target: the base is the GiftzSite's OWN config (or a minimal seed
+    // for a brand-new generated site). The client-passed currentConfig is
+    // deliberately IGNORED here — the portfolio draft can never leak into a
+    // GIFTZ generation, and a GIFTZ proposal can never be computed against
+    // stale portfolio state.
+    let giftzConfig: unknown = null;
+    if (session.targetSiteId) {
+      const site = await db.giftzSite.findUnique({
+        where: { id: session.targetSiteId },
+        select: { userId: true, config: true, title: true },
+      });
+      if (!site || site.userId !== params.userId) throw new Error("Conversation not found");
+      giftzConfig = site.config;
+    }
+    base = normalizeConfig(giftzConfig) ?? blankGiftzSeedConfig();
+  } else {
+    base = normalizeConfig(params.currentConfig);
+    if (!base) throw new Error("The current website configuration is invalid.");
+  }
 
   // RETRY: reuse the FAILED turn's persisted user message verbatim — the
   // original prompt is never duplicated in the thread and never retyped.

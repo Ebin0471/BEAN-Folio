@@ -109,6 +109,35 @@ export function publicSiteProjectHashUrl(
   return path ? `#${path}` : null;
 }
 
+// ------------------------------------------------- GIFTZ generated sites
+
+/**
+ * The GIFTZ generated site's public route: `/site/<username>/g/<siteId>`.
+ *
+ * GIFTZ builds websites INDEPENDENTLY from the portfolio Customization
+ * system; each generated site (GiftzSite) publishes to its own address under
+ * the creator's /site namespace. The identifier is the GiftzSite's stable
+ * database id. Only PUBLISHED generated sites are reachable here; the
+ * portfolio website at /site/<username> is unaffected.
+ */
+export function publicSiteGiftzPath(
+  username: string | null | undefined,
+  siteId: string | null | undefined
+): string | null {
+  const name = username?.trim().toLowerCase();
+  const id = siteId?.trim();
+  return name && id ? `/site/${encodeURIComponent(name)}/g/${encodeURIComponent(id)}` : null;
+}
+
+/** Hash form of the GIFTZ generated site route — for literal href attributes. */
+export function publicSiteGiftzHashUrl(
+  username: string | null | undefined,
+  siteId: string | null | undefined
+): string | null {
+  const path = publicSiteGiftzPath(username, siteId);
+  return path ? `#${path}` : null;
+}
+
 /**
  * Fully-qualified canonical URL of a website project page, e.g.
  * `https://beanfolio.com/site/ada/projects/<id>`. Same explicit-origin policy

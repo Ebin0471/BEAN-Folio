@@ -42,6 +42,8 @@ export const SECTION_TYPE_LABELS: Record<SiteSectionType, string> = {
   hero: "Hero",
   about: "About",
   projects: "Projects",
+  featured: "Featured work",
+  reel: "Video reel",
   skills: "Skills",
   stats: "Stats",
   collections: "Collections",
@@ -61,6 +63,8 @@ export const SECTION_TYPE_HINTS: Partial<Record<SiteSectionType, string>> = {
   experience: "Your real roles, education and milestones — nothing is invented.",
   services: "What you offer clients, in your own words.",
   gallery: "Pulls real cover images from your published work.",
+  featured: "Your best work only — an editorial showcase, separate from All Projects.",
+  reel: "Up to five of your videos, in your order — real playable video content.",
   process: "How you work, step by step.",
   faq: "Answer real questions your clients actually ask.",
   pricing: "Your real rates — numbers you are comfortable publishing.",
@@ -75,6 +79,12 @@ export function SectionSummary({ section }: { section: SiteSection }) {
       return section.body ? section.body.slice(0, 60) : "Story and bio";
     case "projects":
       return `Up to ${section.limit} projects · ${section.layout}${section.category ? ` · ${section.category}` : ""}`;
+    case "featured":
+      return section.projectIds.length
+        ? `${section.projectIds.length} selected · ${section.layout}`
+        : "Editorial showcase — starred projects";
+    case "reel":
+      return section.videos.length ? `${section.videos.length} videos · ${section.layout}` : "Up to five videos";
     case "collections":
       return `Up to ${section.limit} collections`;
     case "services":

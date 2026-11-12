@@ -129,6 +129,7 @@ model User {
   siteRevisions     SiteRevision[]
   siteDesign        SiteDesign?
   giftzRepositories GiftzRepository[]
+  giftzSites        GiftzSite[]        @relation("giftzSites")
   siteStudioSessions SiteStudioSession[] @relation("siteStudioSessions")
 }
 
@@ -686,6 +687,39 @@ model GiftzRepository {
   @@index([ownerId, updatedAt])
 }
 
+// ---------- GIFTZ generated sites (independent prompt-driven websites) ----------
+// GIFTZ builds COMPLETE websites from natural-language prompts. Each generated
+// site is its OWN artifact — fully separate from the user's portfolio website
+// (SiteDesign) and from Customization state.
+model GiftzSite {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation("giftzSites", fields: [userId], references: [id], onDelete: Cascade)
+  title           String   @default("Untitled site")
+  sourcePrompt    String?
+  config          String? // JSON SiteConfig working draft — private to the owner
+  publishedConfig String? // JSON snapshot published for visitors (PUBLISHED only)
+  status          String   @default("DRAFT") // DRAFT | PUBLISHED
+  publishedAt     DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  revisions GiftzSiteRevision[]
+
+  @@index([userId, updatedAt])
+}
+
+model GiftzSiteRevision {
+  id        String    @id @default(cuid())
+  siteId    String
+  site      GiftzSite @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  label     String
+  config    String // JSON SiteConfig snapshot
+  createdAt DateTime  @default(now())
+
+  @@index([siteId, createdAt])
+}
+
 // ---------- LAXII Resume Studio ----------
 // One editable resume document per resume conversation. dataJson holds the
 // full resume JSON (JSON-Resume-schema-informed structure); factsJson keeps
@@ -785,6 +819,11 @@ model SiteStudioSession {
   userId      String
   user        User     @relation("siteStudioSessions", fields: [userId], references: [id], onDelete: Cascade)
   title       String   @default("New session")
+  // Conversation target — PRODUCT SEPARATION (owner directive): "portfolio"
+  // sessions belong to Customization (SiteDesign); "giftz" sessions belong to
+  // GIFTZ (independently generated sites, GiftzSite).
+  targetKind  String   @default("portfolio") // portfolio | giftz
+  targetSiteId String? // GiftzSite id when targetKind = "giftz"
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

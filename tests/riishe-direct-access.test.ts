@@ -5,25 +5,27 @@ import { readFileSync } from "node:fs";
 import { NextRequest } from "next/server";
 
 /**
- * RIISHE direct access — regression tests for the consent-landing removal.
+ * RIISHE direct access — regression tests for the consent-toggle removal.
  *
- * Contract under test:
+ * Contract under test (owner directive — the standalone "BEAN Intelligence
+ * consent" toggle is GONE):
  *  - The RIISHE navigation target is the assistant interface itself (chat,
- *    composer, history, empty state) — the standalone "Enable RIISHE?" consent
- *    page is GONE from the flow.
- *  - Removing the blocking page did NOT remove control: consent is still
- *    required, still granted/revoked ONLY in Settings → Privacy, and the
- *    server still refuses every AI request (403) without it.
- *  - Without consent the interface stays VIEWABLE but no AI operation is
- *    attempted from the client (nothing transmitted — no message, no private
- *    portfolio context), and the server independently blocks it.
- *  - Existing conversation history is preserved and still served whenever
- *    consent is active; revocation stops AI immediately without deleting data.
+ *    composer, history, empty state). No consent toggle or gate exists
+ *    anywhere: not in Settings, not in the view, not in the floating assistant.
+ *  - BEAN Intelligence is available to EVERY authenticated user out of the
+ *    box — authorization comes from the session, never from a toggle. The
+ *    server still refuses UNAUTHENTICATED requests (401) and every query
+ *    stays owner-scoped (another user's conversation id is a 404).
+ *  - Rate limits + the daily quota still apply to every AI route.
+ *  - The persisted `User.aiConsent` field remains (export/audit history) but
+ *    gates nothing; PATCH /api/me/privacy still accepts it for compatibility.
  *
  * Route tests call the real handlers with the same stateful-cookie harness the
- * auth suite uses. UI contracts that bun cannot render (no DOM runner in this
- * repo) are asserted structurally against the view source AND re-verified in
- * the browser during delivery.
+ * auth suite uses. Provider-dependent chat routes are NOT invoked here (tests
+ * must stay deterministic); the streaming path is covered by the automation
+ * suite with a live gateway call. UI contracts that bun cannot render (no DOM
+ * runner in this repo) are asserted structurally against the view source AND
+ * re-verified in the browser during delivery.
  */
 
 const jar = new Map<string, string>();
@@ -44,8 +46,7 @@ import { POST as registerRoute } from "@/app/api/auth/register/route";
 import { GET as capabilitiesRoute } from "@/app/api/ai/capabilities/route";
 import { GET as conversationsRoute } from "@/app/api/ai/conversations/route";
 import { GET as conversationDetailRoute } from "@/app/api/ai/conversations/[id]/route";
-import { POST as chatRoute } from "@/app/api/ai/chat/route";
-import { POST as chatStreamRoute } from "@/app/api/ai/chat-stream/route";
+import { GET as publicProfileRoute } from "@/app/api/profiles/[username]/route";
 import { PATCH as privacyRoute } from "@/app/api/me/privacy/route";
 
 afterAll(() => {
@@ -91,43 +92,45 @@ async function register(): Promise<void> {
   userAId = (body.user as Record<string, unknown>).id as string;
 }
 
-// ------------------------------------------------------------------ 2/4/5 — consent disabled: viewable surface, blocked AI
+// ------------------------------------------------------------------ 2 — AI access needs a session, not a toggle
 
-describe("opening RIISHE with consent disabled", () => {
-  test("registration starts WITHOUT consent (privacy by default)", async () => {
+describe("BEAN Intelligence access without any consent toggle", () => {
+  test("registration does not require or set any consent switch (field kept for history only)", async () => {
     await register();
     const user = await db.user.findUnique({ where: { id: userAId } });
+    // The legacy field stays at its schema default; it no longer gates anything.
     expect(user?.aiConsent).toBe(false);
   });
 
-  test("capabilities report consentRequired while the service itself is available", async () => {
+  test("capabilities report consentRequired=false while the service is available", async () => {
     const res = await capabilitiesRoute();
     expect(res.status).toBe(200);
     const body = await resBody(res);
-    expect(body.consentRequired).toBe(true);
+    expect(body.consentRequired).toBe(false);
     expect(body.available).toBe(true);
   });
 
-  test("chat is blocked with 403 — no conversation, no message, no provider call", async () => {
-    const res = await chatRoute(request("/api/ai/chat", "POST", { message: "Summarize my unreleased work" }));
-    expect(res.status).toBe(403);
+  test("conversation history is accessible WITHOUT any consent flag (owner-scoped)", async () => {
+    const res = await conversationsRoute();
+    expect(res.status).toBe(200);
     const body = await resBody(res);
-    expect(typeof body.error).toBe("string");
+    expect(Array.isArray(body.conversations)).toBe(true);
   });
 
-  test("chat-stream is blocked with 403 before any streaming begins", async () => {
-    const res = await chatStreamRoute(request("/api/ai/chat-stream", "POST", { message: "Any question" }));
-    expect(res.status).toBe(403);
-    const body = await resBody(res);
-    expect(typeof body.error).toBe("string");
+  test("aiGate admits every authenticated user (only rate limit + daily quota apply)", async () => {
+    const user = await db.user.findUnique({ where: { id: userAId } });
+    expect(user).not.toBeNull();
+    const verdict = await aiGate(user!);
+    expect(verdict).toBeNull(); // 403 consent branch is gone; quota/rate checks run
   });
 });
 
-// ------------------------------------------------------------------ 5 — private portfolio context never transmitted without consent
+// ------------------------------------------------------------------ 5 — private data stays owner-scoped (authorization, not consent)
 
-describe("no private portfolio context transmission without consent", () => {
-  test("seeded private project exists for the user but never leaks through blocked AI calls", async () => {
-    // Private, unreleased work — exactly the data consent exists to protect.
+describe("private portfolio data never crosses user boundaries", () => {
+  test("seeded private project exists for the owner but is invisible through the public profile", async () => {
+    // Private, unreleased work — the privacy boundary is ownership + the
+    // visibility ladder, enforced independently of any AI toggle.
     await db.project.create({
       data: {
         ownerId: userAId,
@@ -138,51 +141,40 @@ describe("no private portfolio context transmission without consent", () => {
       },
     });
 
-    const blocked = await chatRoute(
-      request("/api/ai/chat", "POST", { message: "Describe my confidential project" })
-    );
-    expect(blocked.status).toBe(403);
-
-    const body = await text(blocked);
-    expect(body.includes(seededPrivateProjectTitle)).toBe(false);
-    expect(body.includes("PRIVATE-NDA")).toBe(false);
-
-    const streamBlocked = await chatStreamRoute(
-      request("/api/ai/chat-stream", "POST", { message: "Describe my confidential project" })
-    );
-    expect(streamBlocked.status).toBe(403);
-    const streamBody = await text(streamBlocked);
-    expect(streamBody.includes(seededPrivateProjectTitle)).toBe(false);
-
-    // Nothing was built, transmitted or persisted: zero conversations/messages.
+    // AI history stays empty (no chat route calls here — provider calls are
+    // covered in the automation suite); the point of this test is the
+    // AUTHORIZATION boundary below.
     expect(await db.aiConversation.count({ where: { userId: userAId } })).toBe(0);
-    expect(await db.aiMessage.count({ where: { conversation: { userId: userAId } } })).toBe(0);
+
+    // The public profile payload (what every OTHER visitor sees) never
+    // contains the private project or its text.
+    const username = (await db.user.findUnique({ where: { id: userAId } }))?.username ?? "";
+    const prof = await publicProfileRoute(request(`/api/profiles/${username}`, "GET"), {
+      params: Promise.resolve({ username }),
+    });
+    const profBody = await text(prof);
+    expect(profBody.includes(seededPrivateProjectTitle)).toBe(false);
+    expect(profBody.includes("PRIVATE-NDA")).toBe(false);
   });
 
-  test("aiGate refuses users without consent and admits consented users (server-side enforcement)", async () => {
-    const unconsented = await db.user.findUnique({ where: { id: userAId } });
-    expect(unconsented).not.toBeNull();
-    const refused = await aiGate(unconsented!);
-    expect(refused).not.toBeNull();
-    expect(refused!.status).toBe(403);
-
-    // A consented user object passes the gate (rate/usage checks run against
-    // a fresh user — no usage rows yet).
-    const [consentedUser, ] = await Promise.all([
-      db.user.create({
-        data: {
-          email: `riishe-gate-${randomUUID()}@beanfolio.test`,
-          passwordHash: "gate-test-hash",
-          name: "Gate Probe",
-          aiConsent: true,
-        },
-      }),
-    ]);
+  test("another user's conversation id is a 404 — ownership is the privacy boundary", async () => {
+    const other = await db.user.create({
+      data: {
+        email: `riishe-other-${randomUUID()}@beanfolio.test`,
+        passwordHash: "x",
+        name: "Other Account",
+      },
+    });
+    const otherConversation = await db.aiConversation.create({
+      data: { userId: other.id, title: "Someone else's thread" },
+    });
     try {
-      const allowed = await aiGate(consentedUser);
-      expect(allowed).toBeNull();
+      const detail = await conversationDetailRoute(request(`/api/ai/conversations/${otherConversation.id}`, "GET"), {
+        params: Promise.resolve({ id: otherConversation.id }),
+      });
+      expect(detail.status).toBe(404);
     } finally {
-      await db.user.delete({ where: { id: consentedUser.id } }).catch(() => undefined);
+      await db.user.delete({ where: { id: other.id } }).catch(() => undefined);
     }
   });
 });
@@ -209,19 +201,18 @@ describe("the assistant interface is the RIISHE landing (old consent page remove
     // The chat is THE landing — availability is the only render condition.
     expect(src.includes("caps.available")).toBe(true);
     expect(src.includes("<ChatTab")).toBe(true);
-    expect(src.includes("consented && caps.available")).toBe(false);
-    // Composer and suggested prompts are the only consent-dependent controls.
-    expect(src.includes("disabled={!consented || sending}")).toBe(true);
-    // Client-side guard: without consent NOTHING is transmitted.
-    expect(src.includes("if (!consented)")).toBe(true);
+    // NO consent gating remains anywhere: no disabled-by-consent controls, no
+    // client-side consent guard, no ConsentNotice component.
+    expect(src.includes("consented")).toBe(false);
+    expect(src.includes("ConsentNotice")).toBe(false);
+    expect(src.includes("consentPrompted")).toBe(false);
   });
 
-  test("consent is surfaced unobtrusively and points to Settings → Privacy (no toggle in the view)", () => {
+  test("no consent UI exists in the view at all", () => {
     const src = view();
-    expect(src.includes("ConsentNotice")).toBe(true);
-    expect(src.includes("Enable in Settings → Privacy")).toBe(true);
-    // No enable/disable toggle lives on the RIISHE landing page anymore —
-    // the Switch import (used by the old ConsentCard) is gone.
+    expect(src.includes("Enable in Settings → Privacy")).toBe(false);
+    expect(src.includes("Consent is on")).toBe(false);
+    expect(src.includes("Consent is off")).toBe(false);
     expect(src.includes('from "@/components/ui/switch"')).toBe(false);
     expect(src.includes('id="ai-consent"')).toBe(false);
   });
@@ -234,16 +225,23 @@ describe("the assistant interface is the RIISHE landing (old consent page remove
     expect(src.includes("Message to RIISHE")).toBe(true);
   });
 
-  test("the floating assistant's consent pointer opens Settings → Privacy, not the old enable page", () => {
+  test("the floating assistant has NO consent gate: send is never disabled by a flag", () => {
     const src = floating();
     expect(src.includes('navigate("/intelligence")')).toBe(false);
-    expect(src.includes('navigate("/settings")')).toBe(true);
+    // The old consent plumbing is fully gone.
+    expect(src.includes("consentBlocked")).toBe(false);
+    expect(src.includes("isConsented")).toBe(false);
+    expect(src.includes("user.aiConsent")).toBe(false);
+    expect(src.includes("Open Settings → Privacy")).toBe(false);
   });
 
-  test("Settings → Privacy remains the single consent-management surface", () => {
+  test("the standalone Settings consent toggle is REMOVED", () => {
     const src = settings();
-    expect(src.includes('id="ai-consent-switch"')).toBe(true);
-    expect(src.includes("aiConsent")).toBe(true);
+    expect(src.includes('id="ai-consent-switch"')).toBe(false);
+    expect(src.includes("BEAN Intelligence consent")).toBe(false);
+    expect(src.includes("aiConsentBusy")).toBe(false);
+    // The visibility Select (patchPrivacy) survives — privacy settings remain.
+    expect(src.includes("patchPrivacy")).toBe(true);
   });
 
   test("global navigation is untouched: RIISHE still routes to the assistant view", () => {
@@ -253,10 +251,10 @@ describe("the assistant interface is the RIISHE landing (old consent page remove
   });
 });
 
-// ------------------------------------------------------------------ 1/6 — enabling consent through Settings → Privacy
+// ------------------------------------------------------------------ 1 — the legacy field stays compatible, gates nothing
 
-describe("enabling consent through Settings → Privacy", () => {
-  test("PATCH /api/me/privacy grants consent, audit-logs it, and RIISHE opens up", async () => {
+describe("the legacy aiConsent field stays compatible but gates nothing", () => {
+  test("PATCH /api/me/privacy still accepts the field and audit-logs it (API compatibility)", async () => {
     const res = await privacyRoute(request("/api/me/privacy", "PATCH", { aiConsent: true }));
     expect(res.status).toBe(200);
     const body = await resBody(res);
@@ -273,7 +271,7 @@ describe("enabling consent through Settings → Privacy", () => {
     expect(audit!.meta?.includes("aiConsent")).toBe(true);
   });
 
-  test("opening RIISHE with consent enabled: capabilities + history both accessible", async () => {
+  test("capabilities + history are accessible regardless of the flag value", async () => {
     const caps = await capabilitiesRoute();
     expect(caps.status).toBe(200);
     const capsBody = await resBody(caps);
@@ -287,9 +285,9 @@ describe("enabling consent through Settings → Privacy", () => {
   });
 });
 
-// ------------------------------------------------------------------ 8 — existing conversation history is preserved
+// ------------------------------------------------------------------ 8 — conversation history is preserved
 
-describe("conversation history is preserved and served while consent is active", () => {
+describe("conversation history is preserved and served", () => {
   test("prior conversations and their full threads remain intact and retrievable", async () => {
     const conversation = await db.aiConversation.create({
       data: { userId: userAId, title: "Festival pitch draft" },
@@ -320,40 +318,19 @@ describe("conversation history is preserved and served while consent is active",
   });
 });
 
-// ------------------------------------------------------------------ 7 — revoking consent stops AI immediately, keeps history
+// ------------------------------------------------------------------ 7 — revoking the legacy flag changes nothing (no gate exists)
 
-describe("revoking consent stops future AI operations immediately", () => {
-  test("PATCH /api/me/privacy revokes consent", async () => {
+describe("revoking the legacy flag has no effect on AI access (no gate exists)", () => {
+  test("PATCH /api/me/privacy still accepts the flag for compatibility", async () => {
     const res = await privacyRoute(request("/api/me/privacy", "PATCH", { aiConsent: false }));
     expect(res.status).toBe(200);
     const body = await resBody(res);
     expect(body.aiConsent).toBe(false);
   });
 
-  test("AI operations stop at once: chat, stream, history — all 403", async () => {
-    const chat = await chatRoute(request("/api/ai/chat", "POST", { message: "Follow-up question" }));
-    expect(chat.status).toBe(403);
-
-    const stream = await chatStreamRoute(request("/api/ai/chat-stream", "POST", { message: "Follow-up" }));
-    expect(stream.status).toBe(403);
-
+  test("history stays fully accessible with the flag off — the toggle never gates anything", async () => {
     const list = await conversationsRoute();
-    expect(list.status).toBe(403);
-
-    const detail = await conversationDetailRoute(request(`/api/ai/conversations/${seededConversationId}`, "GET"), {
-      params: Promise.resolve({ id: seededConversationId }),
-    });
-    expect(detail.status).toBe(403);
-  });
-
-  test("revocation does not delete data — history survives for when consent returns", async () => {
-    expect(await db.aiConversation.count({ where: { id: seededConversationId } })).toBe(1);
-    expect(await db.aiMessage.count({ where: { conversationId: seededConversationId } })).toBe(2);
-  });
-
-  test("re-granting consent restores access to the SAME preserved history", async () => {
-    const regrant = await privacyRoute(request("/api/me/privacy", "PATCH", { aiConsent: true }));
-    expect(regrant.status).toBe(200);
+    expect(list.status).toBe(200);
 
     const detail = await conversationDetailRoute(request(`/api/ai/conversations/${seededConversationId}`, "GET"), {
       params: Promise.resolve({ id: seededConversationId }),
@@ -362,5 +339,10 @@ describe("revoking consent stops future AI operations immediately", () => {
     const body = await resBody(detail);
     const messages = (body.conversation as { messages: unknown[] }).messages;
     expect(messages).toHaveLength(2);
+  });
+
+  test("revocation never deletes data — history survives unchanged", async () => {
+    expect(await db.aiConversation.count({ where: { id: seededConversationId } })).toBe(1);
+    expect(await db.aiMessage.count({ where: { conversationId: seededConversationId } })).toBe(2);
   });
 });

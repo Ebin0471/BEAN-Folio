@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, Children, useRef, useState } from "react";
-import { ArrowLeft, Check, ChevronDown, ExternalLink, Globe, Mail, MapPin } from "lucide-react";
+import { ArrowLeft, Check, ChevronDown, ExternalLink, Globe, Mail, MapPin, Play } from "lucide-react";
 
 import { categoryLabel } from "@/components/bean/ProjectCard";
 import {
@@ -768,6 +768,138 @@ function SiteProjectCard({
   );
 }
 
+// ------------------------------------------------------------------ video reel
+
+/**
+ * The reel's playable videos. Thumbnails are REAL first frames
+ * (`<video preload="metadata">` — the platform's established pattern); a
+ * click opens a proper player overlay with controls. Every video is an owned
+ * MediaAsset streamed through /api/media/<id>/raw (HTTP range requests, so
+ * seeking works). Load/playback failures degrade per-tile — the site never
+ * breaks — and unsupported formats show an honest "Video unavailable" tile.
+ */
+function SiteReelSection({
+  section, theme, hoverZoom,
+}: {
+  section: Extract<SiteSection, { type: "reel" }>;
+  theme: ResolvedTheme;
+  hoverZoom: boolean;
+}) {
+  const [player, setPlayer] = useState<number | null>(null);
+  const [failed, setFailed] = useState<Record<string, true>>({});
+
+  // Escape closes the player — keyboard accessible.
+  useEffect(() => {
+    if (player === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPlayer(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [player]);
+
+  const items = section.videos;
+  const active = player !== null ? items[player] : null;
+
+  return (
+    <>
+      <ul
+        className={cn(
+          section.layout === "strip"
+            ? "flex snap-x gap-4 overflow-x-auto pb-2"
+            : "grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3"
+        )}
+        style={{ scrollbarWidth: "thin" }}
+      >
+        {items.map((v, i) => (
+          <li
+            key={`${v.mediaId}-${i}`}
+            className={cn("overflow-hidden", section.layout === "strip" && "w-64 shrink-0 snap-start sm:w-80")}
+            style={{ borderRadius: RADIUS[theme.radius] }}
+          >
+            <button
+              type="button"
+              className={cn("group relative block w-full", hoverZoom && "bs-hoverzoom")}
+              style={{ aspectRatio: "16 / 9" }}
+              onClick={() => setPlayer(i)}
+              aria-label={`Play video${v.caption ? `: ${v.caption}` : ""}`}
+            >
+              {failed[v.mediaId] ? (
+                <span
+                  className="flex h-full w-full items-center justify-center text-xs"
+                  style={{ background: theme.surface, color: theme.muted }}
+                >
+                  Video unavailable
+                </span>
+              ) : (
+                <video
+                  src={`/api/media/${encodeURIComponent(v.mediaId)}/raw`}
+                  className="h-full w-full"
+                  style={{ objectFit: "cover" }}
+                  muted
+                  playsInline
+                  preload="metadata"
+                  onError={() => setFailed((f) => ({ ...f, [v.mediaId]: true }))}
+                  tabIndex={-1}
+                  aria-hidden="true"
+                />
+              )}
+              <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                <span
+                  className="grid size-12 place-items-center rounded-full shadow-lg transition-transform group-hover:scale-110"
+                  style={{
+                    background: `color-mix(in srgb, ${theme.background} 72%, transparent)`,
+                    color: theme.accent,
+                    border: `1px solid ${theme.border}`,
+                  }}
+                  aria-hidden
+                >
+                  <Play className="ml-0.5 size-5 fill-current" />
+                </span>
+              </span>
+              {v.caption && (
+                <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent px-3 py-2 text-left text-xs text-white">
+                  {v.caption}
+                </span>
+              )}
+            </button>
+          </li>
+        ))}
+      </ul>
+
+      {active && (
+        <div
+          className="fixed inset-0 z-[80] flex items-center justify-center bg-black/85 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label={active.caption || "Video player"}
+          onClick={() => setPlayer(null)}
+        >
+          <div className="w-full max-w-4xl" onClick={(e) => e.stopPropagation()}>
+            <video
+              src={`/api/media/${encodeURIComponent(active.mediaId)}/raw`}
+              className="max-h-[75dvh] w-full rounded-lg bg-black"
+              controls
+              autoPlay
+              playsInline
+            />
+            <div className="mt-3 flex items-center justify-between gap-3">
+              <p className="min-w-0 truncate text-sm text-white/90">{active.caption}</p>
+              <button
+                type="button"
+                className="rounded-full border border-white/30 px-3 py-1.5 text-xs text-white/90 transition-colors hover:bg-white/10"
+                onClick={() => setPlayer(null)}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 // ------------------------------------------------------------------ hero variants
 
 function SiteHero({ section, config, profile, theme, motion }: { section: Extract<SiteSection, { type: "hero" }>; config: SiteConfig; profile: SiteRendererProfile; theme: ResolvedTheme; motion: SiteMotion }) {
@@ -1248,6 +1380,102 @@ export function SiteRenderer({ config, profile, projects, collections, onContact
                           {list.map((p) => (
                             <SiteProjectCard key={p.id} project={p} profile={profile} theme={theme} hoverZoom={hoverZoom} />
                           ))}
+                        </Reveal>
+                      )}
+                    </Reveal>
+                  </section>
+                );
+              }
+
+              case "featured": {
+                // FEATURED WORK — an editorial showcase, deliberately
+                // independent from the "projects" section (All Projects).
+                // Explicit studio curation wins; otherwise ONLY projects the
+                // creator starred on the platform render. The section never
+                // falls back to the whole collection, so Featured Work and
+                // All Projects can never show overlapping content.
+                const byId = new Map(projects.map((p) => [p.id, p] as const));
+                const curated = section.projectIds
+                  .map((id) => byId.get(id))
+                  .filter((p): p is ProjectCardDTO => Boolean(p));
+                const list = (curated.length > 0 ? curated : projects.filter((p) => p.featured)).slice(0, 6);
+                return (
+                  <section key={section.id} className="pt-14 sm:pt-20" style={sectionClass}>
+                    <Reveal motion={m}>
+                      <SectionHeading section={section} theme={theme} motion={m} />
+                      {section.subtitle && (
+                        <p className="mt-2 max-w-2xl text-sm" style={{ color: theme.muted }}>{section.subtitle}</p>
+                      )}
+                      {list.length === 0 ? (
+                        <p className="mt-4 text-sm" style={{ color: theme.muted }}>
+                          {interactive
+                            ? "Featured work is empty — pick projects in this section's editor (or star projects on the platform). Visitors see nothing here until you do."
+                            : "No featured projects yet — check back soon."}
+                        </p>
+                      ) : section.layout === "editorial" ? (
+                        <div className="mt-5 space-y-10">
+                          {list.map((p, i) => (
+                            <Reveal key={p.id} motion={m}>
+                              <a
+                                href={siteProjectHref(profile, p.id)}
+                                className={cn("group grid items-center gap-6 sm:grid-cols-2", i % 2 === 1 && "sm:[&>div:first-child]:order-2", hoverZoom && "bs-hoverzoom")}
+                              >
+                                <div className="overflow-hidden" style={{ aspectRatio: IMAGE_RATIO[theme.imageRatio], borderRadius: RADIUS[theme.radius] }}>
+                                  <SiteCoverImage src={p.coverUrl} kind={p.coverKind} alt={p.title} title={p.title} theme={theme} />
+                                </div>
+                                <div>
+                                  <p className="text-[11px] uppercase tracking-[0.14em]" style={{ color: theme.muted, fontFamily: stacks(theme).accent }}>{categoryLabel(p.category)}</p>
+                                  <h3 className="mt-1 text-2xl font-semibold" style={{ color: theme.accent, fontFamily: stacks(theme).heading }}>{p.title}</h3>
+                                  {p.summary && <p className="mt-2 text-sm" style={{ color: theme.muted }}>{p.summary}</p>}
+                                </div>
+                              </a>
+                            </Reveal>
+                          ))}
+                        </div>
+                      ) : section.layout === "grid" ? (
+                        <Reveal motion={m} stagger className={cn("mt-5 grid", gridCols(theme))} style={gapStyle}>
+                          {list.map((p) => (
+                            <SiteProjectCard key={p.id} project={p} profile={profile} theme={theme} hoverZoom={hoverZoom} />
+                          ))}
+                        </Reveal>
+                      ) : (
+                        <div className="mt-5 space-y-6">
+                          <Reveal motion={m}>
+                            <SiteProjectCard project={list[0]} profile={profile} theme={theme} large hoverZoom={hoverZoom} />
+                          </Reveal>
+                          {list.length > 1 && (
+                            <Reveal motion={m} stagger className={gridCols(theme, "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3")} style={gapStyle}>
+                              {list.slice(1).map((p) => (
+                                <SiteProjectCard key={p.id} project={p} profile={profile} theme={theme} hoverZoom={hoverZoom} />
+                              ))}
+                            </Reveal>
+                          )}
+                        </div>
+                      )}
+                    </Reveal>
+                  </section>
+                );
+              }
+
+              case "reel": {
+                // VIDEO REEL — up to five chosen videos, playable in place.
+                const videos = section.videos;
+                return (
+                  <section key={section.id} className="pt-14 sm:pt-20" style={sectionClass}>
+                    <Reveal motion={m}>
+                      <SectionHeading section={section} theme={theme} motion={m} />
+                      {section.subtitle && (
+                        <p className="mt-2 max-w-2xl text-sm" style={{ color: theme.muted }}>{section.subtitle}</p>
+                      )}
+                      {videos.length === 0 ? (
+                        <p className="mt-4 text-sm" style={{ color: theme.muted }}>
+                          {interactive
+                            ? "The reel is empty — add up to five videos in this section's editor."
+                            : "No videos in the reel yet — check back soon."}
+                        </p>
+                      ) : (
+                        <Reveal motion={m} stagger className="mt-5">
+                          <SiteReelSection section={section} theme={theme} hoverZoom={hoverZoom} />
                         </Reveal>
                       )}
                     </Reveal>

@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth";
 import { ok, err, ERR, parseBody, handler, rateLimitShared } from "@/lib/api-helpers";
 import { normalizeConfig, siteConfigSchema } from "@/lib/site-config";
+import { siteConfigMediaError } from "@/lib/site-media-guard";
 import { publicSitePath, publicSiteAbsoluteUrl } from "@/lib/site-url";
 import { resolveShareOriginForRequest } from "@/lib/workspace-origin";
 import { cacheDeleteShared, cacheInvalidateEventShared, profilePublicCacheKey } from "@/lib/cache";
@@ -67,23 +68,13 @@ export const PUT = handler(async (req: NextRequest) => {
   const r = await parseBody(req, putSchema);
   if (r.response !== undefined) return r.response;
 
-  // Ownership enforcement for referenced branding/cover media: a config may
-  // only point at media the session user owns. Without this, a crafted config
-  // could reference another user's PRIVATE media id and (once published) make
-  // it publicly fetchable through /api/media/<id>/raw. Cover images set via
-  // the profile PATCH route are validated the same way.
-  const mediaIds = [r.data.config.logoMediaId, r.data.config.coverMediaId].filter(
-    (v): v is string => typeof v === "string" && v.length > 0
-  );
-  if (mediaIds.length > 0) {
-    const owned = await db.mediaAsset.findMany({
-      where: { id: { in: mediaIds }, ownerId: user.id },
-      select: { id: true },
-    });
-    if (owned.length !== new Set(mediaIds).size) {
-      return err("Website media not found — upload the logo or cover image to your own account first.", 400);
-    }
-  }
+  // Ownership enforcement for referenced branding/cover media + reel videos:
+  // a config may only point at media the session user owns (shared guard —
+  // the SAME rule the GIFTZ site saves enforce). Without this, a crafted
+  // config could reference another user's PRIVATE media id and (once
+  // published) make it publicly fetchable through /api/media/<id>/raw.
+  const mediaError = await siteConfigMediaError(r.data.config, user.id);
+  if (mediaError) return err(mediaError, 400);
 
   const configJson = JSON.stringify(r.data.config);
 

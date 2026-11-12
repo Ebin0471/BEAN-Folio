@@ -733,22 +733,9 @@ describe("chat integration — automation through the EXISTING chat", () => {
     expect(body.automation).toBeUndefined();
   });
 
-  test("existing chat-stream behavior unchanged: consent gate + streaming reply persists", async () => {
-    // Gate: without consent nothing streams.
-    const noConsent = await db.user.create({
-      data: {
-        email: email("noconsent"),
-        passwordHash: "x",
-        name: "QA noconsent",
-        username: `qar${RUN}nc`.toLowerCase(),
-      },
-    });
-    leakedUserIds.push(noConsent.id);
-    await loginViaSession(noConsent.id);
-    const blocked = await chatStreamRoute(request("/api/ai/chat-stream", "POST", { message: "Hello" }));
-    expect(blocked.status).toBe(403);
-
-    // With consent: the stream route works exactly as before (SSE frames).
+  test("existing chat-stream behavior unchanged: streaming reply persists (no consent gate exists)", async () => {
+    // The consent toggle was removed: the stream route serves every
+    // authenticated user. The live gateway path is exercised once here (SSE).
     await loginViaSession(A.id);
     const res = await chatStreamRoute(request("/api/ai/chat-stream", "POST", { message: "Say hi" }));
     expect(res.status).toBe(200);

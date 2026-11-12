@@ -33,6 +33,8 @@ export function schemaDoc(): string {
   - services: layout ("cards" | "rows"), items: 0-8 of { title (1-80), description (<=300) }.
   - experience: layout ("timeline" | "rows"), entries: 0-10 of { role (1-80), org (<=80), period (<=40), description (<=400) }.
   - gallery: source ("projects" | "collections"), limit (1-24), layout ("masonry" | "grid" | "strip").
+  - featured: subtitle (<=280), projectIds (0-6 project ids in display order), layout ("featured" | "grid" | "editorial") — the editorial showcase, separate from the projects section; leave projectIds empty to render only projects the user has starred.
+  - reel: subtitle (<=280), videos (0-5 of { mediaId, caption (<=160) }), layout ("strip" | "grid") — a real playable video reel. Use ONLY mediaIds that already exist in the current config or that the user explicitly references; never invent media ids.
   - testimonials: layout ("cards" | "stack"), items: 0-8 of { quote (1-500), name (1-80), role (<=80) }.
     Only suggest testimonials as EMPTY containers the user fills with genuine quotes — never invent quotes, names or metrics.
   - process: layout ("steps" | "grid" | "numbers"), items: 0-8 of { title (1-80), description (<=400) } — how the user works, step by step.
@@ -309,7 +311,7 @@ ${invalidJson.slice(0, 20000)}
 
 Repair rules:
 - Change ONLY what the listed problems require — every other page, section, token and id in your previous result must survive byte-identically.
-- Section "type" MUST be one of: ${SECTION_TYPES.join(", ")}. If the step's intent maps to a type outside this list (e.g. a "showreel" or video reel), use the CLOSEST supported type — a "gallery" section (source "projects", layout "strip") is the supported showreel; never invent types or fields.
+- Section "type" MUST be one of: ${SECTION_TYPES.join(", ")}. If the step's intent maps to a type outside this list (e.g. a "showreel"), use the CLOSEST supported type — a "reel" section is the supported video showreel and a "gallery" section (source "projects", layout "strip") is the supported image strip; never invent types or fields.
 - Keep existing section/page ids stable; new sections get fresh unique ids.
 - version stays 2; template is one of the library ids; every token value must be a real token from the schema above.
 - Never invent facts, quotes, metrics or clients while repairing.

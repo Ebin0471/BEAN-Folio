@@ -68,6 +68,8 @@ export interface SaveControlsProps {
   unsavedChanges: string[];
   /** CODE GIFTZ draft safety: confirm before a generated website is saved. */
   confirmBeforeSave?: boolean;
+  /** Show the Restore (server revisions) button — portfolio-only today. */
+  showRestore?: boolean;
   onSave: () => void;
   onDiscard: () => void;
   onOpenRevisions: () => void;
@@ -94,6 +96,7 @@ export function SaveControls({
   proposalActive,
   unsavedChanges,
   confirmBeforeSave = false,
+  showRestore = true,
   onSave,
   onDiscard,
   onOpenRevisions,
@@ -240,11 +243,13 @@ export function SaveControls({
         </Button>
       )}
 
-      {/* Restore previous — server-side revisions */}
-      <Button variant="ghost" size="sm" className="h-8" onClick={onOpenRevisions} title="Restore a previous saved version">
-        <History className="size-4" aria-hidden />
-        <span className="hidden 2xl:inline">Restore</span>
-      </Button>
+      {/* Restore previous — server-side revisions (portfolio workflow) */}
+      {showRestore && (
+        <Button variant="ghost" size="sm" className="h-8" onClick={onOpenRevisions} title="Restore a previous saved version">
+          <History className="size-4" aria-hidden />
+          <span className="hidden 2xl:inline">Restore</span>
+        </Button>
+      )}
 
       {/* Publish / Republish — the SEPARATE, explicit approval workflow */}
       <Button

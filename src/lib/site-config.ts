@@ -199,6 +199,7 @@ export const SECTION_TYPES = [
   "hero", "about", "projects", "skills", "stats", "collections", "contact",
   "services", "experience", "gallery", "testimonials",
   "process", "faq", "pricing", "logos",
+  "featured", "reel",
 ] as const;
 export type SiteSectionType = (typeof SECTION_TYPES)[number];
 
@@ -278,6 +279,45 @@ export const projectsSectionSchema = sectionBaseSchema.extend({
   layout: z.enum(["grid", "featured", "list", "editorial"]).default("grid"),
   /** Optional category slug filter (e.g. "writing"). */
   category: z.string().max(40).default(""),
+});
+
+/**
+ * FEATURED WORK — the editorial showcase, deliberately independent from the
+ * "projects" section (the complete public collection). Content selection is
+ * explicit: the creator either curates `projectIds` here in the studio, or —
+ * when empty — the section renders ONLY projects the creator has starred
+ * (featured) at platform level. It NEVER falls back to the whole collection,
+ * so Featured Work and All Projects can never display overlapping content.
+ */
+export const featuredSectionSchema = sectionBaseSchema.extend({
+  type: z.literal("featured"),
+  subtitle: z.string().max(280).default(""),
+  /** Explicit curation — project ids in display order (max 6). */
+  projectIds: z.array(z.string().min(1).max(64)).max(6).default([]),
+  layout: z.enum(["grid", "featured", "editorial"]).default("featured"),
+});
+
+/**
+ * VIDEO REEL — up to five chosen videos in creator-controlled order, rendered
+ * as playable content (thumbnail first-frame + a real video player on click).
+ * Videos are MediaAsset references; ownership + VIDEO-kind are validated at
+ * the save boundary (/api/me/site) and public streaming is granted only for
+ * PUBLISHED sites by the media raw route.
+ */
+export const reelSectionSchema = sectionBaseSchema.extend({
+  type: z.literal("reel"),
+  subtitle: z.string().max(280).default(""),
+  /** Up to five videos, in display order. */
+  videos: z
+    .array(
+      z.object({
+        mediaId: z.string().min(1).max(64),
+        caption: z.string().max(160).default(""),
+      })
+    )
+    .max(5)
+    .default([]),
+  layout: z.enum(["strip", "grid"]).default("strip"),
 });
 
 export const skillsSectionSchema = sectionBaseSchema.extend({
@@ -419,6 +459,8 @@ export const siteSectionSchema = z.discriminatedUnion("type", [
   heroSectionSchema,
   aboutSectionSchema,
   projectsSectionSchema,
+  featuredSectionSchema,
+  reelSectionSchema,
   skillsSectionSchema,
   statsSectionSchema,
   collectionsSectionSchema,
@@ -1026,6 +1068,38 @@ export function homePage(config: SiteConfig): SitePage {
   return config.pages.find((p) => p.visible) ?? config.pages[0];
 }
 
+/**
+ * Minimal seed for a NEW GIFTZ-generated site (independent from the user's
+ * portfolio website — a GiftzSite never starts from the portfolio draft).
+ * One empty hero on one page with neutral tokens: the site.compose create
+ * flow replaces everything, so the seed only has to be a schema-valid,
+ * renderable starting point.
+ */
+export function blankGiftzSeedConfig(name = "New site"): SiteConfig {
+  const hero = makeSection("hero") as Extract<SiteSection, { type: "hero" }>;
+  hero.title = "{name}";
+  const theme = deriveTheme({
+    background: "#0d0e12",
+    foreground: "#f5f4ef",
+    accent: "#d4af6a",
+    font: "fraunces",
+    radius: "md",
+    density: "relaxed",
+  });
+  return {
+    version: 2,
+    template: "atelier",
+    name,
+    tagline: "",
+    coverMediaId: null,
+    logoMediaId: null,
+    logoPreset: null,
+    theme,
+    motion: defaultMotion(),
+    pages: [{ id: "home", name: "Home", visible: true, sections: [hero] }],
+  };
+}
+
 /** Resolve a section's effective motion (section override wins over site-wide). */
 export function sectionMotion(site: SiteMotion, section: SiteSection): SiteMotion {
   const o = section.motion;
@@ -1059,6 +1133,10 @@ export function makeSection(type: SiteSectionType): SiteSection {
       return { ...base, type: "about", title: "About", body: "" };
     case "projects":
       return { ...base, type: "projects", title: "Projects", limit: 6, layout: "grid", category: "" };
+    case "featured":
+      return { ...base, type: "featured", title: "Featured work", subtitle: "", projectIds: [], layout: "featured" };
+    case "reel":
+      return { ...base, type: "reel", title: "Video reel", subtitle: "", videos: [], layout: "strip" };
     case "skills":
       return { ...base, type: "skills", title: "Skills & tools" };
     case "stats":
@@ -1178,7 +1256,9 @@ export function templatePresets(): TemplatePreset[] {
       pages: [{ id: "home", name: "Home", visible: true, sections: [
         tplSection("hero", { title: "Studio of {name}", subtitle: "{headline} — {location}" } as Partial<SiteSection>),
         tplSection("about", { title: "About", body: "{bio}" } as Partial<SiteSection>),
-        tplSection("projects", { title: "Featured work", limit: 3, layout: "featured" } as Partial<SiteSection>),
+        // Featured Work is a REAL editorial showcase (type "featured"): only
+        // curated/starred projects render — never a slice of All Projects.
+        tplSection("featured", { title: "Featured work", subtitle: "", projectIds: [], layout: "featured" } as Partial<SiteSection>),
         tplSection("projects", { title: "All projects", limit: 12, layout: "grid" } as Partial<SiteSection>),
         tplSection("skills", { title: "Skills & tools" }),
         tplSection("contact", { title: "Contact", body: "{availability}" } as Partial<SiteSection>),

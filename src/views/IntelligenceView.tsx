@@ -1,10 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowRightLeft,
-  Lock,
   Plus,
   Send,
   ServerCrash,
@@ -24,7 +23,6 @@ import { AutomationActionCard } from "@/components/bean/riishe/AutomationActionC
 
 import { api, ApiError, formatDate } from "@/lib/client";
 import { navigate } from "@/lib/hash-router";
-import { useSession } from "@/lib/session";
 import type {
   AiCapabilitiesDTO,
   AiConversationSummary,
@@ -46,10 +44,12 @@ interface AiFailure {
 function aiFailure(e: unknown): AiFailure {
   if (e instanceof ApiError) {
     if (e.status === 403) {
+      // 403 is no longer a consent refusal (BEAN Intelligence needs no
+      // toggle) — treat it as an access error for this account.
       return {
         title: e.message,
-        hint: "Enable RIISHE in Settings → Privacy — AI stays off until you do.",
-        action: "settings",
+        hint: "Your account can't use this right now. Try again later.",
+        action: "retry",
       };
     }
     if (e.status === 429) {
@@ -89,49 +89,13 @@ function InlineError({ failure, onRetry }: { failure: AiFailure; onRetry?: () =>
   );
 }
 
-/**
- * Small, contextual consent pointer — NOT the old blocking consent page.
- * The interface stays fully visible; only AI operations are held back until
- * the user grants consent in Settings → Privacy. Consent is NEVER granted
- * implicitly by opening RIISHE, and this component contains no toggle —
- * Settings → Privacy remains the single place consent is managed.
- */
-function ConsentNotice({ prompted }: { prompted: boolean }) {
-  return (
-    <div
-      className={cn(
-        "flex items-start gap-2 rounded-lg border border-border/60 bg-background/50 px-3 py-2.5 text-xs leading-relaxed text-muted-foreground",
-        prompted && "border-primary/30"
-      )}
-      role={prompted ? "status" : undefined}
-    >
-      <Lock className="mt-0.5 size-3.5 shrink-0 text-primary" aria-hidden />
-      <p className="min-w-0 flex-1">
-        {prompted
-          ? "RIISHE needs your consent before it can reply. Nothing was sent. "
-          : "AI replies are off until you enable RIISHE — your portfolio data is not used or sent anywhere. "}
-        <button
-          type="button"
-          className="font-medium underline decoration-primary/50 underline-offset-2 transition-colors hover:text-primary"
-          onClick={() => navigate("/settings")}
-        >
-          Enable in Settings → Privacy
-        </button>
-        .
-      </p>
-    </div>
-  );
-}
-
 // ------------------------------------------------------------------ chat (the full-screen RIISHE experience — the default landing)
 
 function ChatTab({
-  consented,
   onQuotaUsed,
   usedToday,
   dailyLimit,
 }: {
-  consented: boolean;
   onQuotaUsed: () => void;
   usedToday: number;
   dailyLimit: number;
@@ -144,8 +108,6 @@ function ChatTab({
   const [sending, setSending] = useState(false);
   const [input, setInput] = useState("");
   const [failure, setFailure] = useState<AiFailure | null>(null);
-  /** Set when a send was attempted without consent — surfaces the small notice, never a blocking page. */
-  const [consentPrompted, setConsentPrompted] = useState(false);
   const [delegation, setDelegation] = useState<
     | { taskId: string; kind: string; targetAgent: string; brief: string; destinationUrl: string; destinationLabel: string }
     | null
@@ -160,29 +122,18 @@ function ChatTab({
       const res = await api<{ conversations: AiConversationSummary[] }>("/api/ai/conversations");
       setConversations(res.conversations);
     } catch (e) {
-      // A 403 here means consent is off (never granted or revoked) — the
-      // server refuses to serve history, so keep the list empty; never fake data.
-      if (!(e instanceof ApiError && e.status === 403)) {
-        if (!silent) toast.error(e instanceof ApiError ? e.message : "Couldn't load conversations.");
-      }
+      // History is owner-scoped; a failure here is a server/network issue —
+      // keep the list empty rather than faking data.
+      if (!silent) toast.error(e instanceof ApiError ? e.message : "Couldn't load conversations.");
     } finally {
       if (!silent) setConvLoading(false);
     }
   }, []);
 
-  // Load on mount — the SERVER decides whether history is available (403
-  // without consent keeps the list empty). The interface itself is always viewable.
+  // Load on mount — history is available to every signed-in user.
   useEffect(() => {
     void refreshConversations();
   }, [refreshConversations]);
-
-  // A consent change (Settings → Privacy) re-syncs what the server exposes.
-  useEffect(() => {
-    if (consented) {
-      setConsentPrompted(false);
-      void refreshConversations(true);
-    }
-  }, [consented, refreshConversations]);
 
   useEffect(() => {
     const el = threadRef.current;
@@ -216,22 +167,13 @@ function ChatTab({
     setFailure(null);
     setDelegation(null);
     setAutomation(null);
-    setConsentPrompted(false);
     setInput("");
   };
 
   const send = async (raw: string) => {
     const message = raw.trim();
     if (!message || sending) return;
-    // Client-side consent guard (defense in depth — the server independently
-    // enforces consent and would return 403): without consent NOTHING is
-    // transmitted — no message, no portfolio context, no provider call.
-    if (!consented) {
-      setConsentPrompted(true);
-      return;
-    }
     setFailure(null);
-    setConsentPrompted(false);
     setSending(true);
     const optimistic: AiMessageDTO = { role: "user", content: message, createdAt: new Date().toISOString() };
     setThread((t) => [...t, optimistic]);
@@ -310,9 +252,7 @@ function ChatTab({
             </div>
           ) : conversations.length === 0 ? (
             <p className="px-1 py-3 text-xs leading-relaxed text-muted-foreground">
-              {consented
-                ? "No conversations yet. Your chats with the assistant will appear here."
-                : "Conversations appear here once RIISHE is enabled and you start chatting."}
+              No conversations yet. Your chats with the assistant will appear here.
             </p>
           ) : (
             conversations.map((c) => (
@@ -364,9 +304,7 @@ function ChatTab({
               <div>
                 <p className="font-display text-lg font-semibold text-foreground">Ask your portfolio assistant</p>
                 <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-                  {consented
-                    ? "It can see your own profile and projects only — try one of these to start:"
-                    : "Once enabled in Settings → Privacy, it can see your own profile and projects only — nothing until then."}
+                  It can see your own profile and projects only — try one of these to start:
                 </p>
               </div>
               <div className="flex w-full max-w-md flex-col gap-2">
@@ -376,7 +314,7 @@ function ChatTab({
                     type="button"
                     variant="outline"
                     className="h-auto justify-start whitespace-normal py-2.5 text-left text-sm"
-                    disabled={!consented || sending}
+                    disabled={sending}
                     onClick={() => void send(p)}
                   >
                     {p}
@@ -458,11 +396,6 @@ function ChatTab({
         </div>
 
         <div className="border-t border-border/60 p-3">
-          {!consented && (
-            <div className="mb-2">
-              <ConsentNotice prompted={consentPrompted} />
-            </div>
-          )}
           <form
             className="flex items-end gap-2"
             onSubmit={(e) => {
@@ -479,49 +412,26 @@ function ChatTab({
                   void send(input);
                 }
               }}
-              placeholder={consented ? "Ask about your portfolio…" : "Enable RIISHE in Settings → Privacy to start chatting"}
+              placeholder="Ask about your portfolio…"
               rows={1}
-              disabled={!consented || sending}
+              disabled={sending}
               className="max-h-32 min-h-[44px] flex-1 resize-none"
               aria-label="Message to RIISHE"
             />
-            <Button type="submit" size="icon" className="size-[44px] shrink-0" disabled={!consented || sending || !input.trim()} aria-label="Send message">
+            <Button type="submit" size="icon" className="size-[44px] shrink-0" disabled={sending || !input.trim()} aria-label="Send message">
               <Send className="size-4" aria-hidden />
             </Button>
           </form>
           <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 px-1 text-[11px] text-muted-foreground/80">
             <span>Enter sends · Shift+Enter for a new line. The assistant sees your own profile and projects only.</span>
-            {/* Usage tracking + consent — compact, always visible (the old
-                overview dashboard was removed; the limits themselves stay). */}
+            {/* Usage tracking — compact, always visible (the old overview
+                dashboard was removed; the limits themselves stay). */}
             <span>
               Daily usage {usedToday} / {dailyLimit} · resets midnight UTC
             </span>
             <span>
-              {consented ? (
-                <>
-                  Consent is on — revoke anytime in{" "}
-                  <button
-                    type="button"
-                    className="underline decoration-primary/50 underline-offset-2 transition-colors hover:text-primary"
-                    onClick={() => navigate("/settings")}
-                  >
-                    Settings → Privacy
-                  </button>
-                  .
-                </>
-              ) : (
-                <>
-                  Consent is off — manage it in{" "}
-                  <button
-                    type="button"
-                    className="underline decoration-primary/50 underline-offset-2 transition-colors hover:text-primary"
-                    onClick={() => navigate("/settings")}
-                  >
-                    Settings → Privacy
-                  </button>
-                  .
-                </>
-              )}
+              Your portfolio data is never exposed to other accounts — every
+              AI request runs owner-scoped.
             </span>
           </div>
         </div>
@@ -531,7 +441,6 @@ function ChatTab({
 }
 
 export default function IntelligenceView() {
-  const { user } = useSession();
   const [caps, setCaps] = useState<AiCapabilitiesDTO | null>(null);
   const [capsLoading, setCapsLoading] = useState(true);
   const [capsFailure, setCapsFailure] = useState<string | null>(null);
@@ -558,8 +467,6 @@ export default function IntelligenceView() {
   useEffect(() => {
     void loadCaps();
   }, [loadCaps]);
-
-  const consented = useMemo(() => Boolean(user?.aiConsent), [user]);
 
   if (capsLoading) {
     return (
@@ -589,12 +496,11 @@ export default function IntelligenceView() {
     <div className="mx-auto flex h-[calc(100dvh-9rem)] min-h-[420px] w-full max-w-6xl flex-col px-4 py-6 sm:px-6">
       {/* RIISHE opens DIRECTLY as the assistant — the conversation area,
           composer, history and empty state are the landing page. The old
-          standalone enable-consent gate is gone: without consent the
-          interface stays fully viewable while AI operations are disabled, and
-          a small contextual notice points to Settings → Privacy (the only
-          place consent is granted or revoked). Opening RIISHE never grants
-          consent, and the server independently refuses every AI request
-          (403) until consent exists. */}
+          standalone consent toggle was removed: BEAN Intelligence is
+          available to every signed-in user out of the box (daily limits and
+          rate limits still apply), while authorization stays unchanged —
+          every request is authenticated and owner-scoped, and no account can
+          ever reach another user's data through any AI surface. */}
       {!caps.available && (
         <p className="mb-4 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-foreground">
           The AI provider isn&apos;t configured on this deployment, so RIISHE is unavailable here.
@@ -604,7 +510,6 @@ export default function IntelligenceView() {
       {caps.available ? (
         <div className="min-h-0 flex-1">
           <ChatTab
-            consented={consented}
             onQuotaUsed={() => void loadCaps({ silent: true })}
             usedToday={caps.usedToday}
             dailyLimit={caps.dailyLimit}

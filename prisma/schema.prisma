@@ -87,6 +87,7 @@ model User {
   siteRevisions     SiteRevision[]
   siteDesign        SiteDesign?
   giftzRepositories GiftzRepository[]
+  giftzSites        GiftzSite[]        @relation("giftzSites")
   siteStudioSessions SiteStudioSession[] @relation("siteStudioSessions")
   riisheAutomations  RiisheAutomation[]  @relation("riisheAutomations")
   riisheContactNotes RiisheContactNote[] @relation("riisheContactNotes")
@@ -757,6 +758,13 @@ model SiteStudioSession {
   userId      String
   user        User     @relation("siteStudioSessions", fields: [userId], references: [id], onDelete: Cascade)
   title       String   @default("New session")
+  // Conversation target — PRODUCT SEPARATION (owner directive): "portfolio"
+  // sessions belong to Customization (the user's single portfolio site,
+  // SiteDesign); "giftz" sessions belong to GIFTZ (independently generated
+  // sites, GiftzSite). A giftz turn never reads or writes the portfolio
+  // draft, and a portfolio turn never touches a GiftzSite.
+  targetKind  String   @default("portfolio") // portfolio | giftz
+  targetSiteId String? // GiftzSite id when targetKind = "giftz"
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -783,6 +791,45 @@ model SiteStudioMessage {
 
   @@index([sessionId, createdAt])
   @@index([taskId])
+}
+
+// ---------- GIFTZ generated sites (independent prompt-driven websites) ----------
+// GIFTZ builds COMPLETE websites from natural-language prompts. Each generated
+// site is its OWN artifact — fully separate from the user's portfolio website
+// (SiteDesign) and from Customization state: generating, refining, saving or
+// publishing a GiftzSite never touches the portfolio draft/published snapshot,
+// and Customization never touches a GiftzSite. config is the working draft;
+// publishedConfig is the immutable snapshot visitors see once PUBLISHED.
+model GiftzSite {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation("giftzSites", fields: [userId], references: [id], onDelete: Cascade)
+  title           String   @default("Untitled site")
+  // The originating prompt (bounded) — provenance for the creator only.
+  sourcePrompt    String?
+  config          String? // JSON SiteConfig working draft — private to the owner
+  publishedConfig String? // JSON snapshot published for visitors (PUBLISHED only)
+  status          String   @default("DRAFT") // DRAFT | PUBLISHED
+  publishedAt     DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  revisions GiftzSiteRevision[]
+
+  @@index([userId, updatedAt])
+}
+
+// Snapshots of a GiftzSite taken before each save — revisions preserve the
+// creator's earlier generated versions (bounded per site, pruned to newest 10).
+model GiftzSiteRevision {
+  id        String    @id @default(cuid())
+  siteId    String
+  site      GiftzSite @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  label     String
+  config    String // JSON SiteConfig snapshot
+  createdAt DateTime  @default(now())
+
+  @@index([siteId, createdAt])
 }
 
 model AuditEvent {

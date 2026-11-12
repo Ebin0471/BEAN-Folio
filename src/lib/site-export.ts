@@ -79,6 +79,8 @@ export interface ExportProject {
   summary: string | null;
   category: string | null;
   coverUrl: string | null;
+  /** Platform-level star (featuredAt) — powers the featured section fallback. */
+  featured?: boolean;
   /**
    * Detail-page fields — top-level projects carry them (the export route
    * loads the same public fields the live project page shows); collection
@@ -485,6 +487,15 @@ ${hoverZoom ? ".bs-hoverzoom img { transition: transform 500ms var(--bs-ease,eas
 .bs-featured { margin-top: 1.25rem; display: flex; flex-direction: column; gap: 1.5rem; }
 .bs-featured .bs-card-body { padding: 1.25rem; }
 .bs-featured .bs-card-title { font-size: 1.25rem; }
+
+/* ==== video reel ==== */
+.bs-reel-strip { scroll-snap-type: x mandatory; }
+.bs-reel-item { position: relative; overflow: hidden; border-radius: ${RADIUS[theme.radius]}; }
+.bs-reel-strip .bs-reel-item { flex: 0 0 auto; width: 16rem; scroll-snap-align: start; }
+@media (min-width: 640px) { .bs-reel-strip .bs-reel-item { width: 20rem; } }
+.bs-reel-video { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: #000; }
+.bs-reel-caption { display: block; padding: 0.5rem 0.75rem; font-size: 0.75rem; color: ${theme.muted}; }
+.bs-reel-unavailable { display: flex; align-items: center; justify-content: center; min-height: 9rem; padding: 1rem; aspect-ratio: 16 / 9; font-size: 0.75rem; text-align: center; color: ${theme.muted}; background: ${theme.surface}; border: 1px dashed ${theme.border}; }
 
 /* ==== gallery ==== */
 .bs-strip { margin-top: 1.25rem; display: flex; gap: 1rem; overflow-x: auto; scroll-snap-type: x mandatory; padding-bottom: 0.5rem; scrollbar-width: thin; }
@@ -893,6 +904,77 @@ async function sectionHtml(ctx: Ctx, section: SiteSection): Promise<string> {
         inner = staggerWrap(m, await Promise.all(list.map((p) => projectCardHtml(ctx, p, false))), { className: `bs-grid ${cols}` });
       }
       return `<section class="bs-section">${revealWrap(m, head + inner)}</section>`;
+    }
+
+    case "featured": {
+      // FEATURED WORK — the editorial showcase, independent from the projects
+      // (All Projects) case above. Explicit curation wins; otherwise ONLY
+      // platform-starred projects render — never the whole collection.
+      const byId = new Map(projects.map((p) => [p.id, p] as const));
+      const curated = section.projectIds
+        .map((id) => byId.get(id))
+        .filter((p): p is ExportProject => Boolean(p));
+      const list = (curated.length > 0 ? curated : projects.filter((p) => p.featured === true)).slice(0, 6);
+      const subtitleHtml = section.subtitle
+        ? `<p class="bs-muted" style="margin-top:0.5rem; font-size:0.875rem;">${esc(section.subtitle)}</p>`
+        : "";
+      const empty = `<p class="bs-muted" style="margin-top:1rem; font-size:0.875rem;">No featured projects yet — check back soon.</p>`;
+      let inner: string;
+      if (list.length === 0) inner = empty;
+      else if (section.layout === "editorial") {
+        inner = `<div class="bs-editorial">${(
+          await Promise.all(
+            list.map(async (p, i) => {
+              const media = `<div class="bs-editorial-media" style="overflow:hidden; aspect-ratio:${IMAGE_RATIO[theme.imageRatio]}; border-radius:${RADIUS[theme.radius]};">${await coverImgHtml(ctx, p.coverUrl, p.title, p.title)}</div>`;
+              const text = `<div><p class="bs-cat-label">${esc(categoryLabel(p.category))}</p><h3 class="bs-editorial-title">${esc(p.title)}</h3>${p.summary ? `<p class="bs-editorial-summary">${esc(p.summary)}</p>` : ""}</div>`;
+              return revealWrap(m, `<a class="bs-editorial-row${i % 2 === 1 ? " odd" : ""}${ctx.siteMotion.hoverEffects ? " bs-hoverzoom" : ""}" href="./project-${esc(p.id)}.html">${media}${text}</a>`);
+            })
+          )
+        ).join("")}</div>`;
+      } else if (section.layout === "grid") {
+        const cols = theme.columns === 2 ? "cols-2" : "cols-3";
+        inner = staggerWrap(m, await Promise.all(list.map((p) => projectCardHtml(ctx, p, false))), { className: `bs-grid ${cols}` });
+      } else {
+        const rest = list.slice(1);
+        inner = `<div class="bs-featured">${revealWrap(m, await projectCardHtml(ctx, list[0], true))}${
+          rest.length
+            ? staggerWrap(m, await Promise.all(rest.map((p) => projectCardHtml(ctx, p, false))), { className: "bs-grid cols-3" })
+            : ""
+        }</div>`;
+      }
+      return `<section class="bs-section">${revealWrap(m, head + subtitleHtml + inner)}</section>`;
+    }
+
+    case "reel": {
+      // VIDEO REEL — up to five real, playable videos. Bundled video files
+      // play from the archive's own assets; anything unresolvable (missing,
+      // oversized, non-video) degrades to an honest unavailable tile.
+      const items = section.videos;
+      const subtitleHtml = section.subtitle
+        ? `<p class="bs-muted" style="margin-top:0.5rem; font-size:0.875rem;">${esc(section.subtitle)}</p>`
+        : "";
+      const cols = theme.columns === 2 ? "cols-2" : "cols-3";
+      const inner =
+        items.length === 0
+          ? `<p class="bs-muted" style="margin-top:1rem; font-size:0.875rem;">No videos in the reel yet — check back soon.</p>`
+          : staggerWrap(
+              m,
+              await Promise.all(
+                items.map(async (v) => {
+                  const resolved = await ctx.assets.resolve(`/api/media/${v.mediaId}/raw`);
+                  const caption = v.caption ? `<span class="bs-reel-caption">${esc(v.caption)}</span>` : "";
+                  if (resolved.kind === "media" && isVideoMime(resolved.mime)) {
+                    return `<li class="bs-reel-item"><video class="bs-reel-video" src="${esc(resolved.path)}" controls playsinline preload="metadata"${v.caption ? ` aria-label="${esc(v.caption)}"` : ""}></video>${caption}</li>`;
+                  }
+                  if (resolved.kind === "external") {
+                    return `<li class="bs-reel-item"><video class="bs-reel-video" src="${esc(resolved.url)}" controls playsinline preload="metadata"></video>${caption}</li>`;
+                  }
+                  return `<li class="bs-reel-item"><span class="bs-reel-unavailable">Video unavailable in this archive — open the live website to watch it.</span>${caption}</li>`;
+                })
+              ),
+              { className: section.layout === "strip" ? "bs-strip bs-reel-strip" : `bs-grid ${cols}` }
+            );
+      return `<section class="bs-section">${revealWrap(m, head + subtitleHtml + inner)}</section>`;
     }
 
     case "skills": {

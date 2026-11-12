@@ -1,21 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth";
-import { handler, ok, err, ERR } from "@/lib/api-helpers";
+import { handler, ok, ERR } from "@/lib/api-helpers";
 import type { AiMessageDTO } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
-
-const CONSENT_MESSAGE =
-  "AI is not enabled for your account. Enable it in Settings → BEAN Intelligence.";
 
 /** GET /api/ai/conversations/:id — owner only; SYSTEM rows are never exposed. */
 export const GET = handler(
   async (_req: NextRequest, { params }: { params: Promise<{ id: string }> }): Promise<NextResponse> => {
     const user = await getSessionUser();
     if (!user) return ERR.unauthorized();
-
-    if (!user.aiConsent) return err(CONSENT_MESSAGE, 403);
 
     const { id } = await params;
 

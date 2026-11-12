@@ -109,9 +109,8 @@ function PrivacyDoc() {
               notifications, since these features can&apos;t work without them.
             </>,
             <>
-              <span className="text-foreground">AI usage records</span> — only if you explicitly consent to BEAN
-              Intelligence: each AI request is counted toward your daily limit, and your conversations are stored so
-              you can revisit them.
+              <span className="text-foreground">AI usage records</span> — when you use BEAN Intelligence: each AI request
+              is counted toward your daily limit, and your conversations are stored so you can revisit them.
             </>,
             <>
               <span className="text-foreground">Audit events</span> — a log of privacy-sensitive actions on your own
@@ -153,11 +152,10 @@ function PrivacyDoc() {
         <Bullets
           items={[
             <>
-              <span className="text-foreground">AI provider</span> — BEAN Intelligence calls a server-side AI provider.
-              Your portfolio context is only sent to it after you give explicit consent (and only{" "}
-              <em>your own</em> profile and projects, including private drafts — never other people&apos;s private
-              data). Consent can be revoked at any time in Settings → Privacy, which stops AI processing immediately.
-              Nothing the assistant produces is saved to your portfolio automatically.
+              <span className="text-foreground">AI provider</span> — BEAN Intelligence calls a server-side AI provider
+              when you use its features. Only <em>your own</em> profile and projects (never other people&apos;s private
+              data) are included as context, and only for requests you send. Nothing the assistant produces is saved
+              to your portfolio automatically.
             </>,
             <>
               <span className="text-foreground">Media storage</span> — uploaded files are stored on the platform&apos;s
@@ -181,8 +179,8 @@ function PrivacyDoc() {
               Private at any time; the change takes effect immediately and is audit-logged.
             </>,
             <>
-              <span className="text-foreground">AI consent revocation</span> — the BEAN Intelligence switch in Settings
-              disables all AI features for your account.
+              <span className="text-foreground">AI controls</span> — BEAN Intelligence only runs when you send a
+              request; there is no background processing. Daily usage limits apply and are visible in RIISHE.
             </>,
             <>
               <span className="text-foreground">JSON data export</span> — Settings → Danger zone → Download my data

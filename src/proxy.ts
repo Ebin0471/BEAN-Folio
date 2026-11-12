@@ -39,14 +39,16 @@ import { NextRequest, NextResponse } from "next/server";
  * BEAN Folio domain; nothing in this file claims otherwise.
  */
 
-const PUBLIC_PATH_SLUG_RE = /^(?:\/u\/[^/]+|\/p\/[^/]+|\/site\/[^/]+(?:\/projects\/[^/]+)?)$/;
+const PUBLIC_PATH_SLUG_RE =
+  /^(?:\/u\/[^/]+|\/p\/[^/]+|\/site\/[^/]+(?:\/projects\/[^/]+|\/g\/[^/]+)?)$/;
 
 /**
  * Boot route for a public path-form URL. The route IS the requested pathname
  * (segments preserved exactly as requested — percent-encoded where the client
  * sent them encoded; the client decodes per segment). Covers `/u/<username>`,
- * `/p/<id>`, `/site/<username>` and the standalone website's own project
- * detail pages `/site/<username>/projects/<id>`.
+ * `/p/<id>`, `/site/<username>`, the standalone website's own project detail
+ * pages `/site/<username>/projects/<id>` and the GIFTZ generated sites
+ * `/site/<username>/g/<siteId>`.
  */
 export function bootRouteFromPathname(pathname: string): string | null {
   return PUBLIC_PATH_SLUG_RE.test(pathname) ? pathname : null;

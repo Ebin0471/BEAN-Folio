@@ -55,6 +55,7 @@ import ProjectDetailView from "@/views/ProjectDetailView";
 import FolioView from "@/views/FolioView";
 import PublicProfileView from "@/views/PublicProfileView";
 import PublishedSiteView from "@/views/PublishedSiteView";
+import SiteGiftzSiteView from "@/views/SiteGiftzSiteView";
 import SiteProjectDetailView from "@/views/SiteProjectDetailView";
 import IntelligenceView from "@/views/IntelligenceView";
 import ConnectView from "@/views/ConnectView";
@@ -555,10 +556,20 @@ function Router() {
         //   redirect into the platform's /p/<id> experience. Only this exact
         //   deep shape is a website route; anything else under /site/<user>/
         //   is honestly not-found.
+        // /site/<username>/g/<siteId>       → a PUBLISHED GIFTZ generated site
+        //   (GiftzSite) — an independent prompt-built website artifact, fully
+        //   separate from the portfolio website above.
         if (!b) return <NotFound />;
         if (c === "projects") {
           return d ? (
             <SiteProjectDetailView username={decodeURIComponent(b)} projectId={decodeURIComponent(d)} />
+          ) : (
+            <NotFound />
+          );
+        }
+        if (c === "g") {
+          return d ? (
+            <SiteGiftzSiteView username={decodeURIComponent(b)} siteId={decodeURIComponent(d)} />
           ) : (
             <NotFound />
           );

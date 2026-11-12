@@ -36,10 +36,11 @@ export function parseHash(hash: string): string {
 /**
  * Public routes that may boot directly from the URL PATH (see proxy.ts).
  * `/site/<username>/projects/<projectId>` — the standalone website's own
- * project detail page — is a deeper public shape than the other routes but
- * still bounded and enumerable (never an open wildcard).
+ * project detail page — and `/site/<username>/g/<siteId>` — a PUBLISHED GIFTZ
+ * generated site — are deeper public shapes than the other routes but still
+ * bounded and enumerable (never an open wildcard).
  */
-const PUBLIC_BOOT_RE = /^(?:\/u\/[^/]+|\/p\/[^/]+|\/site\/[^/]+(?:\/projects\/[^/]+)?)$/;
+const PUBLIC_BOOT_RE = /^(?:\/u\/[^/]+|\/p\/[^/]+|\/site\/[^/]+(?:\/projects\/[^/]+|\/g\/[^/]+)?)$/;
 
 /**
  * The active route. A URL fragment always wins (in-app navigation runs on the

@@ -64,7 +64,11 @@ export function aiCapabilities() {
     provider: GATEWAY_LABEL,
     features: AI_FEATURES,
     dailyLimit: AI_DAILY_LIMIT,
-    consentRequired: true,
+    // BEAN Intelligence no longer requires a standalone consent toggle: every
+    // authenticated user can use it out of the box (rate limit + daily quota
+    // still apply). The field stays part of the API contract (clients and
+    // tests read it) and now always reports false.
+    consentRequired: false,
   };
 }
 
@@ -89,17 +93,20 @@ function startOfUtcDay(): Date {
 }
 
 /**
- * Shared consent → burst rate limit → daily usage quota gate for BOTH agents.
+ * Shared burst rate limit → daily usage quota gate for BOTH agents.
  * Returns an error response or null. One quota pool: design proposals and
  * RIISHE chat draw from the same daily limit (surfaced as usedToday).
+ *
+ * BEAN Intelligence is available to EVERY authenticated user — the old
+ * standalone consent toggle (and its 403 gate) was removed by owner
+ * directive. Authorization and privacy boundaries are unchanged and live
+ * elsewhere: every AI route authenticates the caller, every query is
+ * owner-scoped, public/private profile visibility is enforced by the
+ * serialize/visibility layer, and NO user's data is ever reachable by
+ * another account through any AI surface. The persisted `User.aiConsent`
+ * field remains (export/audit history) but gates nothing.
  */
 export async function aiGate(user: User): Promise<NextResponse | null> {
-  if (!user.aiConsent) {
-    return err(
-      "AI is not enabled for your account. Enable it in Settings → BEAN Intelligence.",
-      403
-    );
-  }
   if (!rateLimit(`ai:${user.id}`, AI_BURST_LIMIT, 60_000)) return ERR.rateLimited();
   const used = await db.aiUsage.count({
     where: { userId: user.id, createdAt: { gte: startOfUtcDay() } },

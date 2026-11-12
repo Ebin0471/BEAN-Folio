@@ -75,12 +75,15 @@ import {
 import { SITE_FONTS } from "@/lib/site-fonts";
 import { getMotionPreset, motionPresetsByScope } from "@/lib/site-motion";
 import { cn } from "@/lib/utils";
+import type { ProjectCardDTO } from "@/lib/types";
 export interface StudioRailProps {
   config: SiteConfig;
   activePage: SitePage | null;
   activePageId: string;
   selectedSectionId: string | null;
   categoryOptions: string[];
+  /** The creator's published projects — powers the Featured Work picker. */
+  projects?: ProjectCardDTO[];
   logoUploading: boolean;
   watermark: boolean;
   disabled?: boolean;
@@ -688,6 +691,7 @@ export function StudioRail(props: StudioRailProps) {
               siteMotion={config.motion}
               theme={config.theme}
               categoryOptions={categoryOptions}
+              projectOptions={props.projects}
               onChange={(patch) => props.updateSection(selectedSection.id, patch)}
               libraryPrefs={libraryPrefs}
             />

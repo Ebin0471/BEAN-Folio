@@ -40,9 +40,12 @@ const bodySchema = z
      *  by the UI is never truncated downstream. */
     text: z.string().trim().max(50_000).optional(),
     /** The builder's current draft (unsaved canvas state included) — the base
-     *  the turn plans against. Never mutated by this endpoint. Structurally
-     *  light here; size-bounded post-parse (see MAX_CURRENT_CONFIG_BYTES). */
-    currentConfig: z.looseObject({}),
+     *  a PORTFOLIO turn plans against. Never mutated by this endpoint.
+     *  Optional: GIFTZ sessions ignore it entirely (their base comes from the
+     *  GiftzSite's own saved config — the portfolio draft can never leak into
+     *  a GIFTZ generation). Structurally light here; size-bounded post-parse
+     *  (see MAX_CURRENT_CONFIG_BYTES). */
+    currentConfig: z.looseObject({}).optional(),
     mode: z.enum(["edit", "create"]).default("edit"),
     materialIds: z.array(z.string().min(1).max(40)).max(12).default([]),
     context: z
@@ -92,7 +95,7 @@ export const POST = handler(async (req: NextRequest, { params }: { params: Promi
   const r = await parseBody(req, bodySchema);
   if (r.response) return r.response;
 
-  if (currentConfigTooLarge(r.data.currentConfig)) {
+  if (r.data.currentConfig !== undefined && currentConfigTooLarge(r.data.currentConfig)) {
     return err("The website draft is too large to process.", 413);
   }
 
@@ -101,7 +104,7 @@ export const POST = handler(async (req: NextRequest, { params }: { params: Promi
       userId: user.id,
       sessionId: id,
       text: r.data.text ?? "",
-      currentConfig: r.data.currentConfig,
+      currentConfig: r.data.currentConfig ?? null,
       mode: r.data.mode,
       materialIds: r.data.materialIds,
       context: r.data.context ?? null,

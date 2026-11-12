@@ -34,7 +34,6 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Switch } from "@/components/ui/switch";
 
 import { EmptyState } from "@/components/bean/EmptyState";
 import { SectionHeader } from "@/components/bean/SectionHeader";
@@ -555,13 +554,12 @@ export default function SettingsView() {
   // Local mirrors of privacy settings, synced from the session user.
   const [visibility, setVisibility] = useState<string>(user?.profileVisibility ?? "PUBLIC");
   const [visibilityBusy, setVisibilityBusy] = useState(false);
-  const [aiConsentBusy, setAiConsentBusy] = useState(false);
 
   useEffect(() => {
     if (user) setVisibility(user.profileVisibility);
   }, [user]);
 
-  const patchPrivacy = async (body: { profileVisibility?: string; aiConsent?: boolean }, success: string) => {
+  const patchPrivacy = async (body: { profileVisibility?: string }, success: string) => {
     try {
       await api("/api/me/privacy", { method: "PATCH", json: body });
       toast.success(success);
@@ -672,40 +670,6 @@ export default function SettingsView() {
                     <SelectItem value="PRIVATE">Private — hidden, direct link shows not found</SelectItem>
                   </SelectContent>
                 </Select>
-              </div>
-
-              <Separator className="bg-border/50" />
-
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="min-w-0 sm:pr-6">
-                  <Label htmlFor="ai-consent-switch" className="text-sm font-medium text-foreground">
-                    BEAN Intelligence consent
-                  </Label>
-                  <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-                    When enabled, the server-side AI assistant can read your own profile and your projects (including
-                    private drafts) to ground its answers. Every request is logged and counts toward a daily limit.
-                    You can revoke this anytime — AI features stop immediately.
-                  </p>
-                </div>
-                <Switch
-                  id="ai-consent-switch"
-                  checked={user.aiConsent}
-                  disabled={aiConsentBusy}
-                  className="shrink-0"
-                  onCheckedChange={async (next) => {
-                    setAiConsentBusy(true);
-                    try {
-                      await patchPrivacy(
-                        { aiConsent: next },
-                        next ? "BEAN Intelligence enabled" : "BEAN Intelligence disabled — access revoked"
-                      );
-                    } catch {
-                      /* session re-render restores the true value */
-                    } finally {
-                      setAiConsentBusy(false);
-                    }
-                  }}
-                />
               </div>
             </div>
           </CardContent>

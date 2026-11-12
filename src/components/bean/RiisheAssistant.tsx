@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Bot, Eraser, History, Loader2, Send, Sparkles, WifiOff, X } from "lucide-react";
 import { toast } from "sonner";
-import { api, ApiError } from "@/lib/client";
+import { api } from "@/lib/client";
 import { navigate } from "@/lib/hash-router";
 import { useSession } from "@/lib/session";
 import { cn } from "@/lib/utils";
@@ -45,12 +45,9 @@ export default function RiisheAssistant() {
   const [streaming, setStreaming] = useState(false);
   const [waiting, setWaiting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [consentBlocked, setConsentBlocked] = useState(false);
   const [offline, setOffline] = useState(false);
   const lastSentRef = useRef<string>("");
   const scrollRef = useRef<HTMLDivElement>(null);
-
-  const isConsented = Boolean(user?.aiConsent);
 
   useEffect(() => {
     const on = () => setOffline(false);
@@ -72,8 +69,7 @@ export default function RiisheAssistant() {
     try {
       const res = await api<{ conversations: ConversationMeta[] }>("/api/ai/conversations");
       setConversations(res.conversations);
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 403) setConsentBlocked(true);
+    } catch {
       setConversations([]);
     }
   }, []);
@@ -81,7 +77,7 @@ export default function RiisheAssistant() {
   function openPanel() {
     setOpen(true);
     setError(null);
-    if (isConsented) void loadConversations();
+    void loadConversations();
   }
 
   async function openConversation(id: string) {
@@ -129,14 +125,9 @@ export default function RiisheAssistant() {
         });
         return;
       }
-      if (!user.aiConsent) {
-        setConsentBlocked(true);
-        return;
-      }
       lastSentRef.current = content;
       setHistoryOpen(false);
       setError(null);
-      setConsentBlocked(false);
       setMessages((m) => [...m, { role: "user", content }]);
       setInput("");
       setWaiting(true);
@@ -160,7 +151,6 @@ export default function RiisheAssistant() {
           } catch {
             /* non-JSON error */
           }
-          if (res.status === 403) setConsentBlocked(true);
           if (res.status === 429) msg = msg || "Daily AI limit reached.";
           throw new Error(msg);
         }
@@ -259,7 +249,7 @@ export default function RiisheAssistant() {
               <p className="text-sm font-semibold leading-tight">RIISHE</p>
               <p className="text-[11px] text-muted-foreground">Portfolio assistant · proposes, never applies</p>
             </div>
-            <Button variant="ghost" size="icon" className="size-8" aria-label="Conversation history" onClick={() => { setHistoryOpen((o) => !o); if (!historyOpen && isConsented && conversations === null) void loadConversations(); }}>
+            <Button variant="ghost" size="icon" className="size-8" aria-label="Conversation history" onClick={() => { setHistoryOpen((o) => !o); if (!historyOpen && conversations === null) void loadConversations(); }}>
               <History className="size-4" aria-hidden />
             </Button>
             <Button variant="ghost" size="icon" className="size-8" aria-label="Clear this conversation" onClick={() => void clearConversation()}>
@@ -340,15 +330,6 @@ export default function RiisheAssistant() {
                 </div>
               </div>
             )}
-            {consentBlocked && (
-              <div className="rounded-lg border border-border/70 bg-card p-3 text-xs">
-                <p className="font-medium">RIISHE is off for your account.</p>
-                <p className="mt-1 text-muted-foreground">Enable it in Settings → Privacy — one switch, your data stays yours.</p>
-                <Button size="sm" className="mt-2 h-7 text-xs" onClick={() => { setOpen(false); navigate("/settings"); }}>
-                  <Sparkles className="size-3.5" aria-hidden /> Open Settings → Privacy
-                </Button>
-              </div>
-            )}
           </div>
 
           {/* input */}
@@ -376,7 +357,7 @@ export default function RiisheAssistant() {
                 disabled={offline || streaming || waiting}
                 className="max-h-28 min-h-10 flex-1 resize-none text-sm"
               />
-              <Button type="submit" size="icon" className="size-10 shrink-0" disabled={!input.trim() || offline || streaming || waiting || !user.aiConsent} aria-label="Send message">
+              <Button type="submit" size="icon" className="size-10 shrink-0" disabled={!input.trim() || offline || streaming || waiting} aria-label="Send message">
                 {waiting ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Send className="size-4" aria-hidden />}
               </Button>
             </form>

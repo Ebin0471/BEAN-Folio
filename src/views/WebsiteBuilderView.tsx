@@ -37,6 +37,7 @@
 import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Check,
+  ChevronDown,
   ChevronsLeft,
   ChevronsRight,
   CloudUpload,
@@ -51,6 +52,7 @@ import {
   Monitor,
   MoreHorizontal,
   Palette,
+  Plus,
   Redo2,
   RefreshCw,
   Share2,
@@ -779,6 +781,61 @@ export default function WebsiteBuilderView() {
     customization: { state: "idle", at: null },
     giftz: { state: "idle", at: null },
   });
+
+  // ---- GIFTZ generated sites (INDEPENDENT from the portfolio draft) -------
+  // GIFTZ mode builds and publishes its OWN website artifacts (GiftzSite).
+  // Nothing here reads or writes the portfolio SiteDesign: generation,
+  // saving, publishing and switching generated sites never touch
+  // Customization state, and Customization never touches a GiftzSite.
+  interface GiftzSiteSummary {
+    id: string;
+    title: string;
+    status: string;
+    updatedAt: string;
+  }
+  const [giftzSites, setGiftzSites] = useState<GiftzSiteSummary[]>([]);
+  const [giftzSitesLoading, setGiftzSitesLoading] = useState(false);
+  const [giftzSite, setGiftzSite] = useState<{ id: string; title: string; status: string; config: SiteConfig | null } | null>(null);
+  const [giftzPublishedPath, setGiftzPublishedPath] = useState<string | null>(null);
+  const [giftzLinkDialogOpen, setGiftzLinkDialogOpen] = useState(false);
+
+  const refreshGiftzSites = useCallback(async () => {
+    setGiftzSitesLoading(true);
+    try {
+      const r = await api<{ sites: GiftzSiteSummary[] }>("/api/giftz/sites");
+      setGiftzSites(r.sites);
+    } catch {
+      // Listing is best-effort — the chat and preview keep working; the
+      // failure is visible in the switcher only, never as a fake success.
+    } finally {
+      setGiftzSitesLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshGiftzSites();
+  }, [refreshGiftzSites]);
+
+  /** Open one of the user's generated sites in the GIFTZ workspace. */
+  const openGiftzSite = useCallback(async (id: string) => {
+    try {
+      const r = await api<{ site: { id: string; title: string; status: string; config: SiteConfig | null } }>(
+        `/api/giftz/sites/${encodeURIComponent(id)}`
+      );
+      setGiftzSite({ id: r.site.id, title: r.site.title, status: r.site.status, config: r.site.config });
+      setGiftzPublishedPath(null);
+      setProposalPreview(null);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not open this generated site");
+    }
+  }, []);
+
+  /** Start a NEW generated website (unbound until its first save). */
+  function startNewGiftzSite() {
+    setGiftzSite(null);
+    setGiftzPublishedPath(null);
+    setProposalPreview(null);
+  }
   function setModeSaveStatus(m: StudioSaveMode, next: ModeSaveStatus) {
     setSaveStatus((prev) => ({ ...prev, [m]: next }));
   }
@@ -1445,15 +1502,23 @@ export default function WebsiteBuilderView() {
   }
 
   /**
-   * Save the ISOLATED proposal preview as the new draft. Routes through the
-   * same PUT /api/me/site — the server snapshots "Before save" first — then
-   * clears the preview.
+   * Save the ISOLATED proposal preview.
+   *
+   * PRODUCT SEPARATION: in Customization mode the proposal becomes the
+   * PORTFOLIO draft (PUT /api/me/site — server snapshots "Before save"); in
+   * GIFTZ mode the proposal is saved to the GiftzSite artifact (POST to
+   * create it when unbound, then PUT /api/giftz/sites/:id) — the portfolio
+   * draft is NEVER touched by a GIFTZ save.
    */
   async function saveProposalPreview() {
     if (!proposalPreview || !config) return;
     const candidate = normalizeConfig(proposalPreview.config);
     if (!candidate) {
       toast.error("This proposal is no longer a valid website configuration — discard it and retry.");
+      return;
+    }
+    if (mode === "giftz") {
+      await saveGiftzProposal(candidate);
       return;
     }
     // CODE GIFTZ's own save lifecycle: the proposal save records its status
@@ -1475,13 +1540,52 @@ export default function WebsiteBuilderView() {
     }
   }
 
+  /**
+   * GIFTZ save — persists the generated website to its OWN artifact
+   * (GiftzSite): creates the artifact when the workspace is unbound, then
+   * saves the config with the SAME media-ownership guard the portfolio
+   * enforces. Returns the saved site (id) so the publish flow can chain.
+   */
+  async function saveGiftzProposal(candidate: SiteConfig): Promise<{ id: string } | null> {
+    setModeSaveStatus("giftz", { state: "saving", at: saveStatus.giftz.at });
+    try {
+      let siteId = giftzSite?.id ?? null;
+      if (!siteId) {
+        const created = await api<{ site: { id: string; title: string; status: string } }>("/api/giftz/sites", {
+          method: "POST",
+          json: { title: (candidate.name || "Generated site").slice(0, 120) },
+        });
+        siteId = created.site.id;
+      }
+      const saved = await api<{ saved: boolean; config: SiteConfig | null }>(
+        `/api/giftz/sites/${encodeURIComponent(siteId)}`,
+        { method: "PUT", json: { config: candidate } }
+      );
+      setGiftzSite({ id: siteId, title: candidate.name || "Generated site", status: giftzSite?.status ?? "DRAFT", config: saved.config ?? candidate });
+      setProposalPreview(null);
+      setModeSaveStatus("giftz", { state: "saved", at: Date.now() });
+      void refreshGiftzSites();
+      toast.success("Generated website saved — it is its own site, separate from your portfolio");
+      return { id: siteId };
+    } catch (e) {
+      setModeSaveStatus("giftz", { state: "failed", at: null });
+      toast.error(e instanceof Error ? e.message : "Could not save the generated website");
+      return null;
+    }
+  }
+
   function discardChanges() {
     if (proposalPreview) {
       setProposalPreview(null);
-      toast.info("Proposal preview discarded — your draft is unchanged");
+      toast.info(
+        mode === "giftz"
+          ? "Proposal preview discarded — your generated website is unchanged"
+          : "Proposal preview discarded — your draft is unchanged"
+      );
       return;
     }
-    if (!dirty || !config) return;
+    // GIFTZ mode has no manually-editable draft — nothing to revert here.
+    if (mode === "giftz" || !dirty || !config) return;
     const saved = normalizeConfig(baseDraftRef.current);
     if (!saved) {
       toast.error("Could not revert automatically — use “Restore” to pick a previous version instead.");
@@ -1496,6 +1600,13 @@ export default function WebsiteBuilderView() {
   }
 
   async function publish() {
+    // PRODUCT SEPARATION: the publish path is per-product. GIFTZ publishes
+    // its generated site to its own address; Customization publishes the
+    // portfolio website. Neither action ever touches the other's artifact.
+    if (mode === "giftz") {
+      await publishGiftzSite();
+      return;
+    }
     if (!config) return;
     setPublishing(true);
     try {
@@ -1555,6 +1666,10 @@ export default function WebsiteBuilderView() {
   }
 
   async function unpublish() {
+    if (mode === "giftz") {
+      await unpublishGiftzSite();
+      return;
+    }
     setPublishing(true);
     try {
       await api<{ status: string; canonicalUrl: string | null; canonicalKind: "production" | "workspace" | null }>(
@@ -1564,6 +1679,62 @@ export default function WebsiteBuilderView() {
       setDesign((d) => (d ? { ...d, status: "DRAFT", publishedAt: null } : d));
       setLinkDialogOpen(false);
       toast.success("Website unpublished — it is no longer publicly visible. Your public profile is unaffected.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not unpublish");
+    } finally {
+      setPublishing(false);
+    }
+  }
+
+  /**
+   * GIFTZ publish — publishes THIS generated site to its own public address
+   * (/site/<username>/g/<siteId>). The portfolio website is untouched.
+   */
+  async function publishGiftzSite() {
+    setPublishing(true);
+    try {
+      // Publishing snapshots the SAVED artifact — flush the active proposal
+      // first (the confirm dialog promises this).
+      let siteId = giftzSite?.id ?? null;
+      if (proposalPreview) {
+        const candidate = normalizeConfig(proposalPreview.config);
+        if (!candidate) {
+          toast.error("This proposal is no longer a valid website configuration — discard it and retry.");
+          return;
+        }
+        const saved = await saveGiftzProposal(candidate);
+        if (!saved) return; // save failed — publish stops honestly
+        siteId = saved.id;
+      }
+      if (!siteId) {
+        toast.error("Generate and save a website first — there is nothing to publish yet.");
+        return;
+      }
+      const res = await api<{ status: string; publishedAt: string | null; publicPath: string | null }>(
+        `/api/giftz/sites/${encodeURIComponent(siteId)}/publish`,
+        { method: "POST" }
+      );
+      setGiftzSite((s) => (s && s.id === siteId ? { ...s, status: "PUBLISHED" } : s));
+      setGiftzPublishedPath(res.publicPath);
+      setGiftzLinkDialogOpen(true);
+      toast.success("Generated website published — it is live at its own address");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not publish the generated website");
+    } finally {
+      setPublishing(false);
+    }
+  }
+
+  /** GIFTZ unpublish — takes THIS generated site offline; its draft is kept. */
+  async function unpublishGiftzSite() {
+    if (!giftzSite) return;
+    setPublishing(true);
+    try {
+      await api(`/api/giftz/sites/${encodeURIComponent(giftzSite.id)}/unpublish`, { method: "POST" });
+      setGiftzSite((s) => (s ? { ...s, status: "DRAFT" } : s));
+      setGiftzPublishedPath(null);
+      setGiftzLinkDialogOpen(false);
+      toast.success("Generated website unpublished — it is no longer publicly visible");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not unpublish");
     } finally {
@@ -1742,17 +1913,28 @@ export default function WebsiteBuilderView() {
   const published = design?.status === "PUBLISHED";
   const deviceMeta = DEVICE_PRESETS[device];
 
-  // Advisory staleness: did the draft change since this proposal was generated?
-  const proposalStale = Boolean(proposalPreview && config && configFingerprint(config) !== proposalPreview.baseHash);
+  // Advisory staleness: did the base change since this proposal was generated?
+  // Per-product: a GIFTZ proposal is compared against the GiftzSite's own
+  // saved config; a Customization proposal against the portfolio draft.
+  const proposalBase = mode === "giftz" ? giftzSite?.config ?? null : config;
+  const proposalStale = Boolean(proposalPreview && proposalBase && configFingerprint(proposalBase) !== proposalPreview.baseHash);
 
   // One-line canvas status (caption row above the preview).
   const canvasStatusText = previewError
     ? "Preview hit a rendering error — use Reload preview to retry. Your data is safe."
     : proposalPreview
-      ? "Isolated proposal preview — your draft and published site are untouched until you save."
-      : dirty
-        ? "Previewing unsaved draft edits"
-        : "Previewing your saved draft";
+      ? mode === "giftz"
+        ? "Isolated proposal preview — the generated website is untouched until you save."
+        : "Isolated proposal preview — your draft and published site are untouched until you save."
+      : mode === "giftz"
+        ? giftzSite
+          ? giftzSite.status === "PUBLISHED"
+            ? `Previewing “${giftzSite.title}” — published at its own address`
+            : `Previewing your saved generated website — “${giftzSite.title}”`
+          : "No website generated yet"
+        : dirty
+          ? "Previewing unsaved draft edits"
+          : "Previewing your saved draft";
 
   // Canonical public address (see lib/site-url + lib/workspace-origin).
   const livePath = design?.publicUrl ?? publicSitePath(user?.username ?? null);
@@ -1832,8 +2014,11 @@ export default function WebsiteBuilderView() {
     );
   }
 
-  // The canvas config: an isolated proposal preview when active, else the draft.
-  const previewConfig: SiteConfig = proposalPreview?.config ?? config;
+  // The canvas config: an isolated proposal preview when active; otherwise
+  // the product's own artifact — in GIFTZ mode the GENERATED site's saved
+  // config (never the portfolio draft), in Customization mode the portfolio
+  // draft.
+  const previewConfig: SiteConfig = proposalPreview?.config ?? (mode === "giftz" ? giftzSite?.config ?? config : config);
 
   const previewChildren = (cfg: SiteConfig, opts: { interactive?: boolean } = {}) => (
     <SiteRenderer
@@ -1994,15 +2179,66 @@ export default function WebsiteBuilderView() {
           </div>
         </div>
 
-        {/* site identity — wired into site.json's name */}
-        <Input
-          value={config.name}
-          maxLength={80}
-          onChange={(e) => mutateConfig((c) => ({ ...c, name: e.target.value }))}
-          aria-label="Website name"
-          placeholder="Website name"
-          className="h-8 w-28 min-w-0 font-display text-sm font-semibold sm:w-44"
-        />
+        {/* site identity — wired into site.json's name (Customization owns the
+            portfolio site's identity; GIFTZ sites carry the generated name) */}
+        {mode === "customization" && (
+          <Input
+            value={config.name}
+            maxLength={80}
+            onChange={(e) => mutateConfig((c) => ({ ...c, name: e.target.value }))}
+            aria-label="Website name"
+            placeholder="Website name"
+            className="h-8 w-28 min-w-0 font-display text-sm font-semibold sm:w-44"
+          />
+        )}
+        {mode === "giftz" && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 max-w-[200px] gap-1.5 px-2"
+                title="Your GIFTZ generated websites — each one is an independent site, separate from your portfolio"
+              >
+                <Sparkles className="size-3.5 shrink-0 text-primary" aria-hidden />
+                <span className="min-w-0 truncate">{giftzSite?.title ?? "New generated site"}</span>
+                <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-64">
+              <DropdownMenuLabel>Generated websites</DropdownMenuLabel>
+              <DropdownMenuItem
+                onSelect={startNewGiftzSite}
+                className={!giftzSite ? "bg-accent" : undefined}
+              >
+                <Plus className="size-4" aria-hidden /> New website
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              {giftzSitesLoading ? (
+                <div className="flex items-center gap-2 px-2 py-1.5 text-xs text-muted-foreground">
+                  <Loader2 className="size-3 animate-spin" aria-hidden /> Loading…
+                </div>
+              ) : giftzSites.length === 0 ? (
+                <p className="px-2 py-1.5 text-xs text-muted-foreground">No generated websites yet.</p>
+              ) : (
+                giftzSites.map((s) => (
+                  <DropdownMenuItem
+                    key={s.id}
+                    onSelect={() => {
+                      if (giftzSite?.id !== s.id) void openGiftzSite(s.id);
+                    }}
+                    className={giftzSite?.id === s.id ? "bg-accent" : undefined}
+                  >
+                    <span className="min-w-0 flex-1 truncate">{s.title}</span>
+                    {s.status === "PUBLISHED" && (
+                      <span className="shrink-0 text-[10px] uppercase tracking-wide text-emerald-600 dark:text-emerald-400">live</span>
+                    )}
+                  </DropdownMenuItem>
+                ))
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
 
         {/* save-state cluster — scoped to the ACTIVE mode: Customization and
             CODE GIFTZ each get exactly ONE primary save action, their own
@@ -2010,17 +2246,18 @@ export default function WebsiteBuilderView() {
             workflow stays a separate, explicit path. */}
         <SaveControls
           mode={mode}
-          dirty={dirty}
+          dirty={mode === "giftz" ? Boolean(proposalPreview) : dirty}
           status={saveStatus[mode]}
           publishing={publishing}
-          hasPublished={published}
-          draftAheadOfLive={draftAheadOfLive}
+          hasPublished={mode === "giftz" ? giftzSite?.status === "PUBLISHED" : published}
+          draftAheadOfLive={mode === "giftz" ? false : draftAheadOfLive}
           proposalActive={Boolean(proposalPreview)}
-          unsavedChanges={unsavedChanges}
+          unsavedChanges={mode === "giftz" ? (proposalPreview ? ["The generated website preview is not saved yet"] : []) : unsavedChanges}
+          showRestore={mode === "customization"}
           confirmBeforeSave={mode === "giftz" ? giftzPrefs.confirmProposalSave : false}
           onSave={() => {
             if (proposalPreview) void saveProposalPreview();
-            else void saveDraft();
+            else if (mode === "customization") void saveDraft();
           }}
           onDiscard={discardChanges}
           onOpenRevisions={() => void openRevisions()}
@@ -2056,31 +2293,38 @@ export default function WebsiteBuilderView() {
           })}
         </div>
 
-        {/* undo / redo */}
-        <div className="flex items-center gap-0.5">
-          <Button variant="ghost" size="icon" className="size-8" aria-label="Undo" title="Undo (Ctrl/Cmd+Z)" disabled={pastRef.current.length === 0} onClick={undo}>
-            <Undo2 className="size-4" aria-hidden />
-          </Button>
-          <Button variant="ghost" size="icon" className="size-8" aria-label="Redo" title="Redo (Ctrl/Cmd+Y)" disabled={futureRef.current.length === 0} onClick={redo}>
-            <Redo2 className="size-4" aria-hidden />
-          </Button>
-        </div>
+        {/* undo / redo — PORTFOLIO tools: they edit the Customization draft,
+            so they are hidden in GIFTZ mode where they would act on the wrong
+            product's state. */}
+        {mode === "customization" && (
+          <div className="flex items-center gap-0.5">
+            <Button variant="ghost" size="icon" className="size-8" aria-label="Undo" title="Undo (Ctrl/Cmd+Z)" disabled={pastRef.current.length === 0} onClick={undo}>
+              <Undo2 className="size-4" aria-hidden />
+            </Button>
+            <Button variant="ghost" size="icon" className="size-8" aria-label="Redo" title="Redo (Ctrl/Cmd+Y)" disabled={futureRef.current.length === 0} onClick={redo}>
+              <Redo2 className="size-4" aria-hidden />
+            </Button>
+          </div>
+        )}
 
-        {/* export ZIP — independent of publishing */}
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-8 px-2"
-          onClick={() => void downloadSiteCode()}
-          disabled={exporting}
-          title="Download your website as a standalone ZIP (HTML/CSS/JS + assets) you can host anywhere — no BEAN Folio needed"
-        >
-          {exporting ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Download className="size-4" aria-hidden />}
-          <span className="hidden 2xl:inline">Download code</span>
-          <span className="sr-only">Download website code (ZIP)</span>
-        </Button>
+        {/* export ZIP — independent of publishing (portfolio website export) */}
+        {mode === "customization" && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 px-2"
+            onClick={() => void downloadSiteCode()}
+            disabled={exporting}
+            title="Download your website as a standalone ZIP (HTML/CSS/JS + assets) you can host anywhere — no BEAN Folio needed"
+          >
+            {exporting ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Download className="size-4" aria-hidden />}
+            <span className="hidden 2xl:inline">Download code</span>
+            <span className="sr-only">Download website code (ZIP)</span>
+          </Button>
+        )}
 
-        {/* more menu: share tools */}
+        {/* more menu: share tools (portfolio website share) */}
+        {mode === "customization" && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" size="sm" className="h-8 px-2" aria-label="More studio tools">
@@ -2105,9 +2349,11 @@ export default function WebsiteBuilderView() {
             )}
           </DropdownMenuContent>
         </DropdownMenu>
+        )}
 
-        {/* live address chip (xl screens) */}
-        {published && (canonicalUrl ?? liveHash) && (
+        {/* live address chip (xl screens) — the PORTFOLIO website's address;
+            GIFTZ generated sites surface their own address after publishing */}
+        {mode === "customization" && published && (canonicalUrl ?? liveHash) && (
           <a
             href={shareTargets.openUrl ?? "#"}
             target="_blank"
@@ -2147,6 +2393,7 @@ export default function WebsiteBuilderView() {
           aria-hidden={mode !== "giftz" || giftzZone !== "chat"}
         >
           <ChatPanel
+            key={giftzSite?.id ?? "new"}
             currentConfig={config}
             context={chatContext}
             onPreviewProposal={handlePreviewProposal}
@@ -2154,6 +2401,8 @@ export default function WebsiteBuilderView() {
             autoPreviewProposals={giftzPrefs.autoPreview}
             giftzSettings={giftzPrefs}
             onGiftzSettingsChange={(next) => updateGiftzPrefs(next)}
+            sessionTarget={{ kind: "giftz", siteId: giftzSite?.id ?? null }}
+            sessionsTargetFilter="giftz"
           />
         </aside>
 
@@ -2247,7 +2496,7 @@ export default function WebsiteBuilderView() {
               )}
             </div>
           )}
-          {mode === "giftz" && !proposalPreview ? (
+          {mode === "giftz" && !proposalPreview && !giftzSite?.config ? (
             /* CODE GIFTZ initial state — the generated-website preview is
                empty until an actual generation exists. The user's saved
                portfolio is NEVER shown as a fake generated result. */
@@ -2333,6 +2582,7 @@ export default function WebsiteBuilderView() {
             activePageId={activePageId}
             selectedSectionId={selectedSectionId}
             categoryOptions={categoryOptions}
+            projects={profileData?.projects ?? []}
             logoUploading={logoUploading}
             watermark={design?.watermark ?? true}
             libraryPrefs={libraryPrefs}
@@ -2521,28 +2771,99 @@ export default function WebsiteBuilderView() {
         </DialogContent>
       </Dialog>
 
+      {/* ---------------- GIFTZ generated site: its own public address ---------------- */}
+      <Dialog open={giftzLinkDialogOpen} onOpenChange={setGiftzLinkDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="font-display">Your generated website is live</DialogTitle>
+            <DialogDescription>
+              This GIFTZ website is published at its own address — separate from your portfolio website. Anyone with
+              the link can visit it; unpublishing removes public access (the generated draft is kept).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Input
+              readOnly
+              value={giftzPublishedPath ? `#${giftzPublishedPath}` : ""}
+              aria-label="Generated website public route"
+              className="h-9 flex-1 font-mono text-xs"
+              onFocus={(e) => e.currentTarget.select()}
+            />
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  if (giftzPublishedPath) void navigator.clipboard?.writeText(`${window.location.origin}${giftzPublishedPath}`).catch(() => undefined);
+                }}
+                disabled={!giftzPublishedPath}
+              >
+                <Link2 className="size-4" aria-hidden /> Copy link
+              </Button>
+              <Button
+                onClick={() => {
+                  setGiftzLinkDialogOpen(false);
+                  if (giftzPublishedPath) window.open(giftzPublishedPath, "_blank", "noopener");
+                }}
+                disabled={!giftzPublishedPath}
+              >
+                <ExternalLink className="size-4" aria-hidden /> Open generated website
+              </Button>
+            </div>
+            <p className="rounded-lg border border-border/60 bg-muted/30 p-3 text-[11px] leading-relaxed text-muted-foreground">
+              A permanent domain link follows the platform's production-domain configuration — the route above is the
+              real working address on this deployment. Your portfolio website and its publish state are unaffected.
+            </p>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* ---------------- explicit publish review (never one-click silent) ---------------- */}
       <Dialog open={publishDialogOpen} onOpenChange={setPublishDialogOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle className="font-display">{published ? "Update the live website?" : "Publish your website?"}</DialogTitle>
+            <DialogTitle className="font-display">
+              {mode === "giftz"
+                ? giftzSite?.status === "PUBLISHED"
+                  ? "Update this generated website?"
+                  : "Publish this generated website?"
+                : published
+                  ? "Update the live website?"
+                  : "Publish your website?"}
+            </DialogTitle>
             <DialogDescription>
-              {published
-                ? "Republishing replaces the public snapshot with your current saved draft. The address stays the same."
-                : "Publishing makes your website public at its own address (/site/<username>) — anyone with the link can visit it. Your BEAN Folio profile (/u/<username>) stays independent."}
+              {mode === "giftz"
+                ? giftzSite?.status === "PUBLISHED"
+                  ? "Republishing replaces the public snapshot of this generated website with its saved draft. Its address stays the same."
+                  : "Publishing makes this generated website public at its own address (/site/<username>/g/<id>) — anyone with the link can visit it. Your portfolio website is unaffected."
+                : published
+                  ? "Republishing replaces the public snapshot with your current saved draft. The address stays the same."
+                  : "Publishing makes your website public at its own address (/site/<username>) — anyone with the link can visit it. Your BEAN Folio profile (/u/<username>) stays independent."}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2 rounded-lg border border-border/60 bg-muted/30 p-3 text-xs leading-relaxed text-muted-foreground">
-            <p>
-              <span className="font-medium text-foreground">“{config.name}”</span>
-              {config.tagline ? ` — ${config.tagline}` : ""}
-            </p>
-            <p>· Publishes your SAVED draft{dirty ? " — your unsaved changes are saved first" : ""}.</p>
-            <p>· The chat's isolated previews are never published — only what you saved.</p>
-            {published && draftAheadOfLive && (
-              <p className="text-amber-600 dark:text-amber-400">· The live site currently shows an older snapshot.</p>
+            {mode === "giftz" ? (
+              <>
+                <p>
+                  <span className="font-medium text-foreground">“{giftzSite?.title ?? "New generated site"}”</span> — a GIFTZ generated website.
+                </p>
+                <p>· Publishes the SAVED generated website{proposalPreview ? " — the previewed generation is saved first" : ""}.</p>
+                <p>· Your portfolio website and its publish state are untouched.</p>
+                <p>· You can unpublish any time — the generated draft is kept.</p>
+              </>
+            ) : (
+              <>
+                <p>
+                  <span className="font-medium text-foreground">“{config.name}”</span>
+                  {config.tagline ? ` — ${config.tagline}` : ""}
+                </p>
+                <p>· Publishes your SAVED draft{dirty ? " — your unsaved changes are saved first" : ""}.</p>
+                <p>· The chat's isolated previews are never published — only what you saved.</p>
+                {published && draftAheadOfLive && (
+                  <p className="text-amber-600 dark:text-amber-400">· The live site currently shows an older snapshot.</p>
+                )}
+                <p>· You can unpublish any time — your draft is kept.</p>
+              </>
             )}
-            <p>· You can unpublish any time — your draft is kept.</p>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setPublishDialogOpen(false)}>
@@ -2550,7 +2871,7 @@ export default function WebsiteBuilderView() {
             </Button>
             <Button onClick={() => { setPublishDialogOpen(false); void publish(); }} disabled={publishing}>
               {publishing ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <CloudUpload className="size-4" aria-hidden />}
-              {published ? "Republish now" : "Publish now"}
+              {mode === "giftz" ? (giftzSite?.status === "PUBLISHED" ? "Republish now" : "Publish now") : published ? "Republish now" : "Publish now"}
             </Button>
           </DialogFooter>
         </DialogContent>

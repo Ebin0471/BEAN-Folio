@@ -7,6 +7,30 @@ import { getObject, getObjectRange, getObjectSize } from "@/lib/storage";
 type Ctx = { params: Promise<{ id: string }> };
 
 /**
+ * Whether a PUBLISHED site config snapshot legitimately makes this media id
+ * part of its public face: top-level logo/cover branding, or a Video Reel
+ * section entry. Snapshots are JSON text — parse defensively and verify the
+ * id precisely (never substring matching).
+ */
+function publishedConfigAllows(publishedConfig: string | null | undefined, mediaId: string): boolean {
+  try {
+    const cfg = JSON.parse(publishedConfig ?? "") as {
+      logoMediaId?: string | null;
+      coverMediaId?: string | null;
+      pages?: { sections?: { type?: string; videos?: { mediaId?: string }[] }[] }[];
+    };
+    if (cfg.logoMediaId === mediaId || cfg.coverMediaId === mediaId) return true;
+    return (cfg.pages ?? []).some((page) =>
+      (page.sections ?? []).some(
+        (s) => s.type === "reel" && (s.videos ?? []).some((v) => v.mediaId === mediaId)
+      )
+    );
+  } catch {
+    return false; // unreadable snapshot — never widen access on a parse failure
+  }
+}
+
+/**
  * Binary media streaming with server-enforced authorization:
  *  1. owner → allowed
  *  2. used as avatar/cover by any live account → allowed
@@ -98,8 +122,8 @@ export const GET = handler(async (req: NextRequest, { params }: Ctx) => {
     // the id precisely against the parsed snapshot (no substring false
     // positives). OWNERSHIP IS ENFORCED: the referenced media must belong to
     // the site's owner — a config pointing at someone else's media id never
-    // makes that media public (server-side IDOR guard; the site PUT route
-    // rejects such references at write time too).
+    // makes that media public (server-side IDOR guard; the save routes
+    // reject such references at write time too).
     const publishedSites = await db.siteDesign.findMany({
       where: {
         status: "PUBLISHED",
@@ -110,15 +134,35 @@ export const GET = handler(async (req: NextRequest, { params }: Ctx) => {
       take: 5,
     });
     for (const site of publishedSites) {
-      try {
-        const cfg = JSON.parse(site.publishedConfig ?? "") as { logoMediaId?: string | null; coverMediaId?: string | null };
-        if (cfg.logoMediaId === media.id || cfg.coverMediaId === media.id) {
-          allowed = true;
-          publiclyShared = true; // published-site branding is part of the public site
-          break;
-        }
-      } catch {
-        /* unreadable snapshot — ignore */
+      const verdict = publishedConfigAllows(site.publishedConfig, media.id);
+      if (verdict) {
+        allowed = true;
+        publiclyShared = true; // published-site media is part of the public site
+        break;
+      }
+    }
+  }
+
+  if (!allowed) {
+    // GIFTZ generated sites (GiftzSite) — the same public-face rule for the
+    // independent prompt-built artifacts: PUBLISHED generated sites may serve
+    // their own branding and Video Reel media publicly. Ownership was
+    // enforced at every save/publish boundary; drafts stay owner-only.
+    const publishedGiftzSites = await db.giftzSite.findMany({
+      where: {
+        status: "PUBLISHED",
+        user: { deletedAt: null, id: media.ownerId },
+        publishedConfig: { contains: media.id },
+      },
+      select: { publishedConfig: true },
+      take: 5,
+    });
+    for (const site of publishedGiftzSites) {
+      const verdict = publishedConfigAllows(site.publishedConfig, media.id);
+      if (verdict) {
+        allowed = true;
+        publiclyShared = true;
+        break;
       }
     }
   }

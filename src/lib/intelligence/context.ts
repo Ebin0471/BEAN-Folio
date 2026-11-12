@@ -2,11 +2,11 @@
  * BEAN Intelligence — authorized portfolio context builder.
  *
  * ONE shared implementation for every RIISHE chat surface. Contract:
- *  - ONLY the signed-in user's own data is read (never another user's);
- *  - private/draft projects are included BECAUSE the user consented to AI
- *    features and the data never leaves their own request context except to
- *    the configured server-side provider (disclosed in the product's legal
- *    copy);
+ *  - ONLY the signed-in user's own data is read (never another user's) —
+ *    authorization comes from the authenticated session, not from any toggle;
+ *  - private/draft projects are included because they are the AUTHENTICATED
+ *    OWNER's own data, used only inside their own request; the data never
+ *    crosses user boundaries and is disclosed in the product's legal copy;
  *  - the returned blocks are plain text for system prompts — no markup that
  *    could be mistaken for instructions, and bounded excerpts.
  */
