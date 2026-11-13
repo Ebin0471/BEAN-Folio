@@ -8,6 +8,7 @@ import {
   Send,
   ServerCrash,
   Sparkles,
+  Workflow,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -20,6 +21,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { EmptyState } from "@/components/bean/EmptyState";
 import { Spinner } from "@/components/bean/Spinner";
 import { AutomationActionCard } from "@/components/bean/riishe/AutomationActionCard";
+import { RiisheDashboardPanel } from "@/components/bean/riishe/RiisheDashboardPanel";
 
 import { api, ApiError, formatDate } from "@/lib/client";
 import { navigate } from "@/lib/hash-router";
@@ -114,6 +116,8 @@ function ChatTab({
   >(null);
   /** Structured action card from an automation intent (same side-channel pattern as delegation). */
   const [automation, setAutomation] = useState<RiisheActionCard | null>(null);
+  /** Automation dashboard toggle — chat stays the primary interface. */
+  const [dashboardOpen, setDashboardOpen] = useState(false);
   const threadRef = useRef<HTMLDivElement>(null);
 
   const refreshConversations = useCallback(async (silent = false) => {
@@ -228,6 +232,16 @@ function ChatTab({
       <Button variant="outline" size="icon" className="size-10 shrink-0" onClick={newChat} aria-label="Start a new chat">
         <Plus className="size-4" aria-hidden />
       </Button>
+      <Button
+        variant={dashboardOpen ? "default" : "outline"}
+        size="icon"
+        className="size-10 shrink-0"
+        onClick={() => setDashboardOpen((v) => !v)}
+        aria-label={dashboardOpen ? "Back to chat" : "Open automation dashboard"}
+        aria-pressed={dashboardOpen}
+      >
+        <Workflow className="size-4" aria-hidden />
+      </Button>
     </div>
   );
 
@@ -239,9 +253,20 @@ function ChatTab({
       <aside className="hidden md:flex md:flex-col">
         <div className="flex items-center justify-between pb-2">
           <h3 className="text-sm font-medium text-foreground">Conversations</h3>
-          <Button variant="outline" size="sm" onClick={newChat}>
-            <Plus className="size-3.5" aria-hidden /> New
-          </Button>
+          <div className="flex items-center gap-1.5">
+            <Button
+              variant={dashboardOpen ? "default" : "outline"}
+              size="sm"
+              onClick={() => setDashboardOpen((v) => !v)}
+              aria-label={dashboardOpen ? "Back to chat" : "Open automation dashboard"}
+              aria-pressed={dashboardOpen}
+            >
+              <Workflow className="size-3.5" aria-hidden /> Automations
+            </Button>
+            <Button variant="outline" size="sm" onClick={newChat}>
+              <Plus className="size-3.5" aria-hidden /> New
+            </Button>
+          </div>
         </div>
         <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pb-2 pr-1" aria-busy={convLoading}>
           {convLoading ? (
@@ -276,8 +301,16 @@ function ChatTab({
         </div>
       </aside>
 
-      {/* Thread — full-screen: fills the available content area */}
+      {/* Thread — full-screen: fills the available content area (or the
+          automation dashboard when toggled). Chat remains the primary
+          interface; the dashboard reads real execution records only. */}
       <div className="flex min-h-0 min-w-0 flex-col rounded-xl border border-border/60 bg-card">
+        {dashboardOpen ? (
+          <div className="min-h-0 flex-1 p-4">
+            <RiisheDashboardPanel onBack={() => setDashboardOpen(false)} />
+          </div>
+        ) : (
+          <>
         <div ref={threadRef} className="min-h-0 flex-1 overflow-y-auto p-4" aria-live="polite">
           {failure && (
             <div className="mb-4 space-y-2">
@@ -435,6 +468,8 @@ function ChatTab({
             </span>
           </div>
         </div>
+          </>
+        )}
       </div>
     </div>
   );

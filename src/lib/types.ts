@@ -477,7 +477,51 @@ export interface RiisheStatusCard {
   automation?: RiisheAutomationDTO | null;
 }
 
-/** Union the existing chat renderer displays as inline review cards. */
+// ---------- RIISHE advanced automation agent (workflow cards) ----------
+
+export interface RiisheWorkflowStepDTO {
+  id: string;
+  seq: number;
+  ref: string | null;
+  tool: string;
+  title: string;
+  risk: string; // LOW | MEDIUM | HIGH | DESTRUCTIVE
+  requiresApproval: boolean;
+  status: string; // PENDING | AWAITING_APPROVAL | READY | RUNNING | SUCCEEDED | FAILED | SKIPPED | CANCELLED
+  error: string | null;
+  attempts: number;
+  maxAttempts: number;
+  scheduledFor: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  dependsOn: string[];
+  result: Record<string, unknown> | null;
+}
+
+export interface RiisheWorkflowDTO {
+  id: string;
+  title: string;
+  goal: string;
+  status: string; // ACTIVE | PAUSED | COMPLETED | FAILED | CANCELLED
+  summary: string | null;
+  planner: string | null;
+  createdAt: string;
+  updatedAt: string;
+  steps: RiisheWorkflowStepDTO[];
+}
+
+/** A planned/running workflow — the chat renders steps with approval gates. */
+export interface RiisheWorkflowCard {
+  kind: "workflow";
+  workflow: RiisheWorkflowDTO;
+}
+
+export interface RiisheShortlistCard {
+  kind: "shortlist";
+  added: string[];
+  refused: { username: string; reason: string }[];
+}
+
 export type RiisheActionCard =
   | RiisheEnquiryDraftCard
   | RiisheFollowupCard
@@ -488,7 +532,9 @@ export type RiisheActionCard =
   | RiisheWeeklyReportCard
   | RiisheRelationshipCard
   | RiisheNotesCard
-  | RiisheStatusCard;
+  | RiisheStatusCard
+  | RiisheWorkflowCard
+  | RiisheShortlistCard;
 
 // ---------- Creator social feed (Discover) ----------
 

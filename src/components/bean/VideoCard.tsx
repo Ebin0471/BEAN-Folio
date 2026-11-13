@@ -1,12 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { Bookmark, Eye, Heart, MessageCircle, Play } from "lucide-react";
+import { Bookmark, Eye, Heart, MessageCircle } from "lucide-react";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { LazyMount } from "@/components/bean/LazyMount";
+import { FeedVideoPlayer } from "@/components/bean/FeedVideoPlayer";
 import { VideoPlayerDialog } from "@/components/bean/PostMediaView";
 import { PostComments, timeAgo } from "@/components/bean/PostComments";
 import { api } from "@/lib/client";
@@ -17,9 +16,10 @@ import { cn } from "@/lib/utils";
 
 /**
  * A reel-style vertical video card for the Discover "Reels & Video" feed.
- * The media preview stays lazy (poster / metadata frame only) — full
- * playback happens in the player dialog, which also carries the real
- * like/save/share interaction row and the comments thread.
+ * The preview is an inline muted-autoplay player (one active video at a
+ * time, coordinated through the feed-video store); the full player dialog
+ * (expand button) also carries the real like/save interaction row and the
+ * comments thread.
  */
 export function VideoCard({ post, onChange }: { post: PublicPost; onChange?: (next: PublicPost) => void }) {
   const { user } = useSession();
@@ -59,41 +59,12 @@ export function VideoCard({ post, onChange }: { post: PublicPost; onChange?: (ne
   return (
     <>
       <article className="group overflow-hidden rounded-xl border border-border/60 bg-card transition-colors hover:border-primary/25">
-        <button
-          type="button"
-          onClick={() => setPlayerOpen(true)}
-          aria-label={`Play ${post.author.name}'s video`}
-          className="relative block w-full focus-visible:outline-2"
-        >
-          <LazyMount placeholderClassName="aspect-[9/16] w-full animate-pulse bg-secondary/50">
-            {media.posterUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={media.posterUrl}
-                alt={media.altText || "Video thumbnail"}
-                loading="lazy"
-                className="aspect-[9/16] w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
-              />
-            ) : (
-              <video
-                src={media.url}
-                muted
-                playsInline
-                preload="metadata"
-                className="aspect-[9/16] w-full object-cover"
-                aria-label={media.altText || "Video preview"}
-              />
-            )}
-          </LazyMount>
-          <span className="absolute inset-0 flex items-center justify-center bg-gradient-to-t from-black/70 via-black/10 to-black/30 opacity-90 transition-opacity group-hover:opacity-100">
-            <span className="flex size-12 items-center justify-center rounded-full bg-primary/90 text-primary-foreground shadow-lg transition-transform group-hover:scale-105">
-              <Play className="ml-0.5 size-5" aria-hidden />
-            </span>
-          </span>
-          <span className="absolute bottom-2 left-2 flex items-center gap-1 text-xs text-white/90">
+        <div className="relative w-full">
+          <FeedVideoPlayer media={media} aspect="aspect-[9/16]" rounded="rounded-none" onExpand={() => setPlayerOpen(true)} />
+          <span className="pointer-events-none absolute bottom-2 left-2 flex items-center gap-1 text-xs text-white/90">
             <Eye className="size-3.5" aria-hidden /> {post.counts.views}
           </span>
-        </button>
+        </div>
 
         {/* creator + quick actions */}
         <div className="flex items-center gap-2 px-3 py-2.5">

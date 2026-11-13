@@ -116,8 +116,8 @@ const RULES: AutomationRule[] = [
   {
     kind: "DRAFT_ENQUIRY",
     patterns: [
-      /\b(draft|prepare|write|compose|create)\b[^.?!]*\b(enquir|collaboration|partnership|proposal|introduction|intro|outreach|message)\b/i,
-      /\b(draft|prepare|write)\b[^.?!]*\b(for|to)\b[^.?!]*\b(these|the|him|her|them)\b/i,
+      /\b(draft|prepare|write|compose|create)\b[^.?!]*\b(enquiry|enquiries|enquir\w*|collaboration\w*|partnership\w*|proposal\w*|introduction|intro|outreach\w*|message)\b/i,
+      /\b(draft|prepare|write)\b[^.?!]*\b(for|to)\b[^.?!]*\b(these|the|him|her|them|@\w+)\b/i,
     ],
     negations: [/how (do|should|can) i\b/i, /what (should|would) .*(say|write)/i, /^(can|could) you (review|check|improve)/i],
   },

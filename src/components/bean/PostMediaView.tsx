@@ -1,19 +1,21 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ChevronLeft, ChevronRight, Play } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { LazyMount } from "@/components/bean/LazyMount";
+import { FeedVideoPlayer } from "@/components/bean/FeedVideoPlayer";
 import type { PublicPostMedia } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /**
  * Renders a post's media with real playback:
- *  - VIDEO: lazy thumbnail (poster image when provided, else a metadata
- *    preload frame), opening a proper player dialog on click.
- *  - IMAGE ×1: full-bleed image with the creator's alt text.
- *  - IMAGE ×N: a scroll-snap carousel with dots (no extra dependencies).
+ *  - VIDEO: inline Instagram-style muted autoplay (one active feed video at
+ *    a time, pause on scroll-away, tap to pause/resume, explicit mute/full
+ *    screen controls) with an escape hatch to the full player dialog.
+ *  - IMAGE x1: full-bleed image with the creator's alt text.
+ *  - IMAGE xN: a scroll-snap carousel with dots (no extra dependencies).
  * Media files load from the existing /api/media/[id]/raw streaming route
  * (HTTP Range supported) and are mounted lazily so a feed page never loads
  * every video at once.
@@ -36,39 +38,7 @@ export function PostMediaView({
   if (first.kind === "VIDEO") {
     return (
       <>
-        <button
-          type="button"
-          onClick={() => setOpen(true)}
-          aria-label="Play video"
-          className={cn("group relative block w-full overflow-hidden bg-black/40 focus-visible:outline-2", rounded)}
-        >
-          <LazyMount placeholderClassName="aspect-video w-full animate-pulse bg-secondary/50">
-            {first.posterUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={first.posterUrl}
-                alt={first.altText || "Video thumbnail"}
-                className="aspect-video w-full object-cover transition-transform duration-200 group-hover:scale-[1.01]"
-                loading="lazy"
-              />
-            ) : (
-              // No poster provided: stream the first frame only (preload=metadata).
-              <video
-                src={first.url}
-                muted
-                playsInline
-                preload="metadata"
-                className="aspect-video w-full object-cover"
-                aria-label={first.altText || "Video preview"}
-              />
-            )}
-          </LazyMount>
-          <span className="absolute inset-0 flex items-center justify-center">
-            <span className="flex size-14 items-center justify-center rounded-full bg-primary/90 text-primary-foreground shadow-lg transition-transform group-hover:scale-105">
-              <Play className="ml-0.5 size-6" aria-hidden />
-            </span>
-          </span>
-        </button>
+        <FeedVideoPlayer media={first} aspect="aspect-video" rounded={rounded} onExpand={() => setOpen(true)} />
         <VideoPlayerDialog media={first} open={open} onOpenChange={setOpen} />
       </>
     );
@@ -107,8 +77,12 @@ export function VideoPlayerDialog({
   // a closed dialog already unmounts the <video>; the key guarantees the
   // next open never reuses a stale runtime element.
   const [runtimeKey, setRuntimeKey] = useState(0);
+  const [failed, setFailed] = useState(false);
   function handleOpenChange(v: boolean) {
-    if (!v) setRuntimeKey((k) => k + 1);
+    if (!v) {
+      setRuntimeKey((k) => k + 1);
+      setFailed(false);
+    }
     onOpenChange(v);
   }
 
@@ -117,7 +91,11 @@ export function VideoPlayerDialog({
       <DialogContent className="max-w-lg border-border/60 bg-background p-3 sm:max-w-xl">
         <DialogTitle className="sr-only">Video player</DialogTitle>
         <div className="overflow-hidden rounded-lg bg-black">
-          {open ? (
+          {open && !failed ? (
+            /* Autoplay with sound rides on the explicit open gesture; if the
+               browser refuses, the native controls (visible by default) are
+               the honest fallback — the player never retries loud autoplay
+               behind the user's back. */
             <video
               key={runtimeKey}
               src={media.url}
@@ -125,9 +103,23 @@ export function VideoPlayerDialog({
               controls
               autoPlay
               playsInline
+              preload="metadata"
               className="max-h-[70vh] w-full"
               aria-label={media.altText || "Video"}
+              onError={() => setFailed(true)}
             />
+          ) : null}
+          {failed ? (
+            <div className="flex h-48 flex-col items-center justify-center gap-2 text-sm text-white/80">
+              <span>Video could not be loaded</span>
+              <button
+                type="button"
+                onClick={() => setFailed(false)}
+                className="rounded-md border border-white/30 px-2.5 py-1 text-xs text-white hover:bg-white/10"
+              >
+                Try again
+              </button>
+            </div>
           ) : null}
         </div>
         {children}

@@ -8,6 +8,8 @@ import { riisheSystemPrompt } from "@/lib/intelligence/personas";
 import { buildPortfolioContext } from "@/lib/intelligence/context";
 import { detectDelegationIntent, prepareDelegation } from "@/lib/intelligence/delegation";
 import { runAutomationIntent, detectAutomationIntent } from "@/lib/riishe/actions";
+import { looksLikeWorkflow, planAndCreateWorkflow } from "@/lib/riishe/planner";
+import type { RiisheActionCard } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -78,26 +80,64 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
     // here falls back to the normal advisory chat path below — never a
     // failed turn.
     let automationOutcome: Awaited<ReturnType<typeof runAutomationIntent>> | null = null;
+    let workflowCard: Extract<RiisheActionCard, { kind: "workflow" }> | null = null;
     const delegationIntent = detectDelegationIntent(message);
     if (!delegationIntent) {
-      const automationIntent = detectAutomationIntent(message);
-      if (automationIntent) {
+      // Advanced agent path: multi-step goals become a VALIDATED, registry-
+      // checked plan persisted as a real workflow. Execution runs through the
+      // tool registry on the durable queue — never via model output alone.
+      if (looksLikeWorkflow(message)) {
         try {
-          automationOutcome = await runAutomationIntent(user, automationIntent);
+          const workflow = await planAndCreateWorkflow(user, message, {
+            conversationId: conversation.id,
+          });
+          if (workflow) {
+            workflowCard = { kind: "workflow", workflow };
+          }
         } catch (e) {
-          console.error("[ai-chat] automation intent failed, falling back to advisory chat:", e instanceof Error ? e.message : e);
+          console.error("[ai-chat] workflow planning failed, falling back:", e instanceof Error ? e.message : e);
+        }
+      }
+      if (!workflowCard) {
+        const automationIntent = detectAutomationIntent(message);
+        if (automationIntent) {
+          try {
+            automationOutcome = await runAutomationIntent(user, automationIntent);
+          } catch (e) {
+            console.error("[ai-chat] automation intent failed, falling back to advisory chat:", e instanceof Error ? e.message : e);
+          }
         }
       }
     }
 
-    const replySystemPrompt = automationOutcome
+    const workflowGrounding = workflowCard
+      ? [
+          "WORKFLOW MODE — a real automation workflow was just created from the user's goal.",
+          `Title: ${workflowCard.workflow.title}`,
+          workflowCard.workflow.summary ? `Summary: ${workflowCard.workflow.summary}` : "",
+          "Steps (execution runs on the durable queue through registered tools; every action is verified server-side):",
+          ...workflowCard.workflow.steps.map(
+            (s, i) =>
+              `${i + 1}. ${s.title} [${s.tool}, risk ${s.risk}${s.requiresApproval ? ", needs explicit confirmation" : ""}${s.scheduledFor ? ", scheduled for later" : ""}]`
+          ),
+          "Explain the plan and note which steps need explicit confirmation. Results will be reported from real execution records — do not claim anything has executed beyond the plan itself.",
+        ]
+          .filter(Boolean)
+          .join("\n")
+      : null;
+
+    const replySystemPrompt = workflowGrounding
       ? `${systemPrompt}
+
+${workflowGrounding}`
+      : automationOutcome
+        ? `${systemPrompt}
 
 AUTOMATION MODE — the user's request was executed against their real BEAN Folio data. Reply STRICTLY inside this grounding block:
 ${automationOutcome.grounding}
 
 ${automationOutcome.replyInstruction}`
-      : systemPrompt;
+        : systemPrompt;
 
     const { text: reply } = await aiComplete(
       replySystemPrompt,
@@ -149,6 +189,7 @@ ${automationOutcome.replyInstruction}`
       reply,
       ...(delegation ? { delegation } : {}),
       ...(automationOutcome ? { automation: automationOutcome.action } : {}),
+      ...(workflowCard ? { automation: workflowCard } : {}),
     });
   } catch (e) {
     if (e instanceof AiProviderError) return err(e.message, 502);

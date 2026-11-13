@@ -21,6 +21,12 @@ import { db } from "@/lib/db";
 import { sweepStaleGiftzTasks } from "@/lib/giftz/jobs";
 import { deleteObject } from "@/lib/storage";
 import { runRiisheAutomationHandler } from "@/lib/riishe/handlers";
+import {
+  runWorkflowStepJob,
+  runWorkflowSweep,
+  WORKFLOW_JOB_KIND,
+  WORKFLOW_SWEEP_KEY,
+} from "@/lib/riishe/workflow-engine";
 import type { BackgroundJob } from "@prisma/client";
 
 import {
@@ -34,6 +40,7 @@ import {
 export const MAINTENANCE_SWEEP_KEY = "maintenance.sweep";
 export const SITE_STUDIO_SWEEP_KEY = "site.studio-sweep";
 export const RIISHE_AUTOMATION_KEY = "riishe.automation";
+export { WORKFLOW_JOB_KIND, WORKFLOW_SWEEP_KEY } from "@/lib/riishe/workflow-engine";
 
 /** maintenance.sweep cadence (retention purge). */
 export const SWEEP_EVERY_MS = 10 * 60_000;
@@ -41,6 +48,10 @@ export const SWEEP_EVERY_MS = 10 * 60_000;
 /** site.studio-sweep cadence — tighter than maintenance because it repairs
  * user-visible chat spinners after a restart (freshness beats thrift here). */
 export const STUDIO_SWEEP_EVERY_MS = 5 * 60_000;
+
+/** riishe.workflow.sweep cadence — stale RUNNING recovery + scheduled-step
+ * scheduling + completion derivation. */
+export const RIISHE_WORKFLOW_SWEEP_EVERY_MS = 5 * 60_000;
 
 const DAY_MS = 24 * 60 * 60_000;
 
@@ -62,6 +73,30 @@ export function registerBuiltInHandlers(): void {
   registerHandler(MAINTENANCE_SWEEP_KEY, runMaintenanceSweepHandler);
   registerHandler(SITE_STUDIO_SWEEP_KEY, runStudioSweepHandler);
   registerHandler(RIISHE_AUTOMATION_KEY, runRiisheAutomationHandler);
+  registerHandler(WORKFLOW_JOB_KIND, runRiisheWorkflowStepHandler);
+  registerHandler(WORKFLOW_SWEEP_KEY, runRiisheWorkflowSweepHandler);
+}
+
+// ---------------------------------------------------------------------------
+// riishe.workflow
+// ---------------------------------------------------------------------------
+
+/**
+ * Runs ONE workflow step (payload: { workflowId, stepId, userId }). The
+ * engine re-verifies ownership, dependency and approval state on every
+ * delivery — the queue never executes an unapproved HIGH tool.
+ */
+async function runRiisheWorkflowStepHandler(job: BackgroundJob): Promise<void> {
+  return runWorkflowStepJob(job);
+}
+
+async function runRiisheWorkflowSweepHandler(_job: BackgroundJob): Promise<{ recovered: number; scheduled: number }> {
+  const counts = await runWorkflowSweep();
+  await (await import("@/lib/riishe/workflow-engine")).sweepWorkflowCompletions();
+  if (counts.recovered > 0 || counts.scheduled > 0) {
+    console.log(JSON.stringify({ event: "riishe.workflow.sweep", ...counts }));
+  }
+  return counts;
 }
 
 // ---------------------------------------------------------------------------

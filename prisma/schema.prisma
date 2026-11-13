@@ -91,6 +91,10 @@ model User {
   siteStudioSessions SiteStudioSession[] @relation("siteStudioSessions")
   riisheAutomations  RiisheAutomation[]  @relation("riisheAutomations")
   riisheContactNotes RiisheContactNote[] @relation("riisheContactNotes")
+  riisheWorkflows    RiisheWorkflow[]    @relation("riisheWorkflows")
+  riisheWorkflowSteps RiisheWorkflowStep[] @relation("riisheWorkflowSteps")
+  riisheShortlist    RiisheCreatorShortlist[] @relation("riisheShortlist")
+  riishePreferences  RiisheUserPreference[]   @relation("riishePreferences")
   // ---------- Creator social feed (Discover) ----------
   posts         Post[]
   postLikes     PostLike[]
@@ -1375,4 +1379,112 @@ model RiisheContactNote {
 
   @@index([userId, personId])
   @@index([userId, updatedAt])
+}
+
+// ---------- RIISHE advanced automation agent (additive) ----------
+// Multi-step workflows planned from natural language: every plan and every
+// step is a real persistent record with its own execution history. Steps run
+// through the permission-aware tool registry (riishe.tools) on the durable
+// BackgroundJob queue — the model NEVER executes anything by itself and a
+// step only "succeeds" when its registered tool handler actually completed.
+model RiisheWorkflow {
+  id   String @id @default(cuid())
+  userId String
+  user User   @relation("riisheWorkflows", fields: [userId], references: [id], onDelete: Cascade)
+  title  String
+  // The user's original natural-language goal (verbatim, for auditability).
+  goal   String
+  // AWAITING_APPROVAL | ACTIVE | PAUSED | COMPLETED | FAILED | CANCELLED
+  status String   @default("ACTIVE")
+  // JSON { summary, planner: "llm" | "deterministic", createdAt }
+  planJson String @default("{}")
+  // Traceability: the AiConversation this workflow was planned from.
+  conversationId String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  steps RiisheWorkflowStep[]
+
+  @@index([userId, status])
+  @@index([status, updatedAt])
+}
+
+// One persistent execution record per planned step. Dependent steps wait for
+// their dependencies; HIGH/DESTRUCTIVE steps wait for explicit approval;
+// scheduled steps wait for their time. Retries, timeouts, failures and
+// results are all recorded here — never fabricated.
+model RiisheWorkflowStep {
+  id         String         @id @default(cuid())
+  workflowId String
+  workflow   RiisheWorkflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User           @relation("riisheWorkflowSteps", fields: [userId], references: [id], onDelete: Cascade)
+  // Display/execution order within the workflow (unique per workflow).
+  seq        Int
+  // Registered tool name (riishe.tools) — validated at plan time.
+  kind       String
+  title      String
+  // The planner's symbolic id (s1, s2, ...) used for cross-step references
+  // (draftRef / postRef params resolve through it at execution time).
+  ref        String?
+  // JSON tool input (validated against the tool's zod schema at plan time).
+  paramsJson String   @default("{}")
+  // JSON array of step ids this step depends on.
+  dependsOnJson String @default("[]")
+  // LOW | MEDIUM | HIGH | DESTRUCTIVE — copied from the tool registry,
+  // never from the model output.
+  risk       String   @default("LOW")
+  requiresApproval Boolean @default(false)
+  // PENDING | AWAITING_APPROVAL | READY | RUNNING | SUCCEEDED | FAILED | SKIPPED | CANCELLED
+  status     String   @default("PENDING")
+  resultJson String   @default("{}")
+  error      String?
+  attempts   Int      @default(0)
+  maxAttempts Int     @default(3)
+  timeoutMs  Int      @default(60000)
+  // Future execution time for scheduled steps (null = run when ready).
+  scheduledFor DateTime?
+  backgroundJobId String?
+  approvedAt DateTime?
+  startedAt  DateTime?
+  finishedAt DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([workflowId, seq])
+  @@index([workflowId, seq])
+  @@index([workflowId, ref])
+  @@index([userId, status])
+  @@index([status, scheduledFor])
+}
+
+// Creators the account owner shortlisted (from discovery/workflow results).
+// personId is a loose reference — shortlists survive the other account's
+// deletion exactly like private notes do.
+model RiisheCreatorShortlist {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation("riisheShortlist", fields: [userId], references: [id], onDelete: Cascade)
+  personId  String
+  reason    String?
+  source    String?
+  createdAt DateTime @default(now())
+
+  @@unique([userId, personId])
+  @@index([userId, createdAt])
+}
+
+// RIISHE-specific, user-approved preferences (tone, defaults, quiet hours).
+// Inspectable, editable and deletable through /api/riishe/preferences —
+// nothing is stored silently and no conversation content is persisted here.
+model RiisheUserPreference {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation("riishePreferences", fields: [userId], references: [id], onDelete: Cascade)
+  key       String
+  valueJson String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, key])
 }

@@ -7,6 +7,40 @@ import { getObject, getObjectRange, getObjectSize } from "@/lib/storage";
 type Ctx = { params: Promise<{ id: string }> };
 
 /**
+ * Post media authorization (creator social feed). An asset linked through a
+ * PostMedia row (as the media itself OR as the poster frame) is viewable
+ * exactly when the post itself is viewable under the same ladder the feed
+ * and /api/posts/:id use (loadViewablePost):
+ *  - the post's PUBLISHED + PUBLIC and its author is a live, non-demo,
+ *    publicly-visible account: allowed for EVERYONE (anonymous included),
+ *    publicly cacheable, because the feed renders it for every visitor;
+ *  - otherwise (PRIVATE posts, drafts, scheduled posts, demo fixtures) only
+ *    the post's author may fetch the bytes through the owner branch above.
+ *    The ladder never widens access for anyone else.
+ */
+function postLadderAllows(
+  post: {
+    status: string;
+    visibility: string;
+    authorId: string;
+    author: { isDemo: boolean; deletedAt: Date | null; profileVisibility: string };
+  },
+  viewerId: string | null
+): { allowed: boolean; publiclyShared: boolean } {
+  if (post.author.deletedAt) return { allowed: false, publiclyShared: false };
+  if (viewerId && post.authorId === viewerId) return { allowed: true, publiclyShared: false };
+  if (
+    post.status === "PUBLISHED" &&
+    post.visibility === "PUBLIC" &&
+    !post.author.isDemo &&
+    post.author.profileVisibility === "PUBLIC"
+  ) {
+    return { allowed: true, publiclyShared: true };
+  }
+  return { allowed: false, publiclyShared: false };
+}
+
+/**
  * Whether a PUBLISHED site config snapshot legitimately makes this media id
  * part of its public face: top-level logo/cover branding, or a Video Reel
  * section entry. Snapshots are JSON text — parse defensively and verify the
@@ -108,6 +142,36 @@ export const GET = handler(async (req: NextRequest, { params }: Ctx) => {
       }
       if (viewer && link.project.ownerId === viewer.id) {
         allowed = true; // owner access to their own PRIVATE project media — stays private
+        break;
+      }
+    }
+  }
+
+  if (!allowed) {
+    // Creator social feed media: linked through PostMedia as the post's
+    // media asset or its poster frame. Access mirrors loadViewablePost
+    // exactly (see postLadderAllows above) — PUBLIC posts of live, publicly
+    // visible authors are fetchable by everyone; everything else stays
+    // author-only. Soft-deleted authors' posts never leak their media.
+    const links = await db.postMedia.findMany({
+      where: { OR: [{ mediaAssetId: media.id }, { posterMediaAssetId: media.id }] },
+      include: {
+        post: {
+          select: {
+            status: true,
+            visibility: true,
+            authorId: true,
+            author: { select: { isDemo: true, deletedAt: true, profileVisibility: true } },
+          },
+        },
+      },
+      take: 10,
+    });
+    for (const link of links) {
+      const verdict = postLadderAllows(link.post, viewer?.id ?? null);
+      if (verdict.allowed) {
+        allowed = true;
+        publiclyShared = verdict.publiclyShared;
         break;
       }
     }

@@ -40,6 +40,8 @@ export function AutomationActionCard({ action, onDismiss }: { action: RiisheActi
       {action.kind === "relationship" && <Relationship action={action} />}
       {action.kind === "notes-list" && <NotesList action={action} />}
       {action.kind === "status" && <StatusCard action={action} />}
+      {action.kind === "workflow" && <WorkflowCardView action={action} onDismiss={onDismiss} />}
+      {action.kind === "shortlist" && <ShortlistCard action={action} />}
     </div>
   );
 }
@@ -462,6 +464,215 @@ function StatusCard({ action }: { action: Extract<RiisheActionCard, { kind: "sta
       <div className="mt-3 flex justify-end">
         <Button size="sm" variant="ghost" onClick={() => navigate("connect")}>Open enquiries & notifications</Button>
       </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------- advanced agent: workflows
+
+const RISK_STYLES: Record<string, string> = {
+  LOW: "border-emerald-500/40 text-emerald-600 dark:text-emerald-400",
+  MEDIUM: "border-amber-500/40 text-amber-600 dark:text-amber-400",
+  HIGH: "border-orange-500/50 text-orange-600 dark:text-orange-400",
+  DESTRUCTIVE: "border-red-500/50 text-red-600 dark:text-red-400",
+};
+
+const STEP_STATUS_LABEL: Record<string, string> = {
+  PENDING: "Queued",
+  AWAITING_APPROVAL: "Needs your approval",
+  READY: "Ready",
+  RUNNING: "Running",
+  SUCCEEDED: "Done",
+  FAILED: "Failed",
+  SKIPPED: "Skipped",
+  CANCELLED: "Cancelled",
+};
+
+/**
+ * WorkflowCard — the plan + live execution state of a multi-step workflow.
+ * HIGH/DESTRUCTIVE steps show an explicit Approve control (Destructive ones
+ * additionally require the separate confirm interaction). The chat stays the
+ * primary interface; controls here call the same owner-scoped APIs.
+ */
+function WorkflowCardView({ action, onDismiss }: { action: Extract<RiisheActionCard, { kind: "workflow" }>; onDismiss: () => void }) {
+  const [workflow, setWorkflow] = useState(action.workflow);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState<string | null>(null); // stepId awaiting the separate confirm
+
+  async function patchWorkflow(actionName: "pause" | "resume" | "cancel") {
+    setBusy(actionName);
+    try {
+      const r = await api<{ workflow: typeof workflow }>(`/api/riishe/workflows/${workflow.id}`, {
+        method: "PATCH",
+        json: { action: actionName },
+      });
+      setWorkflow(r.workflow);
+      toast.success(actionName === "cancel" ? "Workflow cancelled" : actionName === "pause" ? "Workflow paused" : "Workflow resumed");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not update the workflow");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function patchStep(stepId: string, actionName: "approve" | "decline" | "retry", confirm = false) {
+    setBusy(stepId + actionName);
+    try {
+      const r = await api<{ executed?: boolean; declined?: boolean; retried?: boolean; result?: Record<string, unknown> }>(
+        `/api/riishe/steps/${stepId}`,
+        { method: "PATCH", json: { action: actionName, confirm } }
+      );
+      // Re-read the workflow to show REAL statuses (results come from the
+      // server's execution records, never from optimistic guesses).
+      const fresh = await api<{ workflow: typeof workflow }>(`/api/riishe/workflows/${workflow.id}`);
+      setWorkflow(fresh.workflow);
+      if (actionName === "approve" && r.executed) toast.success("Step executed");
+      if (actionName === "decline") toast.success("Step declined");
+      if (actionName === "retry") toast.success("Step re-armed");
+      if (confirming) setConfirming(null);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "The step could not be updated");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const steps = workflow.steps;
+  const done = steps.filter((s) => s.status === "SUCCEEDED").length;
+
+  return (
+    <div>
+      <CardHeader
+        icon={<WorkflowIcon />}
+        title={workflow.title}
+        hint={workflow.summary ?? workflow.goal.slice(0, 140)}
+      />
+      <p className="mt-1 text-xs text-muted-foreground">
+        {done}/{steps.length} steps done · status {workflow.status.toLowerCase()}
+      </p>
+      <ol className="mt-3 max-h-80 space-y-2 overflow-y-auto pr-1" aria-label="Workflow steps">
+        {steps.map((s) => (
+          <li key={s.id} className="rounded-lg border border-border/60 bg-background/70 p-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-medium text-muted-foreground">#{s.seq + 1}</span>
+              <span className="min-w-0 flex-1 text-sm text-foreground">{s.title}</span>
+              <span className={cn("rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide", RISK_STYLES[s.risk] ?? "")}>
+                {s.risk}
+              </span>
+              <span
+                className={cn(
+                  "rounded-full px-2 py-0.5 text-[10px]",
+                  s.status === "SUCCEEDED" && "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
+                  s.status === "FAILED" && "bg-red-500/15 text-red-600 dark:text-red-400",
+                  s.status === "AWAITING_APPROVAL" && "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+                  s.status === "RUNNING" && "bg-primary/15 text-primary",
+                  !["SUCCEEDED", "FAILED", "AWAITING_APPROVAL", "RUNNING"].includes(s.status) && "bg-secondary text-secondary-foreground"
+                )}
+              >
+                {STEP_STATUS_LABEL[s.status] ?? s.status}
+              </span>
+            </div>
+            {s.scheduledFor ? (
+              <p className="mt-1 text-xs text-muted-foreground">Scheduled for {new Date(s.scheduledFor).toLocaleString()}</p>
+            ) : null}
+            {s.error ? <p className="mt-1 text-xs text-red-500">{s.error}</p> : null}
+            {s.status === "AWAITING_APPROVAL" ? (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                {s.risk === "DESTRUCTIVE" ? (
+                  // Separate confirm interaction: first reveal what will
+                  // happen, only then can the owner actually approve.
+                  confirming === s.id ? (
+                    <>
+                      <span className="text-xs text-red-500">
+                        This will permanently delete the referenced post. This cannot be undone.
+                      </span>
+                      <Button size="sm" variant="destructive" disabled={busy !== null} onClick={() => void patchStep(s.id, "approve", true)}>
+                        Confirm and delete
+                      </Button>
+                      <Button size="sm" variant="ghost" disabled={busy !== null} onClick={() => setConfirming(null)}>
+                        Keep the post
+                      </Button>
+                    </>
+                  ) : (
+                    <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => setConfirming(s.id)}>
+                      Review before approving
+                    </Button>
+                  )
+                ) : (
+                  <>
+                    <Button size="sm" disabled={busy !== null} onClick={() => void patchStep(s.id, "approve")}>
+                      Approve
+                    </Button>
+                    <Button size="sm" variant="ghost" disabled={busy !== null} onClick={() => void patchStep(s.id, "decline")}>
+                      Decline
+                    </Button>
+                  </>
+                )}
+              </div>
+            ) : null}
+            {s.status === "FAILED" ? (
+              <div className="mt-2">
+                <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => void patchStep(s.id, "retry")}>
+                  Retry step
+                </Button>
+              </div>
+            ) : null}
+          </li>
+        ))}
+      </ol>
+      <div className="mt-3 flex flex-wrap justify-end gap-2">
+        {workflow.status === "ACTIVE" ? (
+          <Button size="sm" variant="ghost" disabled={busy !== null} onClick={() => void patchWorkflow("pause")}>
+            Pause workflow
+          </Button>
+        ) : null}
+        {workflow.status === "PAUSED" ? (
+          <Button size="sm" variant="ghost" disabled={busy !== null} onClick={() => void patchWorkflow("resume")}>
+            Resume workflow
+          </Button>
+        ) : null}
+        {!["COMPLETED", "CANCELLED"].includes(workflow.status) ? (
+          <Button size="sm" variant="ghost" disabled={busy !== null} onClick={() => void patchWorkflow("cancel")}>
+            Cancel workflow
+          </Button>
+        ) : null}
+        <Button size="sm" variant="ghost" onClick={onDismiss}>Dismiss</Button>
+      </div>
+    </div>
+  );
+}
+
+function WorkflowIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="size-4 text-primary" aria-hidden fill="none" stroke="currentColor" strokeWidth="2">
+      <circle cx="6" cy="6" r="3" />
+      <circle cx="18" cy="18" r="3" />
+      <path d="M9 6h6a3 3 0 0 1 3 3v6" />
+      <path d="M15 18H9a3 3 0 0 1-3-3V9" />
+    </svg>
+  );
+}
+
+function ShortlistCard({ action }: { action: Extract<RiisheActionCard, { kind: "shortlist" }> }) {
+  return (
+    <div>
+      <CardHeader
+        icon={<Users className="size-4 text-primary" aria-hidden />}
+        title={action.added.length > 0 ? "Creators shortlisted" : "Nothing shortlisted"}
+        hint="Your shortlist is private — manage it in the automation dashboard."
+      />
+      {action.added.length > 0 ? (
+        <p className="mt-2 text-xs text-muted-foreground">Added: {action.added.map((u) => `@${u}`).join(", ")}</p>
+      ) : null}
+      {action.refused.length > 0 ? (
+        <ul className="mt-2 space-y-1">
+          {action.refused.map((r) => (
+            <li key={r.username} className="text-xs text-muted-foreground">
+              @{r.username}: {r.reason}
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </div>
   );
 }
