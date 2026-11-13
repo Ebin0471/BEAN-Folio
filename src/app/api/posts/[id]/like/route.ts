@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth";
 import { ok, ERR, handler, rateLimit } from "@/lib/api-helpers";
 import { loadViewablePost } from "@/lib/posts";
+import { notify } from "@/lib/notify";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +13,7 @@ type Ctx = { params: Promise<{ id: string }> };
  * POST /api/posts/:id/like — like a viewable post.
  * The composite PK (postId, userId) makes duplicate likes structurally
  * impossible; re-liking is idempotent. The author receives one POST_LIKE
- * notification per like (not per actor toggling).
+ * notification (dedupKey upsert — retries never duplicate it).
  */
 export const POST = handler(async (_req: NextRequest, { params }: Ctx) => {
   const { id } = await params;
@@ -32,15 +33,14 @@ export const POST = handler(async (_req: NextRequest, { params }: Ctx) => {
       .create({ data: { postId: id, userId: sessionUser.id } })
       .catch(() => undefined); // concurrent duplicate — treat as success
     if (loaded.post.authorId !== sessionUser.id) {
-      await db.notification
-        .create({
-          data: {
-            userId: loaded.post.authorId,
-            type: "POST_LIKE",
-            payload: JSON.stringify({ actor: sessionUser.name, actorUsername: sessionUser.username, postId: id }),
-          },
-        })
-        .catch(() => undefined);
+      await notify({
+        userId: loaded.post.authorId,
+        actorId: sessionUser.id,
+        type: "POST_LIKE",
+        targetId: id,
+        dedupKey: `post-like:${sessionUser.id}:${id}`,
+        payload: { actor: sessionUser.name, actorUsername: sessionUser.username, postId: id, excerpt: loaded.post.body.slice(0, 120) },
+      });
     }
   }
 

@@ -7,6 +7,7 @@ import {
   ImageOff,
   Mail,
   MapPin,
+  MessageSquare,
   Send,
   UserRound,
 } from "lucide-react";
@@ -37,9 +38,12 @@ import { EmptyState } from "@/components/bean/EmptyState";
 import { ProfileHeader } from "@/components/bean/ProfileHeader";
 import { ProjectCard } from "@/components/bean/ProjectCard";
 import { FollowButton } from "@/components/bean/FollowButton";
+import { PostCard, recordPostView } from "@/components/bean/PostCard";
+import { PersonCard } from "@/components/bean/PersonCard";
 import { SectionHeader } from "@/components/bean/SectionHeader";
 import { BANNER_ASPECT_CLASS } from "@/lib/banner";
 import { cn } from "@/lib/utils";
+import type { FollowersResponse, PublicPost, PublicPerson, RelationshipResponse } from "@/lib/types";
 
 const INQUIRY_TYPES = [
   { value: "INQUIRY", label: "General inquiry" },
@@ -97,6 +101,11 @@ export default function PublicProfileView({ username }: { username: string }) {
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
 
+  // social graph (Phase: real social network)
+  const [relationship, setRelationship] = useState<RelationshipResponse | null>(null);
+  const [peopleDialog, setPeopleDialog] = useState<"followers" | "following" | null>(null);
+  const [messageBusy, setMessageBusy] = useState(false);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -115,6 +124,40 @@ export default function PublicProfileView({ username }: { username: string }) {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Relationship probe: follow state + mutuals (signed-in, non-self only).
+  useEffect(() => {
+    if (!user || user.username === username) {
+      setRelationship(null);
+      return;
+    }
+    let alive = true;
+    api<RelationshipResponse>(`/api/profiles/${encodeURIComponent(username)}/follow`)
+      .then((r) => alive && setRelationship(r))
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [user, username]);
+
+  async function startConversation() {
+    if (!user) {
+      navigate("/auth");
+      return;
+    }
+    setMessageBusy(true);
+    try {
+      const r = await api<{ conversationId: string }>("/api/me/messages", {
+        method: "POST",
+        json: { username },
+      });
+      navigate(`/messages/${r.conversationId}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not open a conversation");
+    } finally {
+      setMessageBusy(false);
+    }
+  }
 
   // ------------------------------------------------------------- SEO
   // Applied once real data resolves (or an honest not-found/unavailable state).
@@ -379,7 +422,10 @@ export default function PublicProfileView({ username }: { username: string }) {
           }}
           actions={
             <>
-              <FollowButton person={person} size="default" initialFollowing={isFollowing} />
+              <FollowButton person={person} size="default" initialState={isFollowing ? "ACTIVE" : "NONE"} />
+              <Button variant="outline" onClick={() => void startConversation()} disabled={messageBusy} className="gap-1.5">
+                <MessageSquare className="size-4" aria-hidden /> Message
+              </Button>
               <Button variant="outline" onClick={openContact} className="gap-1.5">
                 <Mail className="size-4" aria-hidden /> Contact
               </Button>
@@ -419,18 +465,44 @@ export default function PublicProfileView({ username }: { username: string }) {
         <section className="mt-6 grid grid-cols-3 gap-4" aria-label="Profile statistics">
           {(
             [
-              { label: "Projects", value: profile.stats.projects },
-              { label: "Followers", value: profile.stats.followers },
-              { label: "Following", value: profile.stats.following },
-              ...(isSelf ? [{ label: "Profile views (est.)", value: profile.stats.profileViews ?? 0 }] : []),
+              { label: "Projects", value: profile.stats.projects, dialog: null as "followers" | "following" | null },
+              { label: "Followers", value: profile.stats.followers, dialog: "followers" as const },
+              { label: "Following", value: profile.stats.following, dialog: "following" as const },
+              ...(isSelf ? [{ label: "Profile views (est.)", value: profile.stats.profileViews ?? 0, dialog: null }] : []),
             ] as const
           ).map((s) => (
-            <div key={s.label} className="rounded-xl border border-border/60 bg-card p-4">
+            <button
+              key={s.label}
+              type="button"
+              onClick={s.dialog ? () => setPeopleDialog(s.dialog) : undefined}
+              aria-label={s.dialog ? `${s.label} — view list` : s.label}
+              className={cn(
+                "rounded-xl border border-border/60 bg-card p-4 text-left",
+                s.dialog && "transition-colors hover:border-primary/40"
+              )}
+            >
               <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{s.label}</p>
               <p className="mt-1.5 font-display text-2xl font-semibold">{s.value}</p>
-            </div>
+            </button>
           ))}
         </section>
+
+        {/* mutual connections (real follow graph) */}
+        {relationship && relationship.mutuals.length > 0 ? (
+          <p className="mt-3 text-xs text-muted-foreground">
+            Followed by {relationship.mutuals.length} connection{relationship.mutuals.length === 1 ? "" : "s"} you know:
+            {" "}
+            {relationship.mutuals.slice(0, 3).map((m) => (
+              <a key={m.username} href={`#/u/${m.username}`} className="font-medium text-foreground hover:text-primary">
+                {m.name}
+              </a>
+            ))}
+            {relationship.mutuals.length > 3 ? " and more" : ""}
+          </p>
+        ) : null}
+
+        {/* ---------------- social posts (separate from Featured Work) */}
+        <SocialPostsSection username={username} isSelf={isSelf} />
 
         {/* ---------------- 4. featured projects (only when there are more than three) */}
         {hasFeatured && (
@@ -543,6 +615,145 @@ export default function PublicProfileView({ username }: { username: string }) {
 
       {/* ---------------- contact dialog */}
       {contactDialog}
+
+      {/* ---------------- followers / following dialog */}
+      <PeopleDialog
+        mode={peopleDialog}
+        username={username}
+        onClose={() => setPeopleDialog(null)}
+      />
     </div>
+  );
+}
+
+// ------------------------------------------------------------------ social posts
+
+/**
+ * The creator's POSTS tab (social posts — strictly separate from Featured
+ * Work / projects). The author additionally sees drafts + scheduled here.
+ */
+function SocialPostsSection({ username, isSelf }: { username: string; isSelf: boolean }) {
+  const [items, setItems] = useState<PublicPost[]>([]);
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [phase, setPhase] = useState<"loading" | "ready" | "hidden">("loading");
+
+  useEffect(() => {
+    let alive = true;
+    api<{ items: PublicPost[]; nextCursor: string | null }>(`/api/profiles/${encodeURIComponent(username)}/posts?limit=6`)
+      .then((r) => {
+        if (!alive) return;
+        setItems(r.items);
+        setCursor(r.nextCursor);
+        setPhase("ready");
+      })
+      .catch(() => alive && setPhase("hidden"));
+    return () => {
+      alive = false;
+    };
+  }, [username]);
+
+  useEffect(() => {
+    for (const p of items) recordPostView(p.id);
+  }, [items]);
+
+  function patch(next: PublicPost) {
+    setItems((prev) => prev.map((p) => (p.id === next.id ? next : p)));
+  }
+  function remove(id: string) {
+    setItems((prev) => prev.filter((p) => p.id !== id));
+  }
+
+  if (phase === "loading") {
+    return (
+      <section className="mt-10" aria-label="Posts">
+        <Skeleton className="h-48 max-w-2xl rounded-xl" />
+      </section>
+    );
+  }
+  if (phase === "hidden" || items.length === 0) return null; // quiet creators stay clean
+
+  return (
+    <section className="mt-10" aria-label="Posts">
+      <SectionHeader
+        title="Posts"
+        description={isSelf ? "Your social posts — drafts and scheduled posts are only visible to you." : "Updates, reels and questions shared with the community."}
+      />
+      <div className="mt-5 mx-auto flex max-w-2xl flex-col gap-4">
+        {items.map((p) => (
+          <PostCard
+            key={p.id}
+            post={p}
+            onChange={patch}
+            onDelete={remove}
+          />
+        ))}
+      </div>
+      {cursor ? (
+        <div className="mt-4 flex justify-center">
+          <Button
+            variant="outline"
+            onClick={() =>
+              void api<{ items: PublicPost[]; nextCursor: string | null }>(
+                `/api/profiles/${encodeURIComponent(username)}/posts?limit=6&cursor=${cursor}`
+              ).then((r) => {
+                setItems((prev) => [...prev, ...r.items]);
+                setCursor(r.nextCursor);
+              })
+            }
+          >
+            Load more posts
+          </Button>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+// ------------------------------------------------------------------ people dialog
+
+function PeopleDialog({
+  mode,
+  username,
+  onClose,
+}: {
+  mode: "followers" | "following" | null;
+  username: string;
+  onClose: () => void;
+}) {
+  const [people, setPeople] = useState<PublicPerson[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!mode) return;
+    api<FollowersResponse>(`/api/profiles/${encodeURIComponent(username)}/${mode}?limit=40`)
+      .then((r) => setPeople(r.people.map((x) => ("person" in x ? x.person : (x as unknown as PublicPerson)))))
+      .catch(() => setPeople([]))
+      .finally(() => setLoading(false));
+  }, [mode, username]);
+
+  return (
+    <Dialog open={mode !== null} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-h-[80vh] overflow-y-auto bg-background sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="font-display">{mode === "followers" ? "Followers" : "Following"}</DialogTitle>
+          <DialogDescription>@{username} — real follow graph, ACTIVE connections only.</DialogDescription>
+        </DialogHeader>
+        {loading ? (
+          <div className="space-y-2">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <Skeleton key={i} className="h-16 rounded-xl" />
+            ))}
+          </div>
+        ) : people.length === 0 ? (
+          <p className="py-6 text-center text-sm text-muted-foreground">Nobody here yet.</p>
+        ) : (
+          <div className="space-y-2">
+            {people.map((p) => (
+              <PersonCard key={p.username} person={p} />
+            ))}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }

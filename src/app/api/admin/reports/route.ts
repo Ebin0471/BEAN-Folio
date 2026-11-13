@@ -53,10 +53,13 @@ export const GET = handler(async (req: NextRequest) => {
     db.report.count({ where: status ? { status } : undefined }),
   ]);
 
-  // Resolve target snapshots (two batched queries — the Report target is
-  // polymorphic, so a single include cannot join both shapes).
+  // Resolve target snapshots (batched queries — the Report target is
+  // polymorphic, so a single include cannot join all shapes).
   const projectIds = reports.filter((r) => r.targetType === "PROJECT").map((r) => r.targetId);
   const profileIds = reports.filter((r) => r.targetType === "PROFILE").map((r) => r.targetId);
+  const postIds = reports.filter((r) => r.targetType === "POST").map((r) => r.targetId);
+  const commentIds = reports.filter((r) => r.targetType === "COMMENT").map((r) => r.targetId);
+  const messageIds = reports.filter((r) => r.targetType === "MESSAGE").map((r) => r.targetId);
 
   type ProjectSnap = {
     id: string;
@@ -67,7 +70,7 @@ export const GET = handler(async (req: NextRequest) => {
   };
   type ProfileSnap = { id: string; username: string | null; name: string; deletedAt: Date | null };
 
-  const [projects, profiles] = await Promise.all([
+  const [projects, profiles, postSnaps, commentSnaps, messageSnaps] = await Promise.all([
     projectIds.length
       ? db.project.findMany({
           where: { id: { in: projectIds } },
@@ -86,9 +89,30 @@ export const GET = handler(async (req: NextRequest) => {
           select: { id: true, username: true, name: true, deletedAt: true },
         })
       : Promise.resolve<ProfileSnap[]>([]),
+    postIds.length
+      ? db.post.findMany({
+          where: { id: { in: postIds } },
+          select: { id: true, body: true, status: true, visibility: true, author: { select: { username: true, name: true } } },
+        })
+      : Promise.resolve([] as { id: string; body: string; status: string; visibility: string; author: { username: string | null; name: string } }[]),
+    commentIds.length
+      ? db.postComment.findMany({
+          where: { id: { in: commentIds } },
+          select: { id: true, body: true, status: true, author: { select: { username: true, name: true } } },
+        })
+      : Promise.resolve([] as { id: string; body: string; status: string; author: { username: string | null; name: string } }[]),
+    messageIds.length
+      ? db.message.findMany({
+          where: { id: { in: messageIds } },
+          select: { id: true, body: true, deletedAt: true, sender: { select: { username: true, name: true } } },
+        })
+      : Promise.resolve([] as { id: string; body: string; deletedAt: Date | null; sender: { username: string | null; name: string } }[]),
   ]);
   const projectById = new Map(projects.map((p) => [p.id, p]));
   const profileById = new Map(profiles.map((p) => [p.id, p]));
+  const postById = new Map(postSnaps.map((p) => [p.id, p]));
+  const commentById = new Map(commentSnaps.map((c) => [c.id, c]));
+  const messageById = new Map(messageSnaps.map((m) => [m.id, m]));
 
   const items = reports.map((r) => ({
     id: r.id,
@@ -121,18 +145,39 @@ export const GET = handler(async (req: NextRequest) => {
                 }
               : { exists: false as const, id: r.targetId };
           })()
-        : (() => {
-            const u = profileById.get(r.targetId);
-            return u
-              ? {
-                  exists: true as const,
-                  id: u.id,
-                  username: u.username,
-                  name: u.name,
-                  deleted: Boolean(u.deletedAt),
-                }
-              : { exists: false as const, id: r.targetId };
-          })(),
+        : r.targetType === "POST"
+          ? (() => {
+              const p = postById.get(r.targetId);
+              return p
+                ? { exists: true as const, id: p.id, kind: "post" as const, excerpt: p.body.slice(0, 120), status: p.status, visibility: p.visibility, authorUsername: p.author.username, authorName: p.author.name }
+                : { exists: false as const, id: r.targetId };
+            })()
+          : r.targetType === "COMMENT"
+            ? (() => {
+                const c = commentById.get(r.targetId);
+                return c
+                  ? { exists: true as const, id: c.id, kind: "comment" as const, excerpt: c.body.slice(0, 120), status: c.status, authorUsername: c.author.username, authorName: c.author.name }
+                  : { exists: false as const, id: r.targetId };
+              })()
+            : r.targetType === "MESSAGE"
+              ? (() => {
+                  const m = messageById.get(r.targetId);
+                  return m
+                    ? { exists: true as const, id: m.id, kind: "message" as const, excerpt: m.body.slice(0, 120), deleted: Boolean(m.deletedAt), senderUsername: m.sender.username, senderName: m.sender.name }
+                    : { exists: false as const, id: r.targetId };
+                })()
+              : (() => {
+                  const u = profileById.get(r.targetId);
+                  return u
+                    ? {
+                        exists: true as const,
+                        id: u.id,
+                        username: u.username,
+                        name: u.name,
+                        deleted: Boolean(u.deletedAt),
+                      }
+                    : { exists: false as const, id: r.targetId };
+                })(),
   }));
 
   return ok({ items, total, limit, offset });

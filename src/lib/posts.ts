@@ -48,6 +48,43 @@ export function extractHashtagsFromText(body: string): string[] {
   return normalizeHashtags(tags);
 }
 
+// ---------------------------------------------------------------- mentions
+
+const MENTION_RE = /(?:^|[\s(])@([a-z0-9][a-z0-9-]{2,23})(?=[\s).,!?]|$)/g;
+
+/**
+ * Extract @username mentions from a body (lowercased, deduped, capped).
+ * Mentions are RESOLVED TO REAL USERS at notify time — a string that matches
+ * no account is silently ignored, never fabricating a notification.
+ */
+export function extractMentions(body: string): string[] {
+  const out: string[] = [];
+  let m: RegExpExecArray | null;
+  const re = new RegExp(MENTION_RE);
+  while ((m = re.exec(body)) !== null) {
+    const uname = m[1].toLowerCase();
+    if (!out.includes(uname)) out.push(uname);
+    if (out.length >= 10) break;
+  }
+  return out;
+}
+
+/**
+ * Resolve mention usernames to REAL, followable users (existing accounts,
+ * not soft-deleted). Demo fixtures and deleted accounts never receive
+ * notifications. Returns [{ id, username }].
+ */
+export async function resolveMentions(usernames: string[], excludeUserId: string | null): Promise<{ id: string; username: string }[]> {
+  if (usernames.length === 0) return [];
+  const users = await db.user.findMany({
+    where: { username: { in: usernames }, deletedAt: null, isDemo: false },
+    select: { id: true, username: true },
+  });
+  return users
+    .filter((u): u is { id: string; username: string } => u.username !== null)
+    .filter((u) => u.id !== excludeUserId);
+}
+
 // ---------------------------------------------------------------- zod schemas
 
 export const MAX_POST_BODY = 2000;
@@ -72,6 +109,10 @@ export const createPostSchema = z
     media: z.array(postMediaInputSchema).max(MAX_POST_IMAGES + 2).optional().default([]),
     /** VIDEO posts only: IMAGE asset used as the thumbnail. */
     posterMediaAssetId: z.string().max(64).nullish(),
+    /** Professional post type — creator-selected, never inferred. */
+    kind: z.enum(["UPDATE", "ANNOUNCEMENT", "WIP", "TUTORIAL", "QUESTION"]).optional().default("UPDATE"),
+    /** Optional creator-written location tag (plain text, never GPS). */
+    location: z.string().max(80).nullish(),
   })
   .strict()
   .refine((v) => v.body.trim().length > 0 || v.media.length > 0, {
@@ -80,6 +121,35 @@ export const createPostSchema = z
   });
 
 export type CreatePostInput = z.infer<typeof createPostSchema>;
+
+/** Draft payload: like createPostSchema but allows an empty body + scheduling. */
+export const createDraftSchema = z
+  .object({
+    body: bodySchema.optional().default(""),
+    hashtags: z.array(z.string()).max(MAX_HASHTAGS * 2).optional().default([]),
+    profession: z.string().max(64).nullish(),
+    visibility: z.enum(["PUBLIC", "PRIVATE"]).optional().default("PUBLIC"),
+    media: z.array(postMediaInputSchema).max(MAX_POST_IMAGES + 2).optional().default([]),
+    posterMediaAssetId: z.string().max(64).nullish(),
+    kind: z.enum(["UPDATE", "ANNOUNCEMENT", "WIP", "TUTORIAL", "QUESTION"]).optional().default("UPDATE"),
+    location: z.string().max(80).nullish(),
+    scheduledAt: z.string().datetime().nullish(),
+  })
+  .strict();
+
+export const publishTimingSchema = z
+  .object({
+    status: z.enum(["PUBLISHED", "DRAFT", "SCHEDULED"]),
+    /** Required for SCHEDULED: ISO timestamp, must be in the future at save time. */
+    scheduledAt: z.string().datetime().nullish(),
+  })
+  .strict()
+  .refine((v) => v.status !== "SCHEDULED" || (typeof v.scheduledAt === "string" && new Date(v.scheduledAt).getTime() > Date.now()), {
+    message: "Scheduled posts need a future publish time",
+    path: ["scheduledAt"],
+  });
+
+export type PublishTiming = z.infer<typeof publishTimingSchema>;
 
 export const createCommentSchema = z
   .object({
@@ -149,11 +219,14 @@ export function toPublicPost(
     id: p.id,
     body: p.body,
     hashtags: safeStringArray(p.hashtags),
+    kind: p.kind,
+    location: p.location,
     profession: p.profession,
     mediaKind: p.mediaKind,
     visibility: p.visibility,
     shares: p.shares,
     createdAt: p.createdAt.toISOString(),
+    ...(p.status !== "PUBLISHED" ? { status: p.status, scheduledAt: p.scheduledAt?.toISOString() ?? null } : {}),
     author: {
       id: p.author.id,
       username: p.author.username ?? "",
@@ -274,4 +347,42 @@ export async function resolveProfessionSlug(slug: string | null | undefined): Pr
   if (!s) return null;
   const row = await db.profession.findUnique({ where: { slug: s }, select: { slug: true } });
   return row ? row.slug : "invalid";
+}
+
+// ---------------------------------------------------------------- hashtag sync
+
+/**
+ * Sync the Hashtag/PostHashtag dictionary rows for one post. Only PUBLIC,
+ * PUBLISHED posts count toward postCount (private posts and drafts never
+ * feed discovery). Pass previousTags when a post's tags change — the
+ * counters are adjusted in ONE transaction so counts never drift.
+ */
+export async function syncPostHashtags(postId: string, tags: string[], previousTags: string[] = []): Promise<void> {
+  const added = tags.filter((t) => !previousTags.includes(t));
+  const removed = previousTags.filter((t) => !tags.includes(t));
+  if (added.length === 0 && removed.length === 0) return;
+
+  await db.$transaction(async (tx) => {
+    if (added.length > 0) {
+      for (const tag of added) {
+        const row = await tx.hashtag.upsert({
+          where: { name: tag },
+          create: { name: tag, postCount: 1, lastUsedAt: new Date() },
+          update: { postCount: { increment: 1 }, lastUsedAt: new Date() },
+        });
+        await tx.postHashtag.upsert({
+          where: { postId_hashtagId: { postId, hashtagId: row.id } },
+          create: { postId, hashtagId: row.id },
+          update: {},
+        });
+      }
+    }
+    if (removed.length > 0) {
+      const rows = await tx.hashtag.findMany({ where: { name: { in: removed } }, select: { id: true, name: true } });
+      await tx.postHashtag.deleteMany({ where: { postId, hashtagId: { in: rows.map((r) => r.id) } } });
+      for (const r of rows) {
+        await tx.hashtag.update({ where: { id: r.id }, data: { postCount: { decrement: 1 } } });
+      }
+    }
+  }).catch(() => undefined); // hashtag dictionary is derivable — a sync failure never fails the post write
 }

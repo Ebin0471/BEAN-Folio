@@ -7,7 +7,7 @@ import { handler, ok, ERR, parseBody, rateLimit } from "@/lib/api-helpers";
 export const dynamic = "force-dynamic";
 
 const reportSchema = z.object({
-  targetType: z.enum(["PROJECT", "PROFILE"]),
+  targetType: z.enum(["PROJECT", "PROFILE", "POST", "COMMENT", "MESSAGE"]),
   targetId: z.string().trim().min(1),
   reason: z.string().trim().min(1).max(80),
   details: z.string().trim().max(1000).optional(),
@@ -27,6 +27,15 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
   if (targetType === "PROJECT") {
     const project = await db.project.findUnique({ where: { id: targetId } });
     if (!project) return ERR.notFound();
+  } else if (targetType === "POST") {
+    const post = await db.post.findUnique({ where: { id: targetId } });
+    if (!post) return ERR.notFound();
+  } else if (targetType === "COMMENT") {
+    const comment = await db.postComment.findUnique({ where: { id: targetId } });
+    if (!comment) return ERR.notFound();
+  } else if (targetType === "MESSAGE") {
+    const message = await db.message.findUnique({ where: { id: targetId } });
+    if (!message || message.deletedAt) return ERR.notFound();
   } else {
     const profile = await db.user.findUnique({ where: { id: targetId } });
     if (!profile || profile.deletedAt) return ERR.notFound();

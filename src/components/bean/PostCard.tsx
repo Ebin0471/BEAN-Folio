@@ -2,7 +2,7 @@
 
 import { useCallback, useState } from "react";
 import Link from "next/link";
-import { Bookmark, Eye, Heart, Loader2, MessageCircle, MoreHorizontal, Share2, Trash2 } from "lucide-react";
+import { Bookmark, Eye, Heart, Loader2, MapPin, MessageCircle, MoreHorizontal, Share2, ShieldAlert, Trash2, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -32,6 +32,7 @@ export function PostCard({
   post,
   onChange,
   onDelete,
+  onHidden,
   defaultCommentsOpen = false,
   compact = false,
 }: {
@@ -39,6 +40,8 @@ export function PostCard({
   /** Parent feed hook: swap in the updated post after any interaction. */
   onChange?: (next: PublicPost) => void;
   onDelete?: (id: string) => void;
+  /** "Not interested" — remove from the feed immediately. */
+  onHidden?: (id: string) => void;
   defaultCommentsOpen?: boolean;
   compact?: boolean;
 }) {
@@ -125,6 +128,29 @@ export function PostCard({
     }
   }
 
+  /** Negative relevance feedback — private, feed-level exclusion. */
+  async function hidePost() {
+    try {
+      await api(`/api/posts/${post.id}/hide`, { method: "POST" });
+      onHidden?.(post.id);
+      toast.success("We'll show fewer posts like this");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not hide the post");
+    }
+  }
+
+  async function reportPost() {
+    try {
+      await api("/api/reports", {
+        method: "POST",
+        json: { targetType: "POST", targetId: post.id, reason: "inappropriate", details: "Reported from the feed" },
+      });
+      toast.success("Reported to moderators");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not report");
+    }
+  }
+
   // View tracking: one deduped view per viewer per day (server-enforced).
   // Fired from the feed/detail mount via recordPostView (below), not here.
 
@@ -153,22 +179,32 @@ export function PostCard({
           </Link>
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <time dateTime={post.createdAt}>{timeAgo(post.createdAt)}</time>
+            {post.kind && post.kind !== "UPDATE" ? (
+              <Badge variant="outline" className="h-4 px-1.5 text-[10px] uppercase tracking-wide text-primary">
+                {post.kind === "ANNOUNCEMENT" ? "Announcement" : post.kind === "WIP" ? "Work in progress" : post.kind === "TUTORIAL" ? "Tutorial" : post.kind === "QUESTION" ? "Question" : post.kind}
+              </Badge>
+            ) : null}
             {post.profession ? (
               <>
                 <span aria-hidden>·</span>
                 <span className="truncate">{categoryLabel(post.profession)}</span>
               </>
             ) : null}
+            {post.location ? (
+              <span className="inline-flex items-center gap-0.5 truncate">
+                <MapPin className="size-3" aria-hidden /> {post.location}
+              </span>
+            ) : null}
           </div>
         </div>
-        {isAuthor ? (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="size-8" aria-label="Post options">
-                <MoreHorizontal className="size-4" aria-hidden />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon" className="size-8" aria-label="Post options">
+              <MoreHorizontal className="size-4" aria-hidden />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {isAuthor ? (
               <DropdownMenuItem
                 variant="destructive"
                 onClick={() => void removePost()}
@@ -176,10 +212,26 @@ export function PostCard({
               >
                 <Trash2 className="size-4" aria-hidden /> Delete post
               </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        ) : null}
+            ) : (
+              <>
+                <DropdownMenuItem onClick={() => void hidePost()}>
+                  <EyeOff className="size-4" aria-hidden /> Not interested
+                </DropdownMenuItem>
+                {user ? (
+                  <DropdownMenuItem onClick={() => void reportPost()}>
+                    <ShieldAlert className="size-4" aria-hidden /> Report post
+                  </DropdownMenuItem>
+                ) : null}
+              </>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
+
+      {/* feed explainability (For You / Trending) */}
+      {post.reason ? (
+        <p className="px-4 pt-2 text-xs text-muted-foreground">{post.reason}</p>
+      ) : null}
 
       {/* caption */}
       {post.body.trim() ? (
@@ -188,13 +240,15 @@ export function PostCard({
         </div>
       ) : null}
 
-      {/* hashtags */}
+      {/* hashtags — real hashtag pages */}
       {post.hashtags.length > 0 ? (
         <div className="flex flex-wrap gap-1.5 px-4 pt-2">
           {post.hashtags.map((t) => (
-            <Badge key={t} variant="secondary" className="text-[11px] font-normal text-primary">
-              #{t}
-            </Badge>
+            <Link key={t} href={`#/hashtags/${t}`} className="focus:outline-none">
+              <Badge variant="secondary" className="text-[11px] font-normal text-primary hover:bg-secondary/70">
+                #{t}
+              </Badge>
+            </Link>
           ))}
         </div>
       ) : null}

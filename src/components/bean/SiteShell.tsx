@@ -48,6 +48,8 @@ import { cn } from "@/lib/utils";
 import AuthView from "@/views/AuthView";
 import OnboardingView from "@/views/OnboardingView";
 import DiscoverView from "@/views/DiscoverView";
+import MessagesView from "@/views/MessagesView";
+import { SearchView, HashtagView } from "@/views/SearchView";
 import ExploreView from "@/views/ExploreView";
 import StudioView from "@/views/StudioView";
 import ProjectEditorView from "@/views/ProjectEditorView";
@@ -599,6 +601,17 @@ function Router() {
         return <LegacyRouteRedirect to="/giftz" />;
       case "connect":
         return <RequireAuth label="Connect"><ConnectView /></RequireAuth>;
+      case "messages":
+        // Direct messages (Phase 3 social) — one-to-one threads with
+        // message requests; authorization enforced server-side per read.
+        if (!b) return <RequireAuth label="Messages"><MessagesView /></RequireAuth>;
+        return <RequireAuth label="Messages"><MessagesView /></RequireAuth>;
+      case "search":
+        // Unified search (people / posts / hashtags) over public data only.
+        return <SearchView initialQuery={b ? decodeURIComponent(b) : ""} />;
+      case "hashtags":
+        // Real hashtag pages — public posts carrying the tag.
+        return b ? <HashtagView tag={decodeURIComponent(b)} /> : <NotFound />;
       case "insights":
         return <RequireAuth label="Insights"><InsightsView /></RequireAuth>;
       case "settings":

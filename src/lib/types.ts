@@ -508,11 +508,16 @@ export interface PublicPost {
   id: string;
   body: string;
   hashtags: string[];
+  kind: string; // UPDATE | ANNOUNCEMENT | WIP | TUTORIAL | QUESTION
+  location: string | null;
   profession: string | null;
   mediaKind: "TEXT" | "IMAGE" | "VIDEO";
   visibility: string;
   shares: number;
   createdAt: string;
+  /** Author-only: present on DRAFT / SCHEDULED posts (never on public reads). */
+  status?: "PUBLISHED" | "DRAFT" | "SCHEDULED";
+  scheduledAt?: string | null;
   author: {
     id: string;
     username: string;
@@ -524,6 +529,8 @@ export interface PublicPost {
   counts: { likes: number; comments: number; bookmarks: number; views: number };
   liked: boolean;
   bookmarked: boolean;
+  /** Feed explainability: why this post surfaced (For You / Trending). */
+  reason?: string;
 }
 
 export interface PublicComment {
@@ -531,8 +538,121 @@ export interface PublicComment {
   postId: string;
   parentId: string | null;
   body: string;
+  status: string; // VISIBLE | HIDDEN (restricted authors' comments pending approval)
   createdAt: string;
+  likes: number;
+  liked: boolean;
+  /** Post-owner moderation: hidden comments can be approved. */
+  canModerate: boolean;
   author: { id: string; username: string; name: string; avatarUrl: string | null };
+}
+
+// ------------------------------------------------------- social network
+
+export type FollowState = "NONE" | "PENDING" | "ACTIVE";
+
+export interface RelationshipResponse {
+  state: FollowState;
+  followedBy: boolean;
+  muted: boolean;
+  restricted: boolean;
+  mutuals: PublicPerson[];
+}
+
+export interface FollowersResponse {
+  people: { person: PublicPerson; followedAt?: string }[];
+  requests?: { person: PublicPerson; requestedAt: string }[];
+}
+
+export type FeedMode = "following" | "foryou" | "trending";
+
+export interface FeedResponse {
+  mode: string;
+  items: PublicPost[];
+  nextCursor: string | null;
+}
+
+export interface NotificationGroupDTO {
+  key: string;
+  ids: string[];
+  type: string;
+  targetId: string | null;
+  count: number;
+  actors: { id: string; name: string; username: string; avatarUrl: string | null }[];
+  payload: Record<string, unknown>;
+  latestAt: string;
+  unread: boolean;
+}
+
+export interface ConversationSummary {
+  id: string;
+  partner: { id: string; username: string; name: string; avatarUrl: string | null } | null;
+  requestState: string; // ACTIVE | PENDING | DECLINED
+  unread: number;
+  lastMessageAt: string | null;
+  createdAt: string;
+}
+
+export interface MessagesResponse {
+  conversations: ConversationSummary[];
+  totalUnread: number;
+  pendingRequests: number;
+}
+
+export interface ThreadMessage {
+  id: string;
+  body: string;
+  createdAt: string;
+  mine: boolean;
+  sender: { id: string; username: string; name: string; avatarUrl: string | null };
+  mediaUrl: string | null;
+  sharedPost: { id: string; body: string; mediaKind: string; authorName: string; thumbUrl: string | null } | null;
+}
+
+export interface ThreadResponse {
+  requestState: string;
+  partnerRequestState: string;
+  partnerTyping: boolean;
+  blocked: boolean;
+  messages: ThreadMessage[];
+  nextBefore: string | null;
+}
+
+export interface SharedPostCard {
+  id: string;
+  body: string;
+  mediaKind: string;
+  authorName: string;
+  thumbUrl: string | null;
+}
+
+export interface InsightsPosts {
+  range: number;
+  totals: {
+    impressions: number;
+    views: number;
+    likes: number;
+    comments: number;
+    shares: number;
+    saves: number;
+    videoPlays: number;
+    engagementRate: number;
+  };
+  followerGrowth: { gained: number; series: { day: string; gained: number }[] };
+  topPosts: { id: string; body: string; mediaKind: string; createdAt: string; shares: number; engagement: number }[];
+}
+
+export interface SearchResults {
+  people: { username: string; name: string; headline: string | null; avatarUrl: string | null; location: string | null; availability: string | null; professions: string[]; skills: string[]; stats: { followers: number; projects: number } }[];
+  posts: { id: string; body: string; mediaKind: string; hashtags: string[]; createdAt: string; author: { username: string; name: string; avatarUrl: string | null }; thumbUrl: string | null }[];
+  hashtags: { name: string; postCount: number }[];
+}
+
+export interface HashtagPage {
+  tag: { name: string; postCount: number } | null;
+  items: { id: string; body: string; mediaKind: string; createdAt: string; author: { username: string; name: string; avatarUrl: string | null }; thumbUrl: string | null; counts: { likes: number; comments: number } }[];
+  related: string[];
+  nextCursor: string | null;
 }
 
 /** A suggested creator (Suggested Profiles) with an explainable reason. */

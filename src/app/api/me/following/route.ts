@@ -36,7 +36,7 @@ export const GET = handler(async (): Promise<NextResponse> => {
   if (!user) return ERR.unauthorized();
 
   const rows = await db.follow.findMany({
-    where: { followerId: user.id },
+    where: { followerId: user.id, status: "ACTIVE" },
     include: { following: { include: otherUserInclude } },
     orderBy: { createdAt: "desc" },
     take: 200,

@@ -2,13 +2,21 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  Archive,
+  AtSign,
   Bookmark,
+  Check,
+  Heart,
   Info,
   Mail,
   MailCheck,
+  MailQuestion,
   MessageSquarePlus,
   ServerCrash,
+  Share2,
+  UserCheck,
   UserPlus,
+  UserX,
   Users,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -25,7 +33,7 @@ import { SectionHeader } from "@/components/bean/SectionHeader";
 
 import { api, ApiError, formatDate } from "@/lib/client";
 import { navigate } from "@/lib/hash-router";
-import type { InquiryDTO, NotificationDTO, PublicPerson } from "@/lib/types";
+import type { InquiryDTO, NotificationGroupDTO, PublicPerson } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 // ------------------------------------------------------------------ plumbing
@@ -103,65 +111,103 @@ function useEnsure(section: { ensure: () => void }) {
 
 const NOTIFICATION_ICONS: Record<string, typeof Mail> = {
   FOLLOW: UserPlus,
+  FOLLOW_REQUEST: UserPlus,
+  FOLLOW_ACCEPTED: UserCheck,
+  POST_LIKE: Heart,
+  POST_COMMENT: MessageSquarePlus,
+  COMMENT_REPLY: MessageSquarePlus,
+  MENTION: AtSign,
+  POST_SHARE: Share2,
+  MESSAGE: Mail,
+  MESSAGE_REQUEST: MailQuestion,
   INQUIRY: Mail,
   INQUIRY_RESPONSE: MailCheck,
   SAVE: Bookmark,
   SYSTEM: Info,
 };
 
-/** Parse the stored payload into (actor, rest-of-sentence) defensively — never throw. */
-function notificationParts(n: NotificationDTO): { actor: string; actorUsername: string; rest: string } {
-  const actor = typeof n.payload.actor === "string" ? n.payload.actor : "Someone";
-  const actorUsername = typeof n.payload.actorUsername === "string" ? n.payload.actorUsername : "";
-  const subject = typeof n.payload.subject === "string" ? n.payload.subject : "";
-  const projectTitle = typeof n.payload.projectTitle === "string" ? n.payload.projectTitle : "";
-  const status = typeof n.payload.status === "string" ? n.payload.status.toLowerCase() : "";
+const GROUPABLE_TEXT: Record<string, string> = {
+  FOLLOW: " started following you",
+  FOLLOW_REQUEST: " requested to follow you",
+  FOLLOW_ACCEPTED: " accepted your follow request",
+  POST_LIKE: " liked your post",
+  POST_COMMENT: " commented on your post",
+  COMMENT_REPLY: " replied to your comment",
+  MENTION: " mentioned you",
+  POST_SHARE: " shared your post",
+  MESSAGE: " sent you a message",
+  MESSAGE_REQUEST: " sent a message request",
+  SAVE: " saved your work",
+};
 
-  switch (n.type) {
+/** Sentence text for a notification group (actor names prepended by caller). */
+function groupText(g: NotificationGroupDTO): { actor: string; actorUsername: string; rest: string } {
+  const first = g.actors[0];
+  const actor = first?.name ?? (typeof g.payload.actor === "string" ? g.payload.actor : "Someone");
+  const actorUsername = first?.username ?? (typeof g.payload.actorUsername === "string" ? g.payload.actorUsername : "");
+  const excerpt = typeof g.payload.excerpt === "string" ? g.payload.excerpt : "";
+  const subject = typeof g.payload.subject === "string" ? g.payload.subject : "";
+  const projectTitle = typeof g.payload.projectTitle === "string" ? g.payload.projectTitle : "";
+  const status = typeof g.payload.status === "string" ? g.payload.status.toLowerCase() : "";
+  const message = typeof g.payload.message === "string" ? g.payload.message : "";
+
+  switch (g.type) {
     case "FOLLOW":
-      return { actor, actorUsername, rest: " started following you" };
+    case "FOLLOW_REQUEST":
+    case "FOLLOW_ACCEPTED":
+      return { actor, actorUsername, rest: GROUPABLE_TEXT[g.type] ?? " interacted with you" };
+    case "POST_LIKE":
+      return { actor, actorUsername, rest: excerpt ? ` liked your post: “${excerpt.slice(0, 60)}”` : GROUPABLE_TEXT.POST_LIKE };
+    case "POST_COMMENT":
+      return { actor, actorUsername, rest: excerpt ? ` commented: “${excerpt.slice(0, 60)}”` : GROUPABLE_TEXT.POST_COMMENT };
+    case "COMMENT_REPLY":
+      return { actor, actorUsername, rest: excerpt ? ` replied: “${excerpt.slice(0, 60)}”` : GROUPABLE_TEXT.COMMENT_REPLY };
+    case "MENTION":
+      return { actor, actorUsername, rest: excerpt ? ` mentioned you: “${excerpt.slice(0, 60)}”` : GROUPABLE_TEXT.MENTION };
+    case "POST_SHARE":
+      return { actor, actorUsername, rest: GROUPABLE_TEXT.POST_SHARE };
+    case "MESSAGE":
+      return { actor, actorUsername, rest: excerpt ? `: ${excerpt.slice(0, 80)}` : GROUPABLE_TEXT.MESSAGE };
+    case "MESSAGE_REQUEST":
+      return { actor, actorUsername, rest: GROUPABLE_TEXT.MESSAGE_REQUEST };
     case "INQUIRY":
       return { actor, actorUsername, rest: subject ? ` sent an inquiry: ${subject}` : " sent you an inquiry" };
     case "INQUIRY_RESPONSE":
-      return {
-        actor,
-        actorUsername,
-        rest: status === "accepted" || status === "declined" ? ` ${status} your inquiry` : " responded to your inquiry",
-      };
+      return { actor, actorUsername, rest: status === "accepted" || status === "declined" ? ` ${status} your inquiry` : " responded to your inquiry" };
     case "SAVE":
-      return { actor, actorUsername, rest: projectTitle ? ` saved your project ${projectTitle}` : " saved your project" };
+      return { actor, actorUsername, rest: projectTitle ? ` saved your project ${projectTitle}` : GROUPABLE_TEXT.SAVE };
     case "SYSTEM":
-      return {
-        actor: "",
-        actorUsername: "",
-        rest: typeof n.payload.message === "string" ? n.payload.message : "Platform notice",
-      };
+      return { actor: "", actorUsername: "", rest: message || "Platform notice" };
     default:
       return { actor, actorUsername, rest: " interacted with your portfolio" };
   }
 }
 
+function groupTargetHref(g: NotificationGroupDTO): string | null {
+  const postId = typeof g.payload.postId === "string" ? g.payload.postId : null;
+  const conversationId = typeof g.payload.conversationId === "string" ? g.payload.conversationId : null;
+  if (g.type === "MESSAGE" || g.type === "MESSAGE_REQUEST") return conversationId ? `#/messages/${conversationId}` : "#/messages";
+  if (postId) return `#/post/${postId}`;
+  if (g.type === "FOLLOW" || g.type === "FOLLOW_REQUEST" || g.type === "FOLLOW_ACCEPTED") {
+    const username = typeof g.payload.actorUsername === "string" ? g.payload.actorUsername : null;
+    return username ? `#/u/${username}` : "#/connect";
+  }
+  return null;
+}
+
 function NotificationsSection() {
-  const section = useSection<{ notifications: NotificationDTO[]; unreadCount: number }>("/api/me/notifications");
+  const section = useSection<{ groups: NotificationGroupDTO[]; unreadCount: number }>('/api/me/notifications');
   useEnsure(section);
   const [markingAll, setMarkingAll] = useState(false);
-  // Local optimistic read state (≤ 30 rows) — avoids a full refetch per click.
-  const [local, setLocal] = useState<NotificationDTO[] | null>(null);
+  const [readIds, setReadIds] = useState<Set<string>>(new Set());
 
-  const items = local ?? section.data?.notifications ?? [];
-  const unreadCount = items.filter((n) => !n.readAt).length;
-
-  const applyRead = (ids: string[]) => {
-    const idSet = new Set(ids);
-    setLocal(
-      items.map((n) => (idSet.has(n.id) && !n.readAt ? { ...n, readAt: new Date().toISOString() } : n))
-    );
-  };
+  const groups = section.data?.groups ?? [];
+  const unreadCount = groups.filter((g) => g.unread && !g.ids.every((id) => readIds.has(id))).length;
 
   const markRead = async (ids: string[]) => {
     try {
       await api("/api/me/notifications/read", { method: "POST", json: { ids } });
-      applyRead(ids);
+      setReadIds((prev) => new Set([...prev, ...ids]));
       window.dispatchEvent(new Event("bean:unread-changed"));
     } catch (e) {
       toast.error(errText(e));
@@ -172,7 +218,7 @@ function NotificationsSection() {
     setMarkingAll(true);
     try {
       await api("/api/me/notifications/read", { method: "POST", json: {} });
-      setLocal(items.map((n) => (n.readAt ? n : { ...n, readAt: new Date().toISOString() })));
+      setReadIds(new Set(groups.flatMap((g) => g.ids)));
       window.dispatchEvent(new Event("bean:unread-changed"));
       toast.success("All notifications marked as read");
     } catch (e) {
@@ -185,12 +231,13 @@ function NotificationsSection() {
   if (section.loading) return <ListSkeleton rows={5} />;
   if (section.error) return <SectionError message={section.error} onRetry={() => void section.reload()} />;
 
-  if (items.length === 0) {
+  if (groups.length === 0) {
     return (
       <EmptyState
         icon={Mail}
         title="No notifications yet"
-        description="When someone follows you, saves a project or sends an inquiry, it will show up here."
+        description="When someone follows you, likes or comments on a post, mentions you or sends a message, it will show up here."
+        action={<Button variant="outline" onClick={() => navigate("/messages")}><MailQuestion className="size-4" aria-hidden /> Open messages</Button>}
       />
     );
   }
@@ -205,19 +252,17 @@ function NotificationsSection() {
         </div>
       )}
       <ul className="space-y-2" aria-label="Notifications">
-        {items.map((n) => {
-          const Icon = NOTIFICATION_ICONS[n.type] ?? Info;
-          const unread = !n.readAt;
-          const parts = notificationParts(n);
-          const fullText = `${parts.actor}${parts.rest}`;
+        {groups.map((g) => {
+          const Icon = NOTIFICATION_ICONS[g.type] ?? Info;
+          const unread = g.unread && !g.ids.every((id) => readIds.has(id));
+          const parts = groupText(g);
+          const href = groupTargetHref(g);
+          const otherCount = Math.max(0, g.count - g.actors.length);
+          const fullText = parts.actor ? `${parts.actor}${parts.rest}` : parts.rest;
           return (
-            <li key={n.id}>
-              <button
-                type="button"
-                onClick={() => {
-                  if (unread) void markRead([n.id]);
-                }}
-                title={unread ? "Mark as read" : undefined}
+            <li key={g.key}>
+              <div
+                role={href ? "link" : undefined}
                 aria-label={`${fullText}${unread ? " (unread)" : ""}`}
                 className={cn(
                   "flex w-full items-start gap-3 rounded-xl border bg-card p-4 text-left transition-all",
@@ -246,20 +291,88 @@ function NotificationsSection() {
                           {parts.actor}
                         </a>
                         {parts.rest}
+                        {g.count > 1 ? <span className="text-muted-foreground"> · {g.count} notification{g.count === 1 ? "" : "s"}{otherCount > 0 ? ` from ${otherCount} more` : ""}</span> : null}
                       </>
                     ) : (
                       fullText
                     )}
                   </span>
-                  <span className="mt-1 block text-xs text-muted-foreground">{formatDate(n.createdAt)}</span>
+                  <span className="mt-1 block text-xs text-muted-foreground">{formatDate(g.latestAt)}</span>
                 </span>
                 {unread && <span className="mt-1.5 size-2 shrink-0 rounded-full bg-primary" aria-hidden />}
-              </button>
+              </div>
             </li>
           );
         })}
       </ul>
+      <NotificationPreferences />
     </div>
+  );
+}
+
+// ------------------------------------------------------------------ notification preferences
+
+const PREF_TYPES: { type: string; label: string }[] = [
+  { type: "FOLLOW", label: "New followers and follow requests" },
+  { type: "POST_LIKE", label: "Likes on your posts" },
+  { type: "POST_COMMENT", label: "Comments and replies" },
+  { type: "MENTION", label: "Mentions" },
+  { type: "POST_SHARE", label: "Shares of your posts" },
+  { type: "MESSAGE", label: "Direct messages" },
+];
+
+function NotificationPreferences() {
+  const [prefs, setPrefs] = useState<Record<string, boolean> | null>(null);
+
+  useEffect(() => {
+    api<{ preferences: Record<string, boolean> }>("/api/me/notifications/preferences")
+      .then((r) => setPrefs(r.preferences))
+      .catch(() => undefined);
+  }, []);
+
+  async function toggle(type: string) {
+    if (!prefs) return;
+    const next = !prefs[type];
+    setPrefs({ ...prefs, [type]: next });
+    try {
+      await api("/api/me/notifications/preferences", { method: "PATCH", json: { type, enabled: next } });
+    } catch (e) {
+      setPrefs({ ...prefs, [type]: !next }); // revert on failure
+      toast.error(errText(e));
+    }
+  }
+
+  if (!prefs) return null;
+  return (
+    <details className="rounded-xl border border-border/50 bg-card p-4">
+      <summary className="cursor-pointer text-sm font-medium">Notification preferences</summary>
+      <ul className="mt-3 space-y-2">
+        {PREF_TYPES.map(({ type, label }) => (
+          <li key={type} className="flex items-center justify-between gap-3 text-sm">
+            <span className="text-muted-foreground">{label}</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={prefs[type] ?? true}
+              aria-label={label}
+              onClick={() => void toggle(type)}
+              className={cn(
+                "relative h-5 w-9 rounded-full transition-colors",
+                prefs[type] ?? true ? "bg-primary" : "bg-secondary"
+              )}
+            >
+              <span
+                className={cn(
+                  "absolute top-0.5 size-4 rounded-full bg-background transition-all",
+                  (prefs[type] ?? true) ? "left-4.5" : "left-0.5"
+                )}
+                aria-hidden
+              />
+            </button>
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }
 
@@ -423,19 +536,70 @@ function PeopleSection({
   path,
   emptyTitle,
   emptyDescription,
+  withRequests = false,
 }: {
   path: string;
   emptyTitle: string;
   emptyDescription: string;
+  /** Followers path: also surface PENDING follow requests with approve/decline. */
+  withRequests?: boolean;
 }) {
-  const section = useSection<{ people: PublicPerson[] }>(path);
+  const section = useSection<
+    | { people: PublicPerson[] }
+    | { people: { person: PublicPerson }[]; requests?: { person: PublicPerson; requestedAt: string }[] }
+  >(path);
   useEnsure(section);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [removed, setRemoved] = useState<Set<string>>(new Set());
+  const [handled, setHandled] = useState<Set<string>>(new Set());
+
+  // Normalize both shapes.
+  const raw = section.data;
+  const people: PublicPerson[] = raw
+    ? (Array.isArray((raw as { people: unknown }).people)
+        ? ((raw as { people: unknown[] }).people[0] && typeof (raw as { people: unknown[] }).people[0] === "object" && "person" in ((raw as { people: unknown[] }).people[0] as object)
+            ? (raw as { people: { person: PublicPerson }[] }).people.map((x) => x.person)
+            : (raw as { people: PublicPerson[] }).people)
+        : [])
+    : [];
+  const requests = withRequests && raw && "requests" in raw ? ((raw as { requests?: { person: PublicPerson }[] }).requests ?? []) : [];
+  const visiblePeople = people.filter((p) => !removed.has(p.username));
+  const visibleRequests = requests.filter((r) => !handled.has(r.person.username));
+
+  async function respondToRequest(username: string, action: "approve" | "decline") {
+    if (!requests.some((r) => r.person.username === username)) return;
+    setBusyId(username);
+    try {
+      await api("/api/me/requests", { method: "POST", json: { username, action } });
+      setHandled((prev) => new Set([...prev, username]));
+      toast.success(action === "approve" ? `@${username} approved` : "Request declined");
+      await section.reload();
+    } catch (e) {
+      toast.error(errText(e));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function removeFollower(username: string) {
+    if (!people.some((p) => p.username === username)) return;
+    setBusyId(username);
+    try {
+      await api("/api/me/followers", { method: "DELETE", json: { username } });
+      setRemoved((prev) => new Set([...prev, username]));
+      toast.success(`@${username} removed from your followers`);
+      await section.reload();
+    } catch (e) {
+      toast.error(errText(e));
+    } finally {
+      setBusyId(null);
+    }
+  }
 
   if (section.loading) return <ListSkeleton rows={3} />;
   if (section.error) return <SectionError message={section.error} onRetry={() => void section.reload()} />;
 
-  const people = section.data?.people ?? [];
-  if (people.length === 0) {
+  if (visiblePeople.length === 0 && visibleRequests.length === 0) {
     return (
       <EmptyState
         icon={Users}
@@ -447,10 +611,51 @@ function PeopleSection({
   }
 
   return (
-    <div className="grid gap-4 sm:grid-cols-2">
-      {people.map((p) => (
-        <PersonCard key={p.username} person={p} />
-      ))}
+    <div className="space-y-6">
+      {visibleRequests.length > 0 ? (
+        <section aria-label="Follow requests">
+          <h3 className="mb-3 text-sm font-medium uppercase tracking-wide text-muted-foreground">
+            Follow requests ({visibleRequests.length})
+          </h3>
+          <ul className="space-y-2">
+            {visibleRequests.map((r) => (
+              <li key={r.person.username} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/40 bg-card p-4">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">{r.person.name}</p>
+                  <p className="truncate text-xs text-muted-foreground">@{r.person.username} · requested to follow you</p>
+                </div>
+                <div className="flex gap-2">
+                  <Button size="sm" disabled={busyId === r.person.username} onClick={() => void respondToRequest(r.person.username, "approve")}>Approve</Button>
+                  <Button size="sm" variant="outline" disabled={busyId === r.person.username} onClick={() => void respondToRequest(r.person.username, "decline")}>Decline</Button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      <section aria-label={emptyTitle ? undefined : "People"}>
+        {visiblePeople.length === 0 ? null : (
+          <div className="grid gap-4 sm:grid-cols-2">
+            {visiblePeople.map((p) => (
+              <div key={p.username} className="relative">
+                <PersonCard person={p} />
+                {withRequests ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="absolute right-2 top-2 gap-1 text-xs text-muted-foreground hover:text-destructive"
+                    disabled={busyId === p.username}
+                    onClick={() => void removeFollower(p.username)}
+                  >
+                    <UserX className="size-3.5" aria-hidden /> Remove
+                  </Button>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
@@ -557,6 +762,7 @@ export default function ConnectView() {
             path="/api/me/followers"
             emptyTitle="No followers yet"
             emptyDescription="Publish projects and share your Folio link — people who follow you will appear here."
+            withRequests
           />
         </TabsContent>
         <TabsContent value="blocked" className="mt-4">

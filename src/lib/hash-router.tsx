@@ -40,7 +40,7 @@ export function parseHash(hash: string): string {
  * generated site — are deeper public shapes than the other routes but still
  * bounded and enumerable (never an open wildcard).
  */
-const PUBLIC_BOOT_RE = /^(?:\/u\/[^/]+|\/p\/[^/]+|\/site\/[^/]+(?:\/projects\/[^/]+|\/g\/[^/]+)?)$/;
+const PUBLIC_BOOT_RE = /^(?:\/u\/[^/]+|\/p\/[^/]+|\/post\/[^/]+|\/site\/[^/]+(?:\/projects\/[^/]+|\/g\/[^/]+)?)$/;
 
 /**
  * The active route. A URL fragment always wins (in-app navigation runs on the

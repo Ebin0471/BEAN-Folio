@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { FileText, Film, ImagePlus, Images, Loader2, Trash2, X } from "lucide-react";
+import { CalendarClock, FileText, Film, ImagePlus, Images, Loader2, MapPin, Save, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -47,6 +47,10 @@ export function PostComposer({
   const [body, setBody] = useState("");
   const [tags, setTags] = useState<string[]>([]);
   const [profession, setProfession] = useState<string>("");
+  const [kind, setKind] = useState<string>("UPDATE");
+  const [location, setLocation] = useState<string>("");
+  const [visibility, setVisibility] = useState<string>("PUBLIC");
+  const [scheduleAt, setScheduleAt] = useState<string>(""); // datetime-local string
   const [images, setImages] = useState<PendingMedia[]>([]);
   const [video, setVideo] = useState<PendingMedia | null>(null);
   const [poster, setPoster] = useState<MediaDTO | null>(null);
@@ -63,6 +67,10 @@ export function PostComposer({
     setBody("");
     setTags([]);
     setProfession("");
+    setKind("UPDATE");
+    setLocation("");
+    setVisibility("PUBLIC");
+    setScheduleAt("");
     setImages([]);
     setVideo(null);
     setPoster(null);
@@ -133,26 +141,32 @@ export function PostComposer({
         ? images.length > 0
         : video !== null);
 
+  function payloadCommon() {
+    return {
+      body,
+      hashtags: tags,
+      profession: profession || null,
+      kind,
+      location: location.trim() || null,
+      visibility,
+    } as const;
+  }
+
   async function submit() {
     if (!canSubmit) return;
     setSubmitting(true);
     try {
+      const common = payloadCommon();
       const payload =
         mode === "text"
-          ? { body, hashtags: tags, profession: profession || null, visibility: "PUBLIC", media: [] }
+          ? { ...common, media: [] }
           : mode === "image"
             ? {
-                body,
-                hashtags: tags,
-                profession: profession || null,
-                visibility: "PUBLIC",
+                ...common,
                 media: images.map((m) => ({ mediaAssetId: m.asset.id, altText: m.altText })),
               }
             : {
-                body,
-                hashtags: tags,
-                profession: profession || null,
-                visibility: "PUBLIC",
+                ...common,
                 media: video ? [{ mediaAssetId: video.asset.id, altText: video.altText }] : [],
                 posterMediaAssetId: mode === "video" && poster ? poster.id : null,
               };
@@ -166,6 +180,63 @@ export function PostComposer({
       onOpenChange(false);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not create the post");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function saveDraft() {
+    if (submitting || uploading > 0) return;
+    setSubmitting(true);
+    try {
+      const common = payloadCommon();
+      const payload = {
+        ...common,
+        media:
+          mode === "image"
+            ? images.map((m) => ({ mediaAssetId: m.asset.id, altText: m.altText }))
+            : mode === "video" && video
+              ? [{ mediaAssetId: video.asset.id, altText: video.altText }]
+              : [],
+        posterMediaAssetId: mode === "video" && poster ? poster.id : null,
+      };
+      await api<PublicPost>("/api/posts/drafts", { method: "POST", json: payload });
+      toast.success("Draft saved — find it under Saved posts");
+      reset();
+      onOpenChange(false);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not save the draft");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function schedule() {
+    if (!scheduleAt) {
+      toast.error("Pick a date and time to schedule");
+      return;
+    }
+    if (submitting || uploading > 0) return;
+    setSubmitting(true);
+    try {
+      const common = payloadCommon();
+      const payload = {
+        ...common,
+        scheduledAt: new Date(scheduleAt).toISOString(),
+        media:
+          mode === "image"
+            ? images.map((m) => ({ mediaAssetId: m.asset.id, altText: m.altText }))
+            : mode === "video" && video
+              ? [{ mediaAssetId: video.asset.id, altText: video.altText }]
+              : [],
+        posterMediaAssetId: mode === "video" && poster ? poster.id : null,
+      };
+      await api<PublicPost>("/api/posts/drafts", { method: "POST", json: payload });
+      toast.success("Scheduled — it will publish automatically");
+      reset();
+      onOpenChange(false);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not schedule the post");
     } finally {
       setSubmitting(false);
     }
@@ -336,7 +407,22 @@ export function PostComposer({
             </div>
           ) : null}
 
-          {/* hashtags + category */}
+          {/* hashtags + category + type + location */}
+          <div>
+            <Label>Post type</Label>
+            <Select value={kind} onValueChange={setKind}>
+              <SelectTrigger className="mt-1.5 w-full" aria-label="Post type">
+                <SelectValue placeholder="Update" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="UPDATE">Professional update</SelectItem>
+                <SelectItem value="ANNOUNCEMENT">Announcement</SelectItem>
+                <SelectItem value="WIP">Work in progress</SelectItem>
+                <SelectItem value="TUTORIAL">Tutorial / educational</SelectItem>
+                <SelectItem value="QUESTION">Question / discussion</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
           <div>
             <Label>Hashtags</Label>
             <div className="mt-1.5">
@@ -358,9 +444,42 @@ export function PostComposer({
               </SelectContent>
             </Select>
           </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label htmlFor="post-location">
+                <span className="inline-flex items-center gap-1"><MapPin className="size-3" aria-hidden /> Location</span>
+              </Label>
+              <Input id="post-location" value={location} onChange={(e) => setLocation(e.target.value)} maxLength={80} placeholder="Optional" className="mt-1.5" />
+            </div>
+            <div>
+              <Label>Visibility</Label>
+              <Select value={visibility} onValueChange={setVisibility}>
+                <SelectTrigger className="mt-1.5 w-full" aria-label="Post visibility">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="PUBLIC">Public</SelectItem>
+                  <SelectItem value="PRIVATE">Only me</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div>
+            <Label htmlFor="post-schedule">
+              <span className="inline-flex items-center gap-1"><CalendarClock className="size-3" aria-hidden /> Schedule for later</span>
+            </Label>
+            <Input
+              id="post-schedule"
+              type="datetime-local"
+              value={scheduleAt}
+              onChange={(e) => setScheduleAt(e.target.value)}
+              className="mt-1.5"
+              aria-label="Schedule publish time"
+            />
+          </div>
         </div>
 
-        <div className="flex items-center justify-end gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
           {uploading > 0 ? (
             <span className="mr-auto inline-flex items-center gap-1.5 text-xs text-muted-foreground">
               <Loader2 className="size-3.5 animate-spin" aria-hidden /> Uploading…
@@ -368,6 +487,12 @@ export function PostComposer({
           ) : null}
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={submitting}>
             Cancel
+          </Button>
+          <Button variant="outline" onClick={() => void saveDraft()} disabled={submitting || uploading > 0} className="gap-1.5">
+            <Save className="size-4" aria-hidden /> Save draft
+          </Button>
+          <Button variant="outline" onClick={() => void schedule()} disabled={submitting || uploading > 0 || !scheduleAt} className="gap-1.5">
+            <CalendarClock className="size-4" aria-hidden /> Schedule
           </Button>
           <Button onClick={() => void submit()} disabled={!canSubmit}>
             {submitting ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null} Post

@@ -23,7 +23,7 @@ import { SectionHeader, StatCard } from "@/components/bean/SectionHeader";
 
 import { api, ApiError, formatCompact } from "@/lib/client";
 import { navigate } from "@/lib/hash-router";
-import type { InsightsOverview, InsightsProjects, ProjectCardDTO } from "@/lib/types";
+import type { InsightsOverview, InsightsPosts, InsightsProjects, ProjectCardDTO } from "@/lib/types";
 
 const GOLD = "#e8bc51";
 
@@ -347,8 +347,118 @@ export default function InsightsView() {
               </div>
             </CardContent>
           </Card>
+
+          {/* Post analytics (social feed — private to the owner) */}
+          <PostsInsightsCard />
         </div>
       )}
     </div>
+  );
+}
+
+// ------------------------------------------------------------------ post analytics
+
+/**
+ * Private analytics for the signed-in creator's social posts — impressions
+ * (feed placements), actual views, engagement events, video plays, follower
+ * growth and top posts. Every number comes from recorded events; the
+ * engagement-rate formula is fixed server-side ((likes+comments+shares+saves)
+ * / impressions) and documented in the UI.
+ */
+function PostsInsightsCard() {
+  const [range, setRange] = useState<"7" | "28" | "90">("28");
+  const [data, setData] = useState<InsightsPosts | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    api<InsightsPosts>(`/api/me/insights/posts?range=${range}`)
+      .then((r) => setData(r))
+      .catch((e) => setError(errText(e)))
+      .finally(() => setLoading(false));
+  }, [range]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  return (
+    <Card>
+      <CardContent className="p-6">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="font-display text-lg font-semibold text-foreground">Post analytics</h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Your social posts — impressions (feed placements), actual views and engagement.
+            </p>
+          </div>
+          <div className="flex gap-1" role="group" aria-label="Date range">
+            {(["7", "28", "90"] as const).map((r) => (
+              <Button
+                key={r}
+                variant={range === r ? "secondary" : "ghost"}
+                size="sm"
+                className="h-7 px-2.5 text-xs"
+                onClick={() => setRange(r)}
+                aria-pressed={range === r}
+              >
+                {r}d
+              </Button>
+            ))}
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <Skeleton key={i} className="h-20 rounded-xl" />
+            ))}
+          </div>
+        ) : error ? (
+          <p className="py-4 text-sm text-muted-foreground">{error}</p>
+        ) : data ? (
+          <div className="space-y-6">
+            <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+              <StatCard label="Impressions" value={formatCompact(data.totals.impressions)} icon={Eye} hint="Feed placements" />
+              <StatCard label="Actual views" value={formatCompact(data.totals.views)} icon={Users} hint="Deduped per viewer per day" />
+              <StatCard
+                label="Engagement rate"
+                value={`${Math.round(data.totals.engagementRate * 1000) / 10}%`}
+                icon={BarChart3}
+                hint="(likes + comments + shares + saves) ÷ impressions"
+              />
+              <StatCard label="Followers gained" value={formatCompact(data.followerGrowth.gained)} icon={Users} hint="In range" />
+            </div>
+            <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+              <StatCard label="Likes" value={formatCompact(data.totals.likes)} icon={BarChart3} />
+              <StatCard label="Comments" value={formatCompact(data.totals.comments)} icon={BarChart3} />
+              <StatCard label="Shares" value={formatCompact(data.totals.shares)} icon={BarChart3} />
+              <StatCard label="Video plays" value={formatCompact(data.totals.videoPlays)} icon={Eye} />
+            </div>
+
+            {data.topPosts.length > 0 ? (
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">Top posts by engagement</h3>
+                <ul className="mt-2 space-y-2">
+                  {data.topPosts.map((p) => (
+                    <li key={p.id}>
+                      <a
+                        href={`#/post/${p.id}`}
+                        className="flex items-center justify-between gap-3 rounded-lg border border-border/50 px-3 py-2 text-sm transition-colors hover:border-primary/40"
+                      >
+                        <span className="min-w-0 truncate text-foreground/90">{p.body || `(${p.mediaKind.toLowerCase()} post)`}</span>
+                        <span className="shrink-0 text-xs text-muted-foreground">{p.engagement} engagements</span>
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">No post engagement in this range yet — share a post to start collecting real metrics.</p>
+            )}
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
   );
 }

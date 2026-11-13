@@ -96,6 +96,15 @@ model User {
   postLikes     PostLike[]
   postBookmarks PostBookmark[]
   postComments  PostComment[]
+  // ---------- Social network expansion (additive) ----------
+  accountEdgesSet      AccountEdge[] @relation("accountEdgeOwner") // mute/restrict this user set on others
+  accountEdgesReceived AccountEdge[] @relation("accountEdgeTarget") // mute/restrict others set on this user
+  postCommentLikes     PostCommentLike[]
+  hiddenPosts          PostHidden[] // negative feed feedback ("not interested")
+  conversationMemberships ConversationParticipant[]
+  directMessages       Message[]
+  searchHistory        SearchQuery[]
+  notificationSettings NotificationSetting[]
 }
 
 model Session {
@@ -346,13 +355,17 @@ model CollectionItem {
 model Follow {
   followerId  String
   followingId String
+  status      String   @default("ACTIVE") // ACTIVE | PENDING (private-account follow request awaiting approval)
   createdAt   DateTime @default(now())
+  respondedAt DateTime? // when a PENDING request was approved (stays null for instant follows)
 
   follower  User @relation("follower", fields: [followerId], references: [id], onDelete: Cascade)
   following User @relation("following", fields: [followingId], references: [id], onDelete: Cascade)
 
   @@id([followerId, followingId])
   @@index([followingId])
+  @@index([followingId, status]) // ACTIVE-only follower counts + follower lists
+  @@index([followerId, status]) // ACTIVE-only following lists
 }
 
 // ---------- Connections ----------
@@ -381,13 +394,18 @@ model Notification {
   id        String    @id @default(cuid())
   userId    String
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  type      String // FOLLOW | INQUIRY | INQUIRY_RESPONSE | SAVE | SYSTEM
+  type      String // FOLLOW | FOLLOW_REQUEST | FOLLOW_ACCEPTED | POST_LIKE | POST_COMMENT | COMMENT_REPLY | MENTION | POST_SHARE | MESSAGE | MESSAGE_REQUEST | INQUIRY | INQUIRY_RESPONSE | SAVE | SYSTEM
   payload   String    @default("{}") // JSON string
+  actorId   String? // who triggered the notification (self-actions never notify) — used for grouping + suppression
+  targetId  String? // post/comment/conversation id the notification is about — used for grouping
+  dedupKey  String? // retry-safety: retries with the same key upsert instead of duplicating (null = never deduped)
   readAt    DateTime?
   createdAt DateTime  @default(now())
 
+  @@unique([dedupKey]) // NULL dedupKeys are never deduped (SQLite allows multiple NULLs)
   @@index([userId])
   @@index([userId, readAt]) // unread-count queries
+  @@index([userId, createdAt])
 }
 
 model Block {
@@ -455,24 +473,32 @@ model ProfileView {
 // is PRIVATE, demo or soft-deleted never leaves their own workspace.
 
 model Post {
-  id         String   @id @default(cuid())
-  authorId   String
-  author     User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
-  mediaKind  String   @default("TEXT") // TEXT | IMAGE | VIDEO — derived at creation from the attached media, kept denormalized for feed queries
-  body       String   @default("") // caption / text body
-  hashtags   String   @default("[]") // JSON string[] of normalized tags (lowercase, no '#') — creator-selected, no auto-keywords
-  profession String? // creator-selected category = Profession.slug (loose reference, matches the curated-taxonomy style)
-  status     String   @default("PUBLISHED") // PUBLISHED (DRAFT reserved — no draft UI ships)
-  visibility String   @default("PUBLIC") // PUBLIC | PRIVATE (PRIVATE = author-only, never indexed)
-  shares     Int      @default(0) // share-click counter (like real social share counts)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id           String    @id @default(cuid())
+  authorId     String
+  author       User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  mediaKind    String    @default("TEXT") // TEXT | IMAGE | VIDEO — derived at creation from the attached media, kept denormalized for feed queries
+  body         String    @default("") // caption / text body
+  hashtags     String    @default("[]") // JSON string[] of normalized tags (lowercase, no '#') — creator-selected, no auto-keywords (mirror of PostHashtag rows)
+  kind         String    @default("UPDATE") // UPDATE | ANNOUNCEMENT | WIP | TUTORIAL | QUESTION — creator-selected professional post type
+  location     String?   // optional creator-written location tag (plain text, never GPS)
+  profession   String?   // creator-selected category = Profession.slug (loose reference, matches the curated-taxonomy style)
+  status       String    @default("PUBLISHED") // PUBLISHED | DRAFT (author-only) | SCHEDULED (auto-publishes at scheduledAt)
+  visibility   String    @default("PUBLIC") // PUBLIC | PRIVATE (PRIVATE = author-only, never indexed)
+  scheduledAt  DateTime? // for SCHEDULED posts: publish moment (sweeps on read + queue worker)
+  shares       Int       @default(0) // share-click counter (like real social share counts)
+  impressions  Int       @default(0) // lifetime feed impressions (served-in-feed counter; distinct from PostView = actual views)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
-  media     PostMedia[]
-  likes     PostLike[]
-  comments  PostComment[]
-  bookmarks PostBookmark[]
-  views     PostView[]
+  media       PostMedia[]
+  likes       PostLike[]
+  comments    PostComment[]
+  bookmarks   PostBookmark[]
+  views       PostView[]
+  postHashtags PostHashtag[]
+  shareEvents  PostShareEvent[]
+  impressionDays PostImpressionDay[]
+  hiddenBy     PostHidden[]
 
   @@index([authorId, createdAt])
   @@index([status, visibility, createdAt])
@@ -526,9 +552,13 @@ model PostComment {
   parent    PostComment?  @relation("commentThread", fields: [parentId], references: [id], onDelete: Cascade)
   replies   PostComment[] @relation("commentThread")
   body      String
+  status    String   @default("VISIBLE") // VISIBLE | HIDDEN — a RESTRICTED author's comments start HIDDEN; visible to their author + the post owner, who can approve (→ VISIBLE)
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  @@index([postId, createdAt])
+  commentLikes PostCommentLike[]
+
+  @@index([postId, status, createdAt]) // public listing filters status
   @@index([authorId])
 }
 
@@ -541,6 +571,173 @@ model PostView {
 
   @@id([postId, viewerKey, day]) // deduped per viewer per day
   @@index([postId])
+}
+
+// ---------- Social network expansion (additive — real social graph) ----------
+
+/// Per-pair relationship controls the OWNER sets on the TARGET: mute (their
+/// activity never reaches my feeds or notifications) and restrict (their new
+/// comments on MY posts start HIDDEN until I approve). Block remains its own
+/// dedicated model — it is a stronger, bidirectional exclusion.
+model AccountEdge {
+  id        String   @id @default(cuid())
+  userId    String // who set the controls
+  targetId  String // who they are controlled for
+  muted      Boolean @default(false)
+  restricted Boolean @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner  User @relation("accountEdgeOwner", fields: [userId], references: [id], onDelete: Cascade)
+  target User @relation("accountEdgeTarget", fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, targetId])
+  @@index([targetId]) // "who muted/restricted me" reverse checks
+}
+
+model PostCommentLike {
+  commentId String
+  userId    String
+  createdAt DateTime @default(now())
+
+  comment PostComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  user    User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([commentId, userId]) // duplicate likes are structurally impossible
+  @@index([userId])
+}
+
+/// Negative relevance feedback: "not interested" — excluded from For You and
+/// Trending for that user forever. Private to the viewer; never affects others.
+model PostHidden {
+  userId    String
+  postId    String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@id([userId, postId])
+  @@index([postId])
+}
+
+/// Real share-event ledger behind the Post.shares counter (analytics need
+/// time-scoped share totals; a bare counter cannot provide them).
+model PostShareEvent {
+  id        String   @id @default(cuid())
+  postId    String
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  userId    String? // null for anonymous shares
+  channel   String   @default("link") // link | copy | native
+  createdAt DateTime @default(now())
+
+  @@index([postId, createdAt])
+}
+
+/// Daily impression buckets — time-scoped analytics without scanning events.
+/// Sum over days = impressions in range; Post.impressions stays the lifetime cache.
+model PostImpressionDay {
+  postId String
+  day    String // UTC "YYYY-MM-DD"
+  count  Int    @default(0)
+  post   Post   @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@id([postId, day])
+  @@index([postId])
+}
+
+/// Hashtag dictionary (normalized names) — powers discovery, trending and
+/// autocomplete. Post.hashtags stays the denormalized mirror for cheap reads.
+model Hashtag {
+  id         String   @id @default(cuid())
+  name       String   @unique // lowercase, no '#', [a-z0-9_]
+  postCount  Int      @default(0) // ACTIVE public-post usage count (maintained on post create/edit/delete)
+  lastUsedAt DateTime @default(now())
+
+  posts PostHashtag[]
+
+  @@index([postCount]) // trending queries
+}
+
+model PostHashtag {
+  postId    String
+  hashtagId String
+  post      Post    @relation(fields: [postId], references: [id], onDelete: Cascade)
+  hashtag   Hashtag @relation(fields: [hashtagId], references: [id], onDelete: Cascade)
+
+  @@id([postId, hashtagId])
+  @@index([hashtagId])
+}
+
+/// Per-user, per-type notification preferences (absent row = enabled).
+model NotificationSetting {
+  userId  String
+  type    String
+  enabled Boolean @default(true)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, type])
+}
+
+/// One-to-one conversations. Message REQUESTS: when the recipient does not
+/// follow the sender (ACTIVE), the recipient's participant row starts PENDING
+/// — they must accept before the sender can continue the thread.
+model Conversation {
+  id            String    @id @default(cuid())
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  lastMessageAt DateTime?
+
+  participants ConversationParticipant[]
+  messages     Message[]
+
+  @@index([lastMessageAt]) // inbox ordering
+}
+
+model ConversationParticipant {
+  conversationId String
+  userId         String
+  requestState   String    @default("ACTIVE") // ACTIVE | PENDING | DECLINED (recipient side of a message request)
+  lastReadAt     DateTime? // read receipts (own reads are always visible to self)
+  archivedAt     DateTime? // inbox archive (per-participant, private)
+  typingUntil    DateTime? // short-lived typing indicator (polled, ≤6s horizon)
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([conversationId, userId])
+  @@index([userId, archivedAt]) // inbox listing
+}
+
+model Message {
+  id             String    @id @default(cuid())
+  conversationId String
+  senderId       String
+  body           String    @default("")
+  mediaAssetId   String? // loose ref to MediaAsset — ownership + READY validated at send; streamed via existing /api/media/[id]/raw
+  sharedPostId   String? // loose ref to Post — viewability re-validated for every recipient at read time
+  createdAt      DateTime  @default(now())
+  deletedAt      DateTime? // sender-initiated unsend (soft delete keeps thread structure)
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt]) // thread paging
+}
+
+/// Search history (signed-in users only, per-scope). Private to the owner;
+/// clearable at any time (privacy control).
+model SearchQuery {
+  id        String   @id @default(cuid())
+  userId    String
+  query     String
+  scope     String   @default("all") // people | posts | hashtags | all
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
 }
 
 // ---------- AI ----------

@@ -52,7 +52,13 @@ const profileSelect = {
     orderBy: { profession: { order: "asc" } },
   },
   skills: { select: { skill: { select: { label: true } } } },
-  _count: { select: { followsReceived: true, followsGiven: true, profileViews: true } },
+  _count: {
+    select: {
+      followsReceived: { where: { status: "ACTIVE" } }, // PENDING requests never inflate social proof
+      followsGiven: { where: { status: "ACTIVE" } },
+      profileViews: true,
+    },
+  },
 } satisfies Prisma.UserSelect;
 
 type ProfileRow = Prisma.UserGetPayload<{ select: typeof profileSelect }>;
@@ -244,7 +250,7 @@ export const GET = handler(async (req: NextRequest, { params }: Ctx) => {
 
   const res = ok({
     profile: base.profile,
-    isFollowing: Boolean(follow),
+    isFollowing: follow?.status === "ACTIVE", // PENDING requests do not count as following
     isSelf: Boolean(isSelf),
     projects: base.projects,
     collections: base.collections,
