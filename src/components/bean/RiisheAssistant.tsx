@@ -135,12 +135,27 @@ export default function RiisheAssistant() {
       // The streaming message slot.
       setMessages((m) => [...m, { role: "assistant", content: "" }]);
 
+      // Hard deadline for the WHOLE request (connect + stream). The server
+      // bounds its own work below this; the deadline only fires when the
+      // connection itself is dead — loading can never hang forever.
+      const controller = new AbortController();
+      const requestTimer = setTimeout(() => controller.abort(), 150_000);
+      // Stalled-stream detection: no bytes for 60s mid-stream → give up.
+      let idleTimer: ReturnType<typeof setTimeout> | undefined;
+      const armIdle = () => {
+        if (idleTimer !== undefined) clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => controller.abort(), 60_000);
+      };
+
       try {
         const res = await fetch("/api/ai/chat-stream", {
           method: "POST",
           headers: { "Content-Type": "application/json", "X-Bean-Embed": window.self !== window.top ? "1" : "0" },
           body: JSON.stringify({ conversationId: conversationId ?? undefined, message: content }),
-          credentials: "same-origin",
+          // "include" (not "same-origin") so the request carries the same
+          // partitioned embed session cookie as every other API call.
+          credentials: "include",
+          signal: controller.signal,
         });
 
         if (!res.ok || !res.body) {
@@ -157,6 +172,7 @@ export default function RiisheAssistant() {
 
         setWaiting(false);
         setStreaming(true);
+        armIdle();
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
@@ -165,6 +181,7 @@ export default function RiisheAssistant() {
         for (;;) {
           const { done: fin, value } = await reader.read();
           if (fin) break;
+          armIdle();
           buffer += decoder.decode(value, { stream: true });
           const lines = buffer.split("\n");
           buffer = lines.pop() ?? "";
@@ -195,14 +212,26 @@ export default function RiisheAssistant() {
           setError(streamErrored);
         } else if (!done) {
           setError("The connection ended early. Press Retry to continue the conversation.");
+          // An unfinished stream that delivered nothing leaves an empty bubble
+          // behind — drop it so the error is the last thing visible.
+          setMessages((m) => (m[m.length - 1]?.role === "assistant" && m[m.length - 1].content === "" ? m.slice(0, -1) : m));
         }
       } catch (e) {
         setStreaming(false);
         setWaiting(false);
-        const msg = e instanceof Error ? e.message : "Something went wrong.";
+        const aborted = controller.signal.aborted;
+        const msg = aborted
+          ? "The assistant stopped waiting — the connection was too slow. Press Retry to try again."
+          : e instanceof Error
+            ? e.message
+            : "Something went wrong.";
         setError(msg);
         // Drop the empty assistant slot so the error is the last thing visible.
         setMessages((m) => (m[m.length - 1]?.role === "assistant" && m[m.length - 1].content === "" ? m.slice(0, -1) : m));
+      } finally {
+        // Success, error, timeout or abort — the timers never outlive the send.
+        clearTimeout(requestTimer);
+        if (idleTimer !== undefined) clearTimeout(idleTimer);
       }
     },
     [conversationId, streaming, waiting, user]

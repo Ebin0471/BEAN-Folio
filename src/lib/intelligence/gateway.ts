@@ -37,12 +37,29 @@ const globalForGateway = globalThis as unknown as {
   __beanGatewayZai?: Awaited<ReturnType<typeof ZAI.create>>;
 };
 
+/** Init deadline for the managed SDK client — an SDK bootstrap hang must not
+ *  hold an AI request (and the user's chat loading state) forever. */
+const ZAI_INIT_TIMEOUT_MS = 15_000;
+
 /** Managed gateway client (text / vision). One instance per process. */
 async function getGatewayZai() {
-  if (!globalForGateway.__beanGatewayZai) {
-    globalForGateway.__beanGatewayZai = await ZAI.create();
+  const existing = globalForGateway.__beanGatewayZai;
+  if (existing) return existing;
+  // The instance (not the promise) is memoized AFTER a successful create, so
+  // a failed/hung init is never cached — the next request retries creation.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const created = (await Promise.race([
+      ZAI.create(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new GatewayError("The AI service is unavailable right now. Please try again shortly.")), ZAI_INIT_TIMEOUT_MS);
+      }),
+    ])) as Awaited<ReturnType<typeof ZAI.create>>;
+    globalForGateway.__beanGatewayZai = created;
+    return created;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
-  return globalForGateway.__beanGatewayZai;
 }
 
 export interface GatewayMessage {

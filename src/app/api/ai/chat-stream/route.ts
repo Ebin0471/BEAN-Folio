@@ -65,11 +65,15 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
   const { conversationId, message } = r.data;
 
   let conversation;
+  // Whether THIS request created the row — a failed turn must not leave an
+  // empty orphan conversation behind in the owner's history list.
+  let createdConversation = false;
   if (conversationId) {
     conversation = await db.aiConversation.findFirst({ where: { id: conversationId, userId: user.id } });
     if (!conversation) return ERR.notFound();
   } else {
     conversation = await db.aiConversation.create({ data: { userId: user.id, title: message.slice(0, 40) } });
+    createdConversation = true;
   }
 
   // ---- Context: ONLY the user's own data (same contract as /api/ai/chat).
@@ -115,8 +119,21 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
           let buffer = "";
           const deadline = Date.now() + 55_000;
           for (;;) {
-            if (Date.now() > deadline) break;
-            const { done, value } = await reader.read();
+            const remaining = deadline - Date.now();
+            if (remaining <= 0) break;
+            // Race each read against the remaining deadline: a provider stream
+            // that stops sending bytes (and never closes) must not hold this
+            // route — and the client's loading state — open forever.
+            let timedOut = false;
+            const readResult = await Promise.race([
+              reader.read(),
+              new Promise<"timeout">((resolve) => setTimeout(() => { timedOut = true; resolve("timeout"); }, remaining)),
+            ]);
+            if (readResult === "timeout" || timedOut) {
+              void reader.cancel().catch(() => undefined);
+              break;
+            }
+            const { done, value } = readResult;
             if (done) break;
             buffer += decoder.decode(value, { stream: true });
             const lines = buffer.split("\n");
@@ -172,6 +189,13 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
               ],
             })
             .catch(() => undefined);
+        } else if (createdConversation) {
+          // Nothing streamed and the row was created by this request — remove
+          // the empty orphan so the history list stays clean.
+          const orphaned = await db.aiMessage.count({ where: { conversationId: conversation.id } }).catch(() => 1);
+          if (orphaned === 0) {
+            await db.aiConversation.delete({ where: { id: conversation.id } }).catch(() => undefined);
+          }
         }
         controller.enqueue(sse({ error: errMsg }));
       } finally {

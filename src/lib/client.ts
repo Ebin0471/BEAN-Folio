@@ -6,6 +6,22 @@
  * with a user-safe message from the server's `{ error }` body.
  */
 
+export interface ApiOptions extends Omit<RequestInit, "body"> {
+  /** JSON body — will be serialized automatically */
+  json?: unknown;
+  /** FormData body (uploads) */
+  form?: FormData;
+  /**
+   * Client-side request deadline in ms. The request is aborted when the
+   * server has not responded within this window — a stalled connection (dead
+   * network, suspended tab, black-holed proxy) must surface as an error, not
+   * hang the caller's loading state forever. Default: no deadline (existing
+   * callers unchanged); chat flows opt in with a bound above the server's own
+   * worst-case response time.
+   */
+  timeoutMs?: number;
+}
+
 export class ApiError extends Error {
   status: number;
   constructor(message: string, status: number) {
@@ -13,13 +29,6 @@ export class ApiError extends Error {
     this.name = "ApiError";
     this.status = status;
   }
-}
-
-export interface ApiOptions extends Omit<RequestInit, "body"> {
-  /** JSON body — will be serialized automatically */
-  json?: unknown;
-  /** FormData body (uploads) */
-  form?: FormData;
 }
 
 /**
@@ -39,11 +48,19 @@ function embedHeaders(): Record<string, string> {
 }
 
 export async function api<T = unknown>(path: string, opts: ApiOptions = {}): Promise<T> {
-  const { json, form, headers, ...rest } = opts;
+  const { json, form, headers, timeoutMs, ...rest } = opts;
+  // Deadline: abort the request when the server stops answering. Aborting a
+  // COMPLETED request is a no-op, so the happy path is untouched.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const controller = timeoutMs ? new AbortController() : undefined;
+  if (controller) {
+    timer = setTimeout(() => controller.abort(), timeoutMs);
+  }
   let res: Response;
   try {
     res = await fetch(path, {
       ...rest,
+      ...(controller ? { signal: controller.signal } : {}),
       headers: {
         ...embedHeaders(),
         ...(json !== undefined ? { "Content-Type": "application/json" } : {}),
@@ -53,7 +70,14 @@ export async function api<T = unknown>(path: string, opts: ApiOptions = {}): Pro
       credentials: "include",
     });
   } catch {
+    // An AbortController-driven abort throws the same way a network failure
+    // does; distinguish it so the UI can say WHY the request ended.
+    if (controller?.signal.aborted) {
+      throw new ApiError("The request took too long and was stopped. Please try again.", 408);
+    }
     throw new ApiError("Network error — check your connection and try again.", 0);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
 
   let data: unknown = null;

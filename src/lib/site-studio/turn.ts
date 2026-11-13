@@ -23,6 +23,7 @@ import {
   type DesignQualityReport,
 } from "@/lib/ai-design/quality";
 import { changedFilesBetween, type ChangedFile } from "./files";
+import { classifyProjectRequest, runProjectTurn } from "@/lib/giftz/project-agent";
 
 /**
  * Website Studio conversational turn — the real code-generation pipeline.
@@ -258,6 +259,10 @@ export async function startStudioTurn(params: StartTurnParams): Promise<StartTur
     // planner/direction engine must see the exact words the user sent.
     request: requestText,
     mode: params.mode,
+    // File-mode routing (contract §6): only giftz-target sessions may enter
+    // the file-level pipeline; a session without a bound GiftzSite keeps the
+    // config pipeline (there is no project tree to operate on yet).
+    giftzSiteId: session.targetKind === "giftz" ? session.targetSiteId : null,
     materialIds: params.materialIds ?? [],
     context: params.context ?? null,
     history,
@@ -293,6 +298,10 @@ interface ExecuteTurnParams {
   base: SiteConfig;
   request: string;
   mode: "edit" | "create";
+  /** GiftzSite id when the session targets a GIFTZ site (file-mode routing,
+   *  contract §6) — null for portfolio sessions, which never reach the
+   *  request classifier. */
+  giftzSiteId: string | null;
   materialIds: string[];
   context: { device?: string; pageName?: string; sectionType?: string; sectionTitle?: string } | null;
   history: { role: string; content: string }[];
@@ -336,6 +345,53 @@ async function executeTurn(p: ExecuteTurnParams): Promise<void> {
   if (!user) {
     await failTurn(p.assistantMessageId, p.taskId, "Account not found.", "plan");
     return;
+  }
+
+  // ---- GIFTZ FILE-MODE ROUTING (contract §6) ---------------------------
+  // A giftz-target session FIRST classifies the request with ONE cheap router
+  // call: file-level work (new pages/components/scripts, build fixes, file
+  // ops) is delegated to the project file pipeline (project-agent.ts) and
+  // this function returns early — the design pipeline below is skipped
+  // ENTIRELY. intent "config" (and any honest router failure, which classifies
+  // as "config") continues into the UNCHANGED config pipeline below.
+  // Portfolio sessions NEVER reach the classifier: giftzSiteId is null there.
+  if (p.giftzSiteId) {
+    const giftzSite = await db.giftzSite.findUnique({ where: { id: p.giftzSiteId } });
+    if (!giftzSite || giftzSite.userId !== p.userId) {
+      await failTurn(
+        p.assistantMessageId,
+        p.taskId,
+        "The generated site bound to this conversation no longer exists.",
+        "plan"
+      );
+      return;
+    }
+    await setStage(p.assistantMessageId, p.taskId, "planning");
+    // DETERMINISTIC ROUTE: an EMPTY giftz site (no saved config AND no project
+    // files) has nothing to file-edit — composing the site is the only correct
+    // pipeline. This skips the classifier call (saves quota, avoids misrouting
+    // "create a website" requests to the file agent) and matches create mode.
+    const [fileCount, hasConfig] = await Promise.all([
+      db.giftzProjectFile.count({ where: { siteId: giftzSite.id } }),
+      Promise.resolve(giftzSite.config !== null && giftzSite.config.trim() !== ""),
+    ]);
+    if (fileCount === 0 && !hasConfig) {
+      // intent "config" — the existing design pipeline composes from scratch.
+    } else {
+      const routing = await classifyProjectRequest(p.userId, giftzSite, p.request);
+      if (routing.intent === "files") {
+        await runProjectTurn({
+          userId: p.userId,
+          site: giftzSite,
+          request: p.request,
+          sessionId: p.sessionId,
+          assistantMessageId: p.assistantMessageId,
+          taskId: p.taskId,
+        });
+        return;
+      }
+    }
+    // intent "config" — the existing design pipeline continues unchanged.
   }
 
   // ---- PLAN (shared pipeline) ----
@@ -724,6 +780,19 @@ export async function retryStudioTurnStep(
     meta = message.metaJson ? (JSON.parse(message.metaJson) as Record<string, unknown>) : {};
   } catch {
     meta = {};
+  }
+  // FILE-LEVEL TURNS (contract §6): a file turn has NO design job — without
+  // this guard the job lookup below would fall back to the account's latest
+  // FAILED job and silently re-run an UNRELATED design execution. Honest 409:
+  // a file turn is retried as a whole via "Retry request" (the original prompt
+  // re-enters the router); the project files are unchanged by this refusal.
+  if (meta.pipeline === "files") {
+    return {
+      ok: false,
+      status: 409,
+      error:
+        "This turn changed project FILES — it has no single failed step to retry. Use “Retry request” to re-run the original prompt; your project files are unchanged.",
+    };
   }
   // Carry the original planner notes over to the retried proposal.
   let planNotes = "";

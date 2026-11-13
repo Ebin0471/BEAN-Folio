@@ -18,6 +18,12 @@ type Ctx = { params: Promise<{ id: string }> };
  * endpoint (/api/profiles/:username) — the exact same public filters the
  * portfolio website renders through. A PRIVATE profile therefore keeps its
  * generated sites unreachable to visitors, exactly like the portfolio site.
+ *
+ * `deployment` (contract §5.2/§5.3, additive): when the site has a LIVE
+ * file-based deployment, the response names it so the public view renders the
+ * real built artifact from /api/giftz/sites/:id/public/index.html instead of
+ * the legacy SiteRenderer fallback (which stays the behavior when this field
+ * is null — legacy JSON-only published sites).
  */
 export const GET = handler(async (_req: NextRequest, { params }: Ctx) => {
   const { id } = await params;
@@ -40,6 +46,12 @@ export const GET = handler(async (_req: NextRequest, { params }: Ctx) => {
   const config = normalizeConfig(site.publishedConfig);
   if (!config) return ERR.notFound();
 
+  const liveDeployment = await db.giftzDeployment.findFirst({
+    where: { siteId: id, status: "LIVE" },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, deployedAt: true },
+  });
+
   return ok({
     site: {
       id,
@@ -51,5 +63,8 @@ export const GET = handler(async (_req: NextRequest, { params }: Ctx) => {
       username: site.user.username,
       name: site.user.name,
     },
+    deployment: liveDeployment
+      ? { id: liveDeployment.id, deployedAt: liveDeployment.deployedAt?.toISOString() ?? null }
+      : null,
   });
 });

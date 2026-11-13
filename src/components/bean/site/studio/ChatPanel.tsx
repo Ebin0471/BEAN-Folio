@@ -72,9 +72,29 @@ export interface StudioChangedFile {
   summary: string;
 }
 
+/** One file-level change of a kind-"files" proposal (contract §6) — content
+ * never reaches the card; only the inventory metadata renders. */
+export interface StudioFileChange {
+  path: string;
+  action: "modified" | "added" | "removed";
+  summary: string;
+  encoding?: "utf8" | "base64";
+}
+
 /** Shape stored on the ASSISTANT message (proposalJson) — see lib/site-studio/turn.ts. */
 export interface StudioProposal {
-  config: SiteConfig;
+  /**
+   * Proposal pipeline that produced this card. "config" (default — absent on
+   * every pre-existing proposal) = design/config changes; "files" = real
+   * project-file changes applied through the file pipeline.
+   */
+  kind?: "config" | "files";
+  /** kind "config": the proposed SiteConfig. Files proposals carry null (or a synced config). */
+  config: SiteConfig | null;
+  /** kind "files": per-file inventory of the proposed overlay. */
+  fileChanges?: StudioFileChange[];
+  /** kind "files": true when the proposal also carries a validated site.config.json. */
+  configSynced?: boolean;
   changedFiles: StudioChangedFile[];
   summary: string;
   verification: unknown;
@@ -222,6 +242,9 @@ export interface ChatPanelProps {
   sessionTarget?: ChatSessionTarget;
   /** Only list conversations bound to this product (omitted = all). */
   sessionsTargetFilter?: "portfolio" | "giftz";
+  /** Reports the active conversation id (null when the thread is new/unbound)
+   *  so the parent can bind it to a site created by a first save. */
+  onActiveSessionChange?: (sessionId: string | null) => void;
 }
 
 /**
@@ -244,6 +267,10 @@ const STAGE_LABELS: Record<string, string> = {
   "executing-retry": "Retrying the failed step — completed steps stay untouched…",
   reviewing: "Reviewing design quality…",
   polishing: "Polishing — repairing quality findings…",
+  // File-level pipeline stages (contract §6).
+  "reading files": "Reading project files…",
+  "writing files": "Writing files…",
+  building: "Building — validating the generated code…",
 };
 
 function stageOf(m: StudioChatMessage): string | null {
@@ -272,6 +299,17 @@ function strField(v: unknown): string {
 /** Valid #RGB/#RRGGBB(/AA) hex color, else "" — never trust wire hexes. */
 function hexColor(v: unknown): string {
   return typeof v === "string" && /^#[0-9a-fA-F]{3,8}$/.test(v.trim()) ? v.trim() : "";
+}
+
+/**
+ * Defensive read of the kind-"files" proposal build verification
+ * ({ ok: boolean, summary }). Only an explicit boolean renders a verdict —
+ * absent/unknown verification never fabricates a pass/fail badge.
+ */
+function readFilesVerification(v: unknown): { ok: boolean; summary: string } | null {
+  const rec = recordOf(v);
+  if (!rec || typeof rec.ok !== "boolean") return null;
+  return { ok: rec.ok, summary: strField(rec.summary) };
 }
 
 /** Finite number clamped to the 0–100 report range, else null. */
@@ -491,18 +529,56 @@ function ProposalCard({
   /** Additive design-quality report (absent on pre-quality proposals). */
   quality?: StudioQuality | null;
 }) {
+  const isFiles = proposal.kind === "files";
+  const fileChanges = proposal.fileChanges ?? [];
+  const changedFiles = proposal.changedFiles ?? [];
+  const filesVerification = isFiles ? readFilesVerification(proposal.verification) : null;
   const verification = readVerification(proposal.verification);
   const swatches = direction ? paletteSwatches(direction.palette) : [];
   return (
     <div className="mt-2 rounded-lg border border-border/70 bg-background/60 p-2.5" role="region" aria-label="Proposed changes">
       <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
         <FolderGit2 className="size-3.5" aria-hidden /> Changed files
+        {isFiles && <Badge variant="outline" className="shrink-0 px-1 py-0 text-[9px] font-normal normal-case tracking-normal text-muted-foreground">project files</Badge>}
       </p>
-      {proposal.changedFiles.length === 0 ? (
+      {isFiles ? (
+        fileChanges.length === 0 ? (
+          <p className="mt-1.5 text-xs text-muted-foreground">No file changes recorded.</p>
+        ) : !showFileInventory ? (
+          <p className="mt-1.5 text-xs text-muted-foreground" title="Turn on “Show changed-file inventory” in GIFTZ settings for the per-file list">
+            {fileChanges.length} {fileChanges.length === 1 ? "file" : "files"} changed — inventory hidden by your validation setting.
+          </p>
+        ) : (
+          <ul className="mt-1.5 max-h-44 space-y-1.5 overflow-y-auto pr-0.5" style={{ scrollbarWidth: "thin" }}>
+            {fileChanges.map((f, i) => {
+              const badge = fileActionBadge(f.action);
+              return (
+                <li key={`${f.path}-${i}`} className="rounded-md border border-border/50 bg-muted/30 px-2 py-1.5">
+                  <p className="flex items-center gap-1.5">
+                    {f.action === "added" ? (
+                      <FilePlus2 className="size-3 shrink-0 text-emerald-500" aria-hidden />
+                    ) : f.action === "removed" ? (
+                      <FileMinus2 className="size-3 shrink-0 text-destructive" aria-hidden />
+                    ) : (
+                      <FilePen className="size-3 shrink-0 text-primary" aria-hidden />
+                    )}
+                    <span className="min-w-0 flex-1 truncate font-mono text-[11px]">{f.path}</span>
+                    {f.encoding === "base64" && <span className="shrink-0 font-mono text-[9px] text-muted-foreground">base64</span>}
+                    <Badge variant="outline" className={cn("shrink-0 px-1 py-0 text-[9px] uppercase", badge.className)}>
+                      {badge.label}
+                    </Badge>
+                  </p>
+                  <p className="mt-0.5 pl-[18px] text-[11px] leading-snug text-muted-foreground">{f.summary}</p>
+                </li>
+              );
+            })}
+          </ul>
+        )
+      ) : changedFiles.length === 0 ? (
         <p className="mt-1.5 text-xs text-muted-foreground">No virtual files changed.</p>
       ) : showFileInventory ? (
         <ul className="mt-1.5 max-h-44 space-y-1.5 overflow-y-auto pr-0.5" style={{ scrollbarWidth: "thin" }}>
-          {proposal.changedFiles.map((f, i) => {
+          {changedFiles.map((f, i) => {
             const badge = fileActionBadge(f.action);
             return (
               <li key={`${f.path}-${i}`} className="rounded-md border border-border/50 bg-muted/30 px-2 py-1.5">
@@ -526,19 +602,38 @@ function ProposalCard({
         </ul>
       ) : (
         <p className="mt-1.5 text-xs text-muted-foreground" title="Turn on “Show changed-file inventory” in GIFTZ settings for the per-file list">
-          {proposal.changedFiles.length} virtual {proposal.changedFiles.length === 1 ? "file" : "files"} changed — inventory hidden by your validation setting.
+          {changedFiles.length} virtual {changedFiles.length === 1 ? "file" : "files"} changed — inventory hidden by your validation setting.
         </p>
       )}
 
       {proposal.summary && <p className="mt-2 text-xs leading-relaxed">{proposal.summary}</p>}
 
-      {verification && (
-        <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]" aria-label="Verification results">
-          <span className="text-emerald-600 dark:text-emerald-400">{verification.passed} passed</span>
-          {verification.warned > 0 && <span className="text-amber-600 dark:text-amber-400">{verification.warned} warned</span>}
-          {verification.failed > 0 && <span className="text-destructive">{verification.failed} failed</span>}
-          <span className="text-muted-foreground">· engine verification</span>
-        </p>
+      {isFiles ? (
+        filesVerification && (
+          <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]" aria-label="Build verification">
+            <Badge
+              variant="outline"
+              className={cn(
+                "shrink-0 px-1 py-0 text-[9px] uppercase",
+                filesVerification.ok
+                  ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                  : "border-destructive/40 bg-destructive/10 text-destructive"
+              )}
+            >
+              {filesVerification.ok ? "Build passed" : "Build has errors"}
+            </Badge>
+            {filesVerification.summary && <span className="min-w-0 flex-1 text-muted-foreground">{filesVerification.summary}</span>}
+          </p>
+        )
+      ) : (
+        verification && (
+          <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]" aria-label="Verification results">
+            <span className="text-emerald-600 dark:text-emerald-400">{verification.passed} passed</span>
+            {verification.warned > 0 && <span className="text-amber-600 dark:text-amber-400">{verification.warned} warned</span>}
+            {verification.failed > 0 && <span className="text-destructive">{verification.failed} failed</span>}
+            <span className="text-muted-foreground">· engine verification</span>
+          </p>
+        )
       )}
 
       {direction && (
@@ -681,6 +776,7 @@ export function ChatPanel({
   onGiftzSettingsChange,
   sessionTarget,
   sessionsTargetFilter,
+  onActiveSessionChange,
 }: ChatPanelProps) {
   const [sessions, setSessions] = useState<StudioSessionSummary[]>([]);
   const [sessionsLoaded, setSessionsLoaded] = useState(false);
@@ -708,6 +804,16 @@ export function ChatPanel({
   useEffect(() => {
     sessionTargetRef.current = sessionTarget;
   }, [sessionTarget]);
+  // Report the active conversation id upward — the studio binds an unbound
+  // "New website" conversation to the site row it creates on first save,
+  // so the thread survives the panel remount (key changes to the site id).
+  const onActiveSessionChangeRef = useRef(onActiveSessionChange);
+  useEffect(() => {
+    onActiveSessionChangeRef.current = onActiveSessionChange;
+  }, [onActiveSessionChange]);
+  useEffect(() => {
+    onActiveSessionChangeRef.current?.(activeSessionId);
+  }, [activeSessionId]);
   useEffect(() => {
     configRef.current = currentConfig;
   }, [currentConfig]);
@@ -762,16 +868,30 @@ export function ChatPanel({
     }
   }, []);
 
+  // Sessions scoped to the CURRENT product binding (product separation):
+  // a GIFTZ panel bound to a site shows only THAT site's conversations; an
+  // unbound "New website" panel shows only unbound GIFTZ conversations —
+  // reusing another site's session would leak its content model as the
+  // generation base and land the result on the wrong project. Portfolio
+  // panels (no sessionTarget / portfolio filter) are unaffected.
+  const scopedSessions = useMemo(() => {
+    if (!sessionTarget || sessionTarget.kind !== "giftz") return sessions;
+    const wanted = sessionTarget.siteId ?? null;
+    return sessions.filter((s) => (s.targetSiteId ?? null) === wanted);
+  }, [sessions, sessionTarget]);
+
   // Reopen the most recent conversation once the session list arrives, so
   // history continues seamlessly across reloads and studio-mode switches (an
   // in-flight turn resumes polling inside openSession). Run-once guard: only
-  // while no thread is open.
+  // while no thread is open. AUTO-OPEN IS BINDING-SCOPED: only a session
+  // belonging to the current target may reopen — an unbound "New website"
+  // panel starts empty and creates its own session on first send.
   const autoOpenedRef = useRef(false);
   useEffect(() => {
     if (!sessionsLoaded || autoOpenedRef.current) return;
     autoOpenedRef.current = true;
-    if (sessions.length > 0 && !activeSessionId) void openSession(sessions[0].id);
-  }, [sessionsLoaded, sessions, activeSessionId, openSession]);
+    if (scopedSessions.length > 0 && !activeSessionId) void openSession(scopedSessions[0].id);
+  }, [sessionsLoaded, scopedSessions, activeSessionId, openSession]);
 
   // ---- create a session ----------------------------------------------------
   const createSession = useCallback(
@@ -1153,16 +1273,16 @@ export function ChatPanel({
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="w-64">
             <DropdownMenuLabel>Conversations</DropdownMenuLabel>
-            {sessionsLoaded && sessions.length === 0 && (
+            {sessionsLoaded && scopedSessions.length === 0 && (
               <p className="px-2 py-3 text-center text-xs text-muted-foreground">No sessions yet — send a message to start one.</p>
             )}
-            {sessions.map((s) => (
+            {scopedSessions.map((s) => (
               <DropdownMenuItem key={s.id} onSelect={() => void openSession(s.id)} className="gap-2">
                 <span className="min-w-0 flex-1 truncate">{s.title}</span>
                 <span className="shrink-0 text-[10px] text-muted-foreground">{s.messageCount} msg</span>
               </DropdownMenuItem>
             ))}
-            {sessions.length > 0 && (
+            {scopedSessions.length > 0 && (
               <>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onSelect={() => void createSession()}>

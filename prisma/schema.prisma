@@ -1112,16 +1112,158 @@ model GiftzSite {
   title           String   @default("Untitled site")
   // The originating prompt (bounded) — provenance for the creator only.
   sourcePrompt    String?
+  // Short project description (bounded, creator-facing metadata only).
+  description     String?
+  // Project framework of the generated file tree. "standard-static" is the
+  // compiled static site (HTML/CSS/JS + package.json + site.config.json).
+  framework       String   @default("standard-static")
   config          String? // JSON SiteConfig working draft — private to the owner
   publishedConfig String? // JSON snapshot published for visitors (PUBLISHED only)
   status          String   @default("DRAFT") // DRAFT | PUBLISHED
+  // Standalone-platform publish pipeline state:
+  // DRAFT | BUILDING | PREVIEW | READY_TO_PUBLISH | DEPLOYING | PUBLISHED | FAILED
+  deployStatus    String   @default("DRAFT")
   publishedAt     DateTime?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  revisions GiftzSiteRevision[]
+  revisions      GiftzSiteRevision[]
+  projectFiles   GiftzProjectFile[]  @relation("giftzProjectFiles")
+  versions       GiftzProjectVersion[] @relation("giftzProjectVersions")
+  builds         GiftzBuild[]        @relation("giftzBuilds")
+  deployments    GiftzDeployment[]   @relation("giftzDeployments")
+  domains        GiftzDomain[]       @relation("giftzDomains")
+  activities     GiftzActivity[]     @relation("giftzActivities")
 
   @@index([userId, updatedAt])
+}
+
+// ---------- GIFTZ standalone platform: real project files ----------
+// Every GIFTZ website project owns a REAL editable file tree. Files are DB
+// rows (bounded content) — `source` tracks who last wrote the file so the
+// deterministic compiler can regenerate its own output without clobbering
+// creator or AI edits:
+//   generated — produced by compileGiftzProjectFiles() from the SiteConfig
+//               content model; safely regenerated on every config save.
+//   user      — written through the code editor; the compiler never
+//               overwrites these (regeneration skips them and reports it).
+//   ai        — written by the GIFTZ file-level agent; same protection.
+// `site.config.json` is the two-way bridge: the visual editor's content model
+// lives inside the file tree so code edits to it sync back into GiftzSite.config.
+model GiftzProjectFile {
+  id        String    @id @default(cuid())
+  siteId    String
+  site      GiftzSite @relation("giftzProjectFiles", fields: [siteId], references: [id], onDelete: Cascade)
+  path      String // confined relative path — no absolute, no "..", no backslash
+  content   String // text content (binary assets are base64-encoded data handled by the compiler with size caps)
+  encoding  String    @default("utf8") // utf8 | base64
+  source    String    @default("generated") // generated | user | ai
+  sizeBytes Int       @default(0)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@unique([siteId, path])
+  @@index([siteId, updatedAt])
+}
+
+// ---------- GIFTZ standalone platform: project version snapshots ----------
+// Full-file-tree snapshots taken on saves, AI proposal applies, publishes and
+// restores (bounded per site). `source` records who created the version.
+// Versions with source "publish" are protected from pruning — the last
+// published state is always recoverable.
+model GiftzProjectVersion {
+  id        String    @id @default(cuid())
+  siteId    String
+  site      GiftzSite @relation("giftzProjectVersions", fields: [siteId], references: [id], onDelete: Cascade)
+  label     String
+  // ai | user | publish | restore | auto
+  source    String    @default("auto")
+  filesJson String // JSON: { files: [{ path, content, encoding, source }], config: SiteConfig | null }
+  createdBy String?
+  createdAt DateTime  @default(now())
+
+  @@index([siteId, createdAt])
+}
+
+// ---------- GIFTZ standalone platform: build jobs ----------
+// Deterministic production/validation builds of the project file tree.
+// Diagnostics are honest per-file findings; the artifact is the built file
+// set (deployments serve from it). No fabricated success.
+model GiftzBuild {
+  id              String    @id @default(cuid())
+  siteId          String
+  site            GiftzSite @relation("giftzBuilds", fields: [siteId], references: [id], onDelete: Cascade)
+  // QUEUED | BUILDING | SUCCEEDED | FAILED
+  status          String    @default("QUEUED")
+  // manual | publish | ai
+  trigger         String    @default("manual")
+  diagnosticsJson String? // JSON: { checks: [{ path, severity, message }], summary, checksRun, durationMs }
+  artifactJson    String? // SUCCEEDED only: { files: [{ path, mime, encoding, content }] }
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  createdAt       DateTime  @default(now())
+
+  deployments GiftzDeployment[]
+
+  @@index([siteId, createdAt])
+}
+
+// ---------- GIFTZ standalone platform: deployment records ----------
+// Real publishing lifecycle records. provider "bean-folio-hosting" serves the
+// built artifact at the site's public path; external providers go through
+// deployment adapters and are honestly reported as not-configured when absent.
+model GiftzDeployment {
+  id         String     @id @default(cuid())
+  siteId     String
+  site       GiftzSite  @relation("giftzDeployments", fields: [siteId], references: [id], onDelete: Cascade)
+  buildId    String?
+  build      GiftzBuild? @relation(fields: [buildId], references: [id], onDelete: SetNull)
+  // PREPARING | DEPLOYING | LIVE | FAILED | ROLLED_BACK
+  status     String     @default("PREPARING")
+  provider   String     @default("bean-folio-hosting")
+  url        String? // public URL of this deployment (set only when LIVE)
+  filesJson  String? // served artifact: { files: [{ path, mime, encoding, content }] }
+  error      String?
+  deployedAt DateTime?
+  createdAt  DateTime   @default(now())
+
+  @@index([siteId, createdAt])
+}
+
+// ---------- GIFTZ standalone platform: custom domains ----------
+// Configuration + verification records for custom domains. Verification is a
+// real DNS resolution check (never fabricated); routing requires an external
+// hosting/DNS configuration that is honestly reported when absent.
+model GiftzDomain {
+  id                String    @id @default(cuid())
+  siteId            String
+  site              GiftzSite @relation("giftzDomains", fields: [siteId], references: [id], onDelete: Cascade)
+  hostname          String // lowercase, no scheme, no path
+  // PENDING | VERIFIED | FAILED
+  status            String    @default("PENDING")
+  verificationToken String    @default("")
+  verifiedAt        DateTime?
+  lastError         String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@unique([hostname])
+  @@index([siteId])
+}
+
+// ---------- GIFTZ standalone platform: project activity ----------
+// Append-only activity feed for AI agent operations and creator actions on a
+// project (audit trail per project; AuditEvent remains the platform-wide log).
+model GiftzActivity {
+  id         String    @id @default(cuid())
+  siteId     String
+  site       GiftzSite @relation("giftzActivities", fields: [siteId], references: [id], onDelete: Cascade)
+  userId     String
+  kind       String // site.create | ai.compose | ai.edit | file.write | file.delete | build | deploy | publish | version.save | version.restore | domain.add | domain.verify
+  detailJson String    @default("{}")
+  createdAt  DateTime  @default(now())
+
+  @@index([siteId, createdAt])
 }
 
 // Snapshots of a GiftzSite taken before each save — revisions preserve the

@@ -60,6 +60,16 @@ function aiFailure(e: unknown): AiFailure {
     if (e.status === 502) {
       return { title: "The AI service is temporarily unavailable.", hint: e.message, action: "retry" };
     }
+    if (e.status === 408) {
+      // Client-side deadline fired — the request stalled below the server's
+      // own bound. The reply may still land in the saved history; the thread
+      // stays usable either way.
+      return {
+        title: "This is taking longer than usual.",
+        hint: "The assistant stopped waiting. Try again — or check this conversation's history in a moment.",
+        action: "retry",
+      };
+    }
     if (e.status === 0) {
       return { title: "Network error — check your connection and try again.", action: "retry" };
     }
@@ -110,6 +120,8 @@ function ChatTab({
   const [sending, setSending] = useState(false);
   const [input, setInput] = useState("");
   const [failure, setFailure] = useState<AiFailure | null>(null);
+  /** The last message that FAILED to send — powers a Retry that actually resends. */
+  const [retryMessage, setRetryMessage] = useState<string | null>(null);
   const [delegation, setDelegation] = useState<
     | { taskId: string; kind: string; targetAgent: string; brief: string; destinationUrl: string; destinationLabel: string }
     | null
@@ -149,6 +161,7 @@ function ChatTab({
     setActiveId(id);
     setThreadLoading(true);
     setFailure(null);
+    setRetryMessage(null);
     setDelegation(null);
     setAutomation(null);
     try {
@@ -169,6 +182,7 @@ function ChatTab({
     setActiveId(null);
     setThread([]);
     setFailure(null);
+    setRetryMessage(null);
     setDelegation(null);
     setAutomation(null);
     setInput("");
@@ -178,6 +192,7 @@ function ChatTab({
     const message = raw.trim();
     if (!message || sending) return;
     setFailure(null);
+    setRetryMessage(null);
     setSending(true);
     const optimistic: AiMessageDTO = { role: "user", content: message, createdAt: new Date().toISOString() };
     setThread((t) => [...t, optimistic]);
@@ -191,6 +206,10 @@ function ChatTab({
       }>("/api/ai/chat", {
         method: "POST",
         json: { conversationId: activeId ?? undefined, message },
+        // Client-side deadline — strictly above the server's own worst case
+        // (provider attempts are capped server-side), so this only fires when
+        // the CONNECTION itself is dead/stalled. Loading can never hang forever.
+        timeoutMs: 150_000,
       });
       setThread((t) => [
         ...t,
@@ -203,10 +222,15 @@ function ChatTab({
       void refreshConversations(true);
     } catch (e) {
       // The optimistic message was never persisted — remove it so the thread stays honest.
+      // The text is NOT discarded: it returns to the composer AND stays one click
+      // away via the Retry button.
       setThread((t) => t.filter((m) => m !== optimistic));
       setInput(message);
+      setRetryMessage(message);
       setFailure(aiFailure(e));
     } finally {
+      // ALWAYS reached — success, HTTP error, timeout, network failure or
+      // abort. The loading indicator can never stay on.
       setSending(false);
     }
   };
@@ -314,7 +338,19 @@ function ChatTab({
         <div ref={threadRef} className="min-h-0 flex-1 overflow-y-auto p-4" aria-live="polite">
           {failure && (
             <div className="mb-4 space-y-2">
-              <InlineError failure={failure} onRetry={failure.action === "retry" ? () => setFailure(null) : undefined} />
+              <InlineError
+                failure={failure}
+                onRetry={
+                  failure.action === "retry" && retryMessage && !sending
+                    ? () => {
+                        const msg = retryMessage;
+                        setFailure(null);
+                        setRetryMessage(null);
+                        void send(msg);
+                      }
+                    : undefined
+                }
+              />
               {failure.action === "settings" && (
                 <Button variant="outline" size="sm" onClick={() => navigate("/settings")}>
                   Open Settings

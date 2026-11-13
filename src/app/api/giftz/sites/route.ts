@@ -35,6 +35,10 @@ export const GET = handler(async () => {
       publishedAt: true,
       createdAt: true,
       updatedAt: true,
+      // Standalone-platform pipeline state + project file presence:
+      deployStatus: true,
+      framework: true,
+      _count: { select: { projectFiles: true } },
     },
   });
 
@@ -47,6 +51,9 @@ export const GET = handler(async () => {
       publishedAt: s.publishedAt?.toISOString() ?? null,
       createdAt: s.createdAt.toISOString(),
       updatedAt: s.updatedAt.toISOString(),
+      deployStatus: s.deployStatus,
+      framework: s.framework,
+      hasFiles: s._count.projectFiles > 0,
     })),
   });
 });
@@ -55,6 +62,8 @@ const createSchema = z.object({
   title: z.string().trim().max(120).optional(),
   /** The prompt that starts the generation — stored as provenance. */
   sourcePrompt: z.string().max(50_000).optional(),
+  /** Short creator-facing project description (bounded). */
+  description: z.string().trim().max(300).optional(),
 });
 
 /** POST /api/giftz/sites — create an empty generated-site draft. */
@@ -71,6 +80,7 @@ export const POST = handler(async (req: NextRequest) => {
       userId: user.id,
       title: r.data.title?.trim().slice(0, 120) || "Untitled site",
       sourcePrompt: r.data.sourcePrompt?.slice(0, 50_000) ?? null,
+      description: r.data.description?.trim().slice(0, 300) || null,
     },
   });
 
@@ -80,6 +90,9 @@ export const POST = handler(async (req: NextRequest) => {
       title: site.title,
       status: site.status,
       sourcePrompt: site.sourcePrompt,
+      description: site.description,
+      deployStatus: site.deployStatus,
+      framework: site.framework,
       config: null,
       publishedAt: null,
       createdAt: site.createdAt.toISOString(),
@@ -91,6 +104,7 @@ export const POST = handler(async (req: NextRequest) => {
 export const putSchema = z.object({
   title: z.string().trim().max(120).optional(),
   config: z.unknown().optional(),
+  description: z.string().trim().max(300).optional(),
 });
 
 export type PutData = z.infer<typeof putSchema>;
@@ -104,7 +118,7 @@ export type PutData = z.infer<typeof putSchema>;
 export async function saveGiftzSiteConfig(
   userId: string,
   siteId: string,
-  input: { title?: string; config?: unknown }
+  input: { title?: string; config?: unknown; description?: string }
 ): Promise<{ ok: true; config: ReturnType<typeof normalizeConfig> } | { ok: false; message: string; status: number }> {
   const site = await db.giftzSite.findUnique({ where: { id: siteId }, select: { id: true, userId: true, config: true } });
   if (!site || site.userId !== userId) {
@@ -147,6 +161,9 @@ export async function saveGiftzSiteConfig(
     data: {
       ...(input.title !== undefined ? { title: input.title.trim().slice(0, 120) || "Untitled site" } : {}),
       ...(configJson !== null ? { config: configJson } : {}),
+      ...(input.description !== undefined
+        ? { description: input.description.trim().slice(0, 300) || null }
+        : {}),
       updatedAt: new Date(),
     },
   });

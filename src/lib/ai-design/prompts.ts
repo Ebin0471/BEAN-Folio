@@ -267,6 +267,7 @@ The creative direction above is BINDING for this composition: realize its palett
 ${schemaDoc()}
 
 Composition rules:
+- Set the top-level "name" and "tagline" to the site's REAL name and tagline from the user's vision (e.g. a prompt like "create a website for Sakura Ramen House" means name "Sakura Ramen House"). Never leave a draft placeholder ("New site", "{name}") or the input draft's name when the vision states a different one.
 - Return the COMPLETE SiteConfig: 1-8 pages (first page = home), 1-12 sections per page, every section matching the schema.
 - Content ground truth = the source materials + the portfolio context. Derive every title, body, service and experience entry from them. NEVER invent qualifications, employers, clients, metrics, testimonials, awards or achievements. When the materials lack something the structure needs, leave a neutral placeholder the user can fill ("Add your summary here") or use the {bio}/{name}/{headline}/{location}/{availability} placeholders that render the real profile data.
 - Testimonials may only appear as EMPTY containers (quote/name/role left for the user) — never invented.

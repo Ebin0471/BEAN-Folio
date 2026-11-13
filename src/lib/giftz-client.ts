@@ -4,6 +4,7 @@
  */
 
 import { api } from "@/lib/client";
+import type { SiteConfig } from "@/lib/site-config";
 
 // ------------------------------------------------------------------ types
 
@@ -331,3 +332,231 @@ export const intelligenceApi = {
     await api(`/api/intelligence/handoffs/${id}/cancel`, { method: "POST", json: {} });
   },
 };
+
+// ------------------------------------------------------------------ GIFTZ site project (website platform) ---
+// Client for the file-level GIFTZ website platform (contract §4): project file
+// tree, builds, versions, deployments, domains and activity. All shapes mirror
+// the API routes 1:1 — never invented fields on the wire.
+
+export interface GiftzProjectFileDTO {
+  path: string;
+  /** generated | user | ai */
+  source: string;
+  sizeBytes: number;
+  encoding: "utf8" | "base64";
+  updatedAt: string;
+  mime: string;
+}
+
+export interface GiftzFileTreeSummaryDTO {
+  fileCount: number;
+  totalBytes: number;
+  lastUpdatedAt: string | null;
+}
+
+export interface GiftzFileContentDTO {
+  path: string;
+  /** Absent for base64 rows unless explicitly requested raw. */
+  content?: string;
+  encoding: "utf8" | "base64";
+  source: string;
+  mime: string;
+  updatedAt: string;
+}
+
+export interface GiftzBuildDiagnosticDTO {
+  path: string;
+  severity: "error" | "warning";
+  message: string;
+}
+
+export interface GiftzBuildDTO {
+  id: string;
+  status: "QUEUED" | "BUILDING" | "SUCCEEDED" | "FAILED" | string;
+  trigger: string;
+  summary: string | null;
+  checksRun: number | null;
+  durationMs: number | null;
+  /** Full detail only — GET builds/[buildId]; the list omits diagnostics. */
+  diagnostics?: GiftzBuildDiagnosticDTO[];
+  createdAt: string;
+  finishedAt: string | null;
+}
+
+export interface GiftzDeploymentDTO {
+  id: string;
+  buildId: string | null;
+  status: "PREPARING" | "DEPLOYING" | "LIVE" | "FAILED" | "ROLLED_BACK" | string;
+  provider: string;
+  url: string | null;
+  error: string | null;
+  deployedAt: string | null;
+  createdAt: string;
+}
+
+export interface GiftzDomainDTO {
+  id: string;
+  hostname: string;
+  status: "PENDING" | "VERIFIED" | "FAILED" | string;
+  verificationToken: string;
+  verifiedAt: string | null;
+  lastError: string | null;
+  createdAt: string;
+}
+
+export interface GiftzActivityDTO {
+  id: string;
+  kind: string;
+  detail: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+export interface GiftzVersionDTO {
+  id: string;
+  label: string;
+  source: string;
+  createdAt: string;
+  fileCount: number;
+}
+
+export interface GiftzVersionDetailDTO {
+  id: string;
+  label: string;
+  source: string;
+  createdAt: string;
+  files: { path: string; sizeBytes: number }[];
+}
+
+export interface GiftzVersionChangedFileDTO {
+  path: string;
+  action: "added" | "removed" | "modified" | string;
+  patch: string | null;
+}
+
+export interface GiftzApplyFilesResultDTO {
+  applied: number;
+  files: { path: string; action: string }[];
+  config?: SiteConfig | null;
+}
+
+/** File-tree listing (NO content — tree only, per contract §4). */
+export async function listSiteFiles(siteId: string): Promise<{ files: GiftzProjectFileDTO[]; summary: GiftzFileTreeSummaryDTO | null }> {
+  return api(`/api/giftz/sites/${encodeURIComponent(siteId)}/files`);
+}
+
+/** Read one file's content. `binary: true` means the row is base64 — no content is returned unless raw is requested. */
+export async function readSiteFile(siteId: string, path: string): Promise<{ file: GiftzFileContentDTO; binary: boolean }> {
+  return api(
+    `/api/giftz/sites/${encodeURIComponent(siteId)}/files/content?path=${encodeURIComponent(path)}`
+  );
+}
+
+/** Write one UTF-8 text file (source becomes "user"). Writing site.config.json syncs the site config server-side. */
+export async function writeSiteFile(siteId: string, path: string, content: string, encoding?: "utf8"): Promise<{ file: GiftzFileContentDTO }> {
+  return api(`/api/giftz/sites/${encodeURIComponent(siteId)}/files/content`, {
+    method: "PUT",
+    json: { path, content, ...(encoding ? { encoding } : {}) },
+  });
+}
+
+/** Delete one file. The server refuses site.config.json with an honest 400. */
+export async function deleteSiteFile(siteId: string, path: string): Promise<void> {
+  await api(`/api/giftz/sites/${encodeURIComponent(siteId)}/files/content?path=${encodeURIComponent(path)}`, {
+    method: "DELETE",
+  });
+}
+
+/** Rename (move) one file; source preserved; refuses when the destination exists. */
+export async function renameSiteFile(siteId: string, from: string, to: string): Promise<{ file: GiftzFileContentDTO }> {
+  return api(`/api/giftz/sites/${encodeURIComponent(siteId)}/files/rename`, {
+    method: "POST",
+    json: { from, to },
+  });
+}
+
+/** Apply a kind-"files" chat proposal (source "ai") to the working tree. */
+export async function applyFileProposal(siteId: string, messageId: string): Promise<GiftzApplyFilesResultDTO> {
+  return api(`/api/giftz/sites/${encodeURIComponent(siteId)}/files/apply-proposal`, {
+    method: "POST",
+    json: { messageId },
+  });
+}
+
+/** Run one synchronous production/validation build. */
+export async function runSiteBuild(siteId: string): Promise<{ build: GiftzBuildDTO }> {
+  return api(`/api/giftz/sites/${encodeURIComponent(siteId)}/builds`, { method: "POST", json: {} });
+}
+
+/** Newest 20 builds (list omits diagnostics). */
+export async function listSiteBuilds(siteId: string): Promise<{ builds: GiftzBuildDTO[] }> {
+  return api(`/api/giftz/sites/${encodeURIComponent(siteId)}/builds`);
+}
+
+/** One build with full diagnostics. */
+export async function getSiteBuild(siteId: string, buildId: string): Promise<{ build: GiftzBuildDTO }> {
+  return api(`/api/giftz/sites/${encodeURIComponent(siteId)}/builds/${encodeURIComponent(buildId)}`);
+}
+
+export async function listSiteVersions(siteId: string): Promise<{ versions: GiftzVersionDTO[] }> {
+  return api(`/api/giftz/sites/${encodeURIComponent(siteId)}/versions`);
+}
+
+/** Manual snapshot (source "user"). */
+export async function createSiteVersion(siteId: string, label?: string): Promise<{ version: GiftzVersionDTO }> {
+  return api(`/api/giftz/sites/${encodeURIComponent(siteId)}/versions`, {
+    method: "POST",
+    json: label ? { label } : {},
+  });
+}
+
+export async function getSiteVersion(siteId: string, versionId: string): Promise<{ version: GiftzVersionDetailDTO }> {
+  return api(`/api/giftz/sites/${encodeURIComponent(siteId)}/versions/${encodeURIComponent(versionId)}`);
+}
+
+/** Unified diff of one version against the current working tree. */
+export async function getVersionDiff(siteId: string, versionId: string): Promise<{ changed: GiftzVersionChangedFileDTO[] }> {
+  return api(`/api/giftz/sites/${encodeURIComponent(siteId)}/versions/${encodeURIComponent(versionId)}/diff`);
+}
+
+/** Restore a version — replaces the working tree (a restore snapshot is kept server-side). */
+export async function restoreSiteVersion(siteId: string, versionId: string): Promise<{ restored: true; fileCount: number; config: SiteConfig | null }> {
+  return api(`/api/giftz/sites/${encodeURIComponent(siteId)}/versions/${encodeURIComponent(versionId)}/restore`, {
+    method: "POST",
+    json: {},
+  });
+}
+
+export async function listSiteDeployments(siteId: string): Promise<{ deployments: GiftzDeploymentDTO[]; adapter?: { configured: boolean; provider: string; note: string } }> {
+  return api(`/api/giftz/sites/${encodeURIComponent(siteId)}/deployments`);
+}
+
+/** Roll back to a previous deployment (creates a new LIVE deployment from its artifact). */
+export async function rollbackSiteDeployment(siteId: string, deploymentId: string): Promise<{ deployment: GiftzDeploymentDTO }> {
+  return api(`/api/giftz/sites/${encodeURIComponent(siteId)}/deployments/${encodeURIComponent(deploymentId)}/rollback`, {
+    method: "POST",
+    json: {},
+  });
+}
+
+export async function listSiteDomains(siteId: string): Promise<{ domains: GiftzDomainDTO[] }> {
+  return api(`/api/giftz/sites/${encodeURIComponent(siteId)}/domains`);
+}
+
+export async function addSiteDomain(siteId: string, hostname: string): Promise<{ domain: GiftzDomainDTO }> {
+  return api(`/api/giftz/sites/${encodeURIComponent(siteId)}/domains`, { method: "POST", json: { hostname } });
+}
+
+export async function deleteSiteDomain(siteId: string, domainId: string): Promise<void> {
+  await api(`/api/giftz/sites/${encodeURIComponent(siteId)}/domains/${encodeURIComponent(domainId)}`, { method: "DELETE" });
+}
+
+export async function verifySiteDomain(siteId: string, domainId: string): Promise<{ domain: GiftzDomainDTO; routingNote?: string }> {
+  return api(`/api/giftz/sites/${encodeURIComponent(siteId)}/domains/${encodeURIComponent(domainId)}/verify`, {
+    method: "POST",
+    json: {},
+  });
+}
+
+export async function listSiteActivity(siteId: string): Promise<{ activity: GiftzActivityDTO[] }> {
+  return api(`/api/giftz/sites/${encodeURIComponent(siteId)}/activity`);
+}

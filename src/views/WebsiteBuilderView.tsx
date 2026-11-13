@@ -85,6 +85,9 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { EmptyState } from "@/components/bean/EmptyState";
+import { BuildWorkspace } from "@/components/bean/site/giftz/BuildWorkspace";
+import { CodeWorkspace } from "@/components/bean/site/giftz/CodeWorkspace";
+import { GiftzVersionDialog } from "@/components/bean/site/giftz/GiftzVersionDialog";
 import { SiteRenderer } from "@/components/bean/site/SiteRenderer";
 import { ChatPanel, type StudioProposal } from "@/components/bean/site/studio/ChatPanel";
 import { ContentEditor, type ProfileContentPatch } from "@/components/bean/site/studio/ContentEditor";
@@ -105,6 +108,7 @@ import {
 } from "@/components/bean/site/studio/prefs";
 import { api, uploadFile } from "@/lib/client";
 import { navigate } from "@/lib/hash-router";
+import { applyFileProposal, runSiteBuild, type GiftzBuildDiagnosticDTO } from "@/lib/giftz-client";
 import { copyToClipboard, shareUrl } from "@/lib/share";
 import { useSession } from "@/lib/session";
 import { categoryLabel, CATEGORY_LABELS } from "@/lib/categories";
@@ -661,7 +665,10 @@ function configFingerprint(config: SiteConfig): string {
 
 interface ProposalPreview {
   messageId: string;
-  config: SiteConfig;
+  /** Which pipeline produced this preview: "config" (default) or "files" (real project-file changes). */
+  kind: "config" | "files";
+  /** kind "config": the proposed SiteConfig; kind "files": null (the preview is a server-side file overlay iframe). */
+  config: SiteConfig | null;
   /** Fingerprint of the base config the proposal was generated from. */
   baseHash: string;
 }
@@ -686,6 +693,20 @@ const STUDIO_MODES = [
   { key: "customization", label: "Customization", hint: "Free visual customization — presets, fonts, colors, layout, animations" },
   { key: "giftz", label: "GIFTZ", hint: "AI coding workspace — chat-driven code changes with live preview" },
 ] as const;
+
+/**
+ * GIFTZ center-area views (contract §8): the Preview canvas stays exactly as
+ * it was; Code and Build are additive workspaces over the generated site's
+ * REAL project files. Local state only — switching modes/zones never persists
+ * this (it resets to Preview on open, like the rest of the workspace chrome).
+ */
+const GIFTZ_CANVAS_TABS = [
+  { key: "preview", label: "Preview", hint: "Rendered preview of the generated website" },
+  { key: "code", label: "Code", hint: "Project file tree and code editor" },
+  { key: "build", label: "Build", hint: "Builds, deployments, domains and activity" },
+] as const;
+
+type GiftzCanvasTab = (typeof GIFTZ_CANVAS_TABS)[number]["key"];
 
 export default function WebsiteBuilderView() {
   const { user } = useSession();
@@ -792,12 +813,45 @@ export default function WebsiteBuilderView() {
     title: string;
     status: string;
     updatedAt: string;
+    // Additive site-list detail (contract §4) — optional so the switcher
+    // keeps rendering identically when a field is absent on the wire.
+    deployStatus?: string | null;
+    framework?: string | null;
+    hasFiles?: boolean;
+  }
+  /** One generated site's full editor-side state (detail response §4). */
+  interface GiftzSiteDetail {
+    id: string;
+    title: string;
+    status: string;
+    config: SiteConfig | null;
+    deployStatus: string | null;
+    framework: string | null;
+    fileSummary: { fileCount: number; totalBytes: number; lastUpdatedAt: string | null } | null;
+    lastBuild: { id: string; status: string; createdAt: string; summary: string | null } | null;
   }
   const [giftzSites, setGiftzSites] = useState<GiftzSiteSummary[]>([]);
   const [giftzSitesLoading, setGiftzSitesLoading] = useState(false);
-  const [giftzSite, setGiftzSite] = useState<{ id: string; title: string; status: string; config: SiteConfig | null } | null>(null);
+  const [giftzSite, setGiftzSite] = useState<GiftzSiteDetail | null>(null);
   const [giftzPublishedPath, setGiftzPublishedPath] = useState<string | null>(null);
   const [giftzLinkDialogOpen, setGiftzLinkDialogOpen] = useState(false);
+  /** GIFTZ center-area view (Preview | Code | Build) — contract §8. */
+  const [giftzCanvasTab, setGiftzCanvasTab] = useState<GiftzCanvasTab>("preview");
+  /** Bumped after saves / proposal applies — reloads the Code/Build workspaces' data. */
+  const [giftzFilesRefresh, setGiftzFilesRefresh] = useState(0);
+  // Active GIFTZ conversation id (reported by ChatPanel). When the very first
+  // save creates the site row, this conversation is bound to it so the
+  // thread history follows the project (the panel remounts on key change).
+  const [activeGiftzSessionId, setActiveGiftzSessionId] = useState<string | null>(null);
+  /** Version-history dialog (GIFTZ More menu). */
+  const [giftzVersionsOpen, setGiftzVersionsOpen] = useState(false);
+  /** Pre-publish build gate (§8): running/failed state shown INSIDE the publish review dialog. */
+  const [giftzPublishBuild, setGiftzPublishBuild] = useState<{
+    running: boolean;
+    failed: boolean;
+    summary: string | null;
+    diagnostics: GiftzBuildDiagnosticDTO[];
+  } | null>(null);
 
   const refreshGiftzSites = useCallback(async () => {
     setGiftzSitesLoading(true);
@@ -816,25 +870,55 @@ export default function WebsiteBuilderView() {
     void refreshGiftzSites();
   }, [refreshGiftzSites]);
 
-  /** Open one of the user's generated sites in the GIFTZ workspace. */
-  const openGiftzSite = useCallback(async (id: string) => {
-    try {
-      const r = await api<{ site: { id: string; title: string; status: string; config: SiteConfig | null } }>(
-        `/api/giftz/sites/${encodeURIComponent(id)}`
-      );
-      setGiftzSite({ id: r.site.id, title: r.site.title, status: r.site.status, config: r.site.config });
-      setGiftzPublishedPath(null);
-      setProposalPreview(null);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not open this generated site");
-    }
+  /** Fetch one generated site's FULL detail (config + deploy fields) into state. */
+  const refreshGiftzSiteDetail = useCallback(async (id: string): Promise<GiftzSiteDetail> => {
+    const r = await api<{
+      site: {
+        id: string;
+        title: string;
+        status: string;
+        config: SiteConfig | null;
+        deployStatus?: string | null;
+        framework?: string | null;
+        fileSummary?: GiftzSiteDetail["fileSummary"];
+        lastBuild?: GiftzSiteDetail["lastBuild"];
+      };
+    }>(`/api/giftz/sites/${encodeURIComponent(id)}`);
+    const detail: GiftzSiteDetail = {
+      id: r.site.id,
+      title: r.site.title,
+      status: r.site.status,
+      config: r.site.config,
+      deployStatus: r.site.deployStatus ?? null,
+      framework: r.site.framework ?? null,
+      fileSummary: r.site.fileSummary ?? null,
+      lastBuild: r.site.lastBuild ?? null,
+    };
+    setGiftzSite(detail);
+    return detail;
   }, []);
+
+  /** Open one of the user's generated sites in the GIFTZ workspace. */
+  const openGiftzSite = useCallback(
+    async (id: string) => {
+      try {
+        await refreshGiftzSiteDetail(id);
+        setGiftzPublishedPath(null);
+        setProposalPreview(null);
+        setGiftzCanvasTab("preview");
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Could not open this generated site");
+      }
+    },
+    [refreshGiftzSiteDetail]
+  );
 
   /** Start a NEW generated website (unbound until its first save). */
   function startNewGiftzSite() {
     setGiftzSite(null);
     setGiftzPublishedPath(null);
     setProposalPreview(null);
+    setGiftzCanvasTab("preview");
   }
   function setModeSaveStatus(m: StudioSaveMode, next: ModeSaveStatus) {
     setSaveStatus((prev) => ({ ...prev, [m]: next }));
@@ -1508,10 +1592,16 @@ export default function WebsiteBuilderView() {
    * PORTFOLIO draft (PUT /api/me/site — server snapshots "Before save"); in
    * GIFTZ mode the proposal is saved to the GiftzSite artifact (POST to
    * create it when unbound, then PUT /api/giftz/sites/:id) — the portfolio
-   * draft is NEVER touched by a GIFTZ save.
+   * draft is NEVER touched by a GIFTZ save. kind "files" proposals go through
+   * POST /api/giftz/sites/:id/files/apply-proposal instead (real file tree).
    */
   async function saveProposalPreview() {
-    if (!proposalPreview || !config) return;
+    if (!proposalPreview) return;
+    if (proposalPreview.kind === "files") {
+      await saveGiftzFilesProposal();
+      return;
+    }
+    if (!config || !proposalPreview.config) return;
     const candidate = normalizeConfig(proposalPreview.config);
     if (!candidate) {
       toast.error("This proposal is no longer a valid website configuration — discard it and retry.");
@@ -1550,27 +1640,90 @@ export default function WebsiteBuilderView() {
     setModeSaveStatus("giftz", { state: "saving", at: saveStatus.giftz.at });
     try {
       let siteId = giftzSite?.id ?? null;
+      let newlyCreated = false;
       if (!siteId) {
         const created = await api<{ site: { id: string; title: string; status: string } }>("/api/giftz/sites", {
           method: "POST",
           json: { title: (candidate.name || "Generated site").slice(0, 120) },
         });
         siteId = created.site.id;
+        newlyCreated = true;
       }
-      const saved = await api<{ saved: boolean; config: SiteConfig | null }>(
+      const saved = await api<{ saved: boolean; config: SiteConfig | null; fileSync?: { ok: boolean; error?: string } }>(
         `/api/giftz/sites/${encodeURIComponent(siteId)}`,
         { method: "PUT", json: { config: candidate } }
       );
-      setGiftzSite({ id: siteId, title: candidate.name || "Generated site", status: giftzSite?.status ?? "DRAFT", config: saved.config ?? candidate });
+      // First save of a "New website" conversation: bind the unbound giftz
+      // session to the freshly created site BEFORE setGiftzSite remounts the
+      // panel with the new key — otherwise the thread history strands in the
+      // unbound list and the project's conversation panel starts empty.
+      // Awaited (it is one small PATCH) but best-effort: a binding failure
+      // never blocks the save.
+      if (newlyCreated && activeGiftzSessionId) {
+        await api(`/api/me/site/studio/sessions/${encodeURIComponent(activeGiftzSessionId)}`, {
+          method: "PATCH",
+          json: { bindSiteId: siteId },
+        }).catch(() => undefined);
+      }
+      setGiftzSite({
+        id: siteId,
+        title: candidate.name || "Generated site",
+        status: giftzSite?.status ?? "DRAFT",
+        config: saved.config ?? candidate,
+        deployStatus: giftzSite?.deployStatus ?? null,
+        framework: giftzSite?.framework ?? null,
+        fileSummary: giftzSite?.fileSummary ?? null,
+        lastBuild: giftzSite?.lastBuild ?? null,
+      });
       setProposalPreview(null);
       setModeSaveStatus("giftz", { state: "saved", at: Date.now() });
+      setGiftzFilesRefresh((n) => n + 1);
       void refreshGiftzSites();
+      // The save recompiled the generated project files (sync rule S1) — pull
+      // the fresh detail so the publish dialog and Build tab see the new tree.
+      void refreshGiftzSiteDetail(siteId).catch(() => undefined);
+      if (saved.fileSync && saved.fileSync.ok === false) {
+        toast.warning("Saved — but the project files could not be regenerated", {
+          description: saved.fileSync.error ?? "Unknown compile error.",
+        });
+      }
       toast.success("Generated website saved — it is its own site, separate from your portfolio");
       return { id: siteId };
     } catch (e) {
       setModeSaveStatus("giftz", { state: "failed", at: null });
       toast.error(e instanceof Error ? e.message : "Could not save the generated website");
       return null;
+    }
+  }
+
+  /**
+   * GIFTZ files save — applies a kind-"files" proposal to the generated
+   * site's REAL project file tree (source "ai") via POST files/apply-proposal
+   * (contract §4/§8). The server syncs the site config when the proposal
+   * carries a valid site.config.json; the canvas + file tree refresh after.
+   */
+  async function saveGiftzFilesProposal(): Promise<boolean> {
+    if (!proposalPreview || proposalPreview.kind !== "files") return true;
+    if (!giftzSite) {
+      toast.error("Save the generated website first — file changes apply to a saved site.");
+      return false;
+    }
+    setModeSaveStatus("giftz", { state: "saving", at: saveStatus.giftz.at });
+    try {
+      const r = await applyFileProposal(giftzSite.id, proposalPreview.messageId);
+      setProposalPreview(null);
+      setModeSaveStatus("giftz", { state: "saved", at: Date.now() });
+      setGiftzFilesRefresh((n) => n + 1);
+      void refreshGiftzSites();
+      void refreshGiftzSiteDetail(giftzSite.id).catch(() => undefined);
+      toast.success(r.applied === 1 ? "1 file change applied" : `${r.applied} file changes applied`, {
+        description: "The project files are updated — inspect them in the Code tab.",
+      });
+      return true;
+    } catch (e) {
+      setModeSaveStatus("giftz", { state: "failed", at: null });
+      toast.error(e instanceof Error ? e.message : "Could not apply the file changes");
+      return false;
     }
   }
 
@@ -1689,6 +1842,11 @@ export default function WebsiteBuilderView() {
   /**
    * GIFTZ publish — publishes THIS generated site to its own public address
    * (/site/<username>/g/<siteId>). The portfolio website is untouched.
+   *
+   * §8 pre-publish build gate: when the site has REAL project files, a build
+   * runs FIRST and publish is aborted with inline diagnostics on failure — a
+   * broken build can never reach the public address. The review dialog stays
+   * open through the pre-check so the honest result is visible in place.
    */
   async function publishGiftzSite() {
     setPublishing(true);
@@ -1697,26 +1855,70 @@ export default function WebsiteBuilderView() {
       // first (the confirm dialog promises this).
       let siteId = giftzSite?.id ?? null;
       if (proposalPreview) {
-        const candidate = normalizeConfig(proposalPreview.config);
-        if (!candidate) {
-          toast.error("This proposal is no longer a valid website configuration — discard it and retry.");
-          return;
+        if (proposalPreview.kind === "files") {
+          const applied = await saveGiftzFilesProposal();
+          siteId = giftzSite?.id ?? null;
+          if (!applied || !siteId) return; // save failed — publish stops honestly
+        } else {
+          const candidate = normalizeConfig(proposalPreview.config);
+          if (!candidate) {
+            toast.error("This proposal is no longer a valid website configuration — discard it and retry.");
+            return;
+          }
+          const saved = await saveGiftzProposal(candidate);
+          if (!saved) return; // save failed — publish stops honestly
+          siteId = saved.id;
         }
-        const saved = await saveGiftzProposal(candidate);
-        if (!saved) return; // save failed — publish stops honestly
-        siteId = saved.id;
       }
       if (!siteId) {
         toast.error("Generate and save a website first — there is nothing to publish yet.");
         return;
       }
+      // Refresh the detail so the file gate reads the CURRENT tree (the flush
+      // above may have just compiled the first files).
+      let detail: GiftzSiteDetail | null = giftzSite;
+      try {
+        detail = await refreshGiftzSiteDetail(siteId);
+      } catch {
+        // Keep the last known state — the gate below still runs on it.
+      }
+      if (detail?.fileSummary?.fileCount) {
+        setGiftzPublishBuild({ running: true, failed: false, summary: null, diagnostics: [] });
+        try {
+          const buildRes = await runSiteBuild(siteId);
+          if (buildRes.build.status !== "SUCCEEDED") {
+            setGiftzPublishBuild({
+              running: false,
+              failed: true,
+              summary: buildRes.build.summary ?? null,
+              diagnostics: buildRes.build.diagnostics ?? [],
+            });
+            toast.error("Build failed — publish stopped. Fix the errors and try again.");
+            return;
+          }
+          setGiftzPublishBuild(null);
+        } catch (e) {
+          setGiftzPublishBuild({
+            running: false,
+            failed: true,
+            summary: e instanceof Error ? e.message : "The pre-publish build could not run",
+            diagnostics: [],
+          });
+          toast.error(e instanceof Error ? e.message : "Could not run the pre-publish build");
+          return;
+        }
+      }
+      // Pre-check passed (or no project files — legacy JSON-only path).
+      setPublishDialogOpen(false);
+      setGiftzPublishBuild(null);
       const res = await api<{ status: string; publishedAt: string | null; publicPath: string | null }>(
         `/api/giftz/sites/${encodeURIComponent(siteId)}/publish`,
         { method: "POST" }
       );
-      setGiftzSite((s) => (s && s.id === siteId ? { ...s, status: "PUBLISHED" } : s));
+      setGiftzSite((s) => (s && s.id === siteId ? { ...s, status: "PUBLISHED", deployStatus: "PUBLISHED" } : s));
       setGiftzPublishedPath(res.publicPath);
       setGiftzLinkDialogOpen(true);
+      setGiftzFilesRefresh((n) => n + 1);
       toast.success("Generated website published — it is live at its own address");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not publish the generated website");
@@ -1805,12 +2007,21 @@ export default function WebsiteBuilderView() {
 
   const handlePreviewProposal = useCallback(
     (proposal: StudioProposal, messageId: string, opts?: { auto?: boolean }) => {
+      if (proposal.kind === "files") {
+        // File-level proposal (contract §6/§8): the Preview tab renders the
+        // server-side overlay iframe — there is no config to normalize here.
+        // kind defaults to "config" for every pre-existing proposal, so old
+        // messages keep flowing through the exact path below.
+        setProposalPreview({ messageId, kind: "files", config: null, baseHash: proposal.baseConfigHash ?? "" });
+        if (!opts?.auto) setGiftzZone("preview");
+        return;
+      }
       const normalized = normalizeConfig(proposal.config);
       if (!normalized) {
         toast.error("This proposal is no longer a valid website configuration.");
         return;
       }
-      setProposalPreview({ messageId, config: normalized, baseHash: proposal.baseConfigHash });
+      setProposalPreview({ messageId, kind: "config", config: normalized, baseHash: proposal.baseConfigHash });
       // On mobile, a USER-initiated preview jumps straight to the canvas; an
       // auto-preview (generation finished) leaves the user in Chat — the
       // proposal card offers a one-tap Preview there.
@@ -1916,8 +2127,14 @@ export default function WebsiteBuilderView() {
   // Advisory staleness: did the base change since this proposal was generated?
   // Per-product: a GIFTZ proposal is compared against the GiftzSite's own
   // saved config; a Customization proposal against the portfolio draft.
+  // kind "files" proposals have no config fingerprint — never marked stale.
   const proposalBase = mode === "giftz" ? giftzSite?.config ?? null : config;
-  const proposalStale = Boolean(proposalPreview && proposalBase && configFingerprint(proposalBase) !== proposalPreview.baseHash);
+  const proposalStale = Boolean(
+    proposalPreview &&
+      proposalPreview.kind === "config" &&
+      proposalBase &&
+      configFingerprint(proposalBase) !== proposalPreview.baseHash
+  );
 
   // One-line canvas status (caption row above the preview).
   const canvasStatusText = previewError
@@ -2017,8 +2234,14 @@ export default function WebsiteBuilderView() {
   // The canvas config: an isolated proposal preview when active; otherwise
   // the product's own artifact — in GIFTZ mode the GENERATED site's saved
   // config (never the portfolio draft), in Customization mode the portfolio
-  // draft.
-  const previewConfig: SiteConfig = proposalPreview?.config ?? (mode === "giftz" ? giftzSite?.config ?? config : config);
+  // draft. kind "files" previews render the server-side overlay iframe
+  // instead of this config (see the Preview tab branch below).
+  const previewConfig: SiteConfig =
+    proposalPreview?.kind === "config" && proposalPreview.config
+      ? proposalPreview.config
+      : mode === "giftz"
+        ? giftzSite?.config ?? config
+        : config;
 
   const previewChildren = (cfg: SiteConfig, opts: { interactive?: boolean } = {}) => (
     <SiteRenderer
@@ -2141,6 +2364,30 @@ export default function WebsiteBuilderView() {
     sectionTitle: selectedSection?.title ?? null,
   };
 
+  /** Code tab → canvas sync: site.config.json was saved through the file API. */
+  function handleGiftzConfigSynced(next: SiteConfig) {
+    setGiftzSite((s) => (s ? { ...s, config: next } : s));
+  }
+
+  /** Publish review dialog confirmation — GIFTZ keeps the dialog OPEN through
+   * the §8 build pre-check so failures show their diagnostics inline. */
+  function handlePublishConfirmed() {
+    if (mode === "giftz") {
+      void publish();
+      return;
+    }
+    setPublishDialogOpen(false);
+    void publish();
+  }
+
+  /** After a version restore: reload the site detail, files and config. */
+  function handleGiftzRestored() {
+    const id = giftzSite?.id ?? null;
+    if (id) void refreshGiftzSiteDetail(id).catch(() => undefined);
+    setGiftzFilesRefresh((n) => n + 1);
+    void refreshGiftzSites();
+  }
+
   return (
     // Mobile: the shell's fixed bottom nav (~5rem + safe area) overlays the
     // viewport bottom — reserve that space so the zone tabs stay tappable.
@@ -2230,9 +2477,16 @@ export default function WebsiteBuilderView() {
                     className={giftzSite?.id === s.id ? "bg-accent" : undefined}
                   >
                     <span className="min-w-0 flex-1 truncate">{s.title}</span>
-                    {s.status === "PUBLISHED" && (
+                    {/* Deploy-state badges (contract §8, additive): the existing
+                        "live" tag keeps rendering for published sites; the
+                        newer deployStatus states get their own honest tags. */}
+                    {s.status === "PUBLISHED" || s.deployStatus === "PUBLISHED" ? (
                       <span className="shrink-0 text-[10px] uppercase tracking-wide text-emerald-600 dark:text-emerald-400">live</span>
-                    )}
+                    ) : s.deployStatus === "FAILED" ? (
+                      <span className="shrink-0 text-[10px] uppercase tracking-wide text-destructive">build failed</span>
+                    ) : s.deployStatus === "PREVIEW" || s.deployStatus === "READY_TO_PUBLISH" ? (
+                      <span className="shrink-0 text-[10px] uppercase tracking-wide text-amber-600 dark:text-amber-400">preview</span>
+                    ) : null}
                   </DropdownMenuItem>
                 ))
               )}
@@ -2351,6 +2605,23 @@ export default function WebsiteBuilderView() {
         </DropdownMenu>
         )}
 
+        {/* more menu (GIFTZ): generated-site tools — Version history (contract §8) */}
+        {mode === "giftz" && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="h-8 px-2" aria-label="More generated-site tools">
+                <MoreHorizontal className="size-4" aria-hidden />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuLabel>Generated website</DropdownMenuLabel>
+              <DropdownMenuItem onSelect={() => setGiftzVersionsOpen(true)} disabled={!giftzSite}>
+                <History className="size-4" aria-hidden /> Version history
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+
         {/* live address chip (xl screens) — the PORTFOLIO website's address;
             GIFTZ generated sites surface their own address after publishing */}
         {mode === "customization" && published && (canonicalUrl ?? liveHash) && (
@@ -2403,6 +2674,7 @@ export default function WebsiteBuilderView() {
             onGiftzSettingsChange={(next) => updateGiftzPrefs(next)}
             sessionTarget={{ kind: "giftz", siteId: giftzSite?.id ?? null }}
             sessionsTargetFilter="giftz"
+            onActiveSessionChange={setActiveGiftzSessionId}
           />
         </aside>
 
@@ -2519,42 +2791,124 @@ export default function WebsiteBuilderView() {
             </div>
           ) : (
             <div className="flex min-h-0 flex-1 flex-col gap-1 p-1.5">
-              {/* one compact toolbar row: status caption left, reload right */}
-              <div className="flex shrink-0 items-center justify-between gap-2">
-                <p className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground" title={canvasStatusText}>
-                  {canvasStatusText}
-                </p>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 shrink-0 gap-1.5 px-2 text-[11px] text-muted-foreground"
-                  onClick={() => {
-                    setPreviewError(false);
-                    setPreviewNonce((n) => n + 1);
-                  }}
-                  title="Reload the live preview from scratch — useful after an error or to re-run fonts and animations"
+              {/* GIFTZ center views (contract §8): Preview keeps the existing
+                  canvas EXACTLY as it was; Code and Build are additive
+                  workspaces over the generated site's real project files.
+                  Styled identically to the STUDIO_MODES tablist. */}
+              {mode === "giftz" && (
+                <div
+                  role="tablist"
+                  aria-label="GIFTZ workspace views"
+                  className="inline-flex shrink-0 items-center gap-0.5 self-start rounded-lg border border-border/60 bg-card/60 p-0.5"
                 >
-                  <RefreshCw className="size-3.5" aria-hidden /> Reload preview
-                </Button>
-              </div>
-              <DeviceStage
-                deviceWidth={DEVICE_PRESETS[device].width}
-                label={`${deviceMeta.label} ${mode === "giftz" ? "generated website preview" : "website preview"}`}
-                minHeight={320}
-                marker="canvas"
-                refreshKey={previewNonce}
-                onRenderError={() => setPreviewError(true)}
-                onAnchorClick={(href) => {
-                  // The preview canvas has no navigation context: project links
-                  // open the REAL website-native project page in a new tab
-                  // (/site/<username>/projects/<id> — proxy-served path form),
-                  // never the BEAN Folio platform project page.
-                  const path = href.startsWith("#") ? href.slice(1) : href;
-                  if (path.startsWith("/site/")) window.open(path, "_blank", "noopener");
-                }}
-              >
-                {previewChildren(previewConfig, { interactive: mode === "customization" })}
-              </DeviceStage>
+                  {GIFTZ_CANVAS_TABS.map((tab) => {
+                    const active = giftzCanvasTab === tab.key;
+                    return (
+                      <button
+                        key={tab.key}
+                        type="button"
+                        role="tab"
+                        aria-selected={active}
+                        title={tab.hint}
+                        onClick={() => setGiftzCanvasTab(tab.key)}
+                        className={cn(
+                          "inline-flex min-h-[32px] items-center whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium transition-colors sm:text-[13px]",
+                          active
+                            ? "bg-gold-soft text-primary shadow-sm"
+                            : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                        )}
+                      >
+                        {tab.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              {mode !== "giftz" || giftzCanvasTab === "preview" ? (
+                <>
+                  {/* one compact toolbar row: status caption left, reload right */}
+                  <div className="flex shrink-0 items-center justify-between gap-2">
+                    <p className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground" title={canvasStatusText}>
+                      {canvasStatusText}
+                    </p>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 shrink-0 gap-1.5 px-2 text-[11px] text-muted-foreground"
+                      onClick={() => {
+                        setPreviewError(false);
+                        setPreviewNonce((n) => n + 1);
+                      }}
+                      title="Reload the live preview from scratch — useful after an error or to re-run fonts and animations"
+                    >
+                      <RefreshCw className="size-3.5" aria-hidden /> Reload preview
+                    </Button>
+                  </div>
+                  <DeviceStage
+                    deviceWidth={DEVICE_PRESETS[device].width}
+                    label={`${deviceMeta.label} ${mode === "giftz" ? "generated website preview" : "website preview"}`}
+                    minHeight={320}
+                    marker="canvas"
+                    refreshKey={previewNonce}
+                    onRenderError={() => setPreviewError(true)}
+                    onAnchorClick={(href) => {
+                      // The preview canvas has no navigation context: project links
+                      // open the REAL website-native project page in a new tab
+                      // (/site/<username>/projects/<id> — proxy-served path form),
+                      // never the BEAN Folio platform project page.
+                      const path = href.startsWith("#") ? href.slice(1) : href;
+                      if (path.startsWith("/site/")) window.open(path, "_blank", "noopener");
+                    }}
+                  >
+                    {mode === "giftz" && proposalPreview?.kind === "files" ? (
+                      /* kind-"files" proposal overlay (contract §5.1/§8): the
+                          server composes the proposal on top of the working
+                          tree; the sandbox blocks network access (CSP). */
+                      giftzSite ? (
+                        <iframe
+                          src={`/api/giftz/sites/${giftzSite.id}/preview/index.html?proposalMessageId=${proposalPreview.messageId}&nonce=${previewNonce}`}
+                          sandbox="allow-scripts"
+                          className="h-full w-full rounded-lg border border-border/60 bg-background"
+                          title="Generated file changes preview"
+                        />
+                      ) : (
+                        <div className="grid h-full w-full place-items-center rounded-lg border border-border/60 bg-background p-6 text-center">
+                          <p className="max-w-sm text-xs leading-relaxed text-muted-foreground">
+                            File-level changes preview against a saved generated website — save the website first, then
+                            preview this proposal here.
+                          </p>
+                        </div>
+                      )
+                    ) : (
+                      previewChildren(previewConfig, { interactive: mode === "customization" })
+                    )}
+                  </DeviceStage>
+                </>
+              ) : giftzCanvasTab === "code" ? (
+                giftzSite ? (
+                  <CodeWorkspace
+                    siteId={giftzSite.id}
+                    refreshToken={giftzFilesRefresh}
+                    onConfigSynced={handleGiftzConfigSynced}
+                  />
+                ) : (
+                  <div className="flex min-h-0 flex-1 items-center justify-center p-6 text-center">
+                    <p className="max-w-sm text-xs leading-relaxed text-muted-foreground">
+                      The Code workspace edits a SAVED generated website's project files — generate and save a website in
+                      Chat first.
+                    </p>
+                  </div>
+                )
+              ) : giftzSite ? (
+                <BuildWorkspace siteId={giftzSite.id} refreshToken={giftzFilesRefresh} />
+              ) : (
+                <div className="flex min-h-0 flex-1 items-center justify-center p-6 text-center">
+                  <p className="max-w-sm text-xs leading-relaxed text-muted-foreground">
+                    Builds, deployments and domains belong to a SAVED generated website — generate and save one in Chat
+                    first.
+                  </p>
+                </div>
+              )}
             </div>
           )}
         </main>
@@ -2818,7 +3172,13 @@ export default function WebsiteBuilderView() {
       </Dialog>
 
       {/* ---------------- explicit publish review (never one-click silent) ---------------- */}
-      <Dialog open={publishDialogOpen} onOpenChange={setPublishDialogOpen}>
+      <Dialog
+        open={publishDialogOpen}
+        onOpenChange={(v) => {
+          setPublishDialogOpen(v);
+          if (!v) setGiftzPublishBuild(null);
+        }}
+      >
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="font-display">
@@ -2865,11 +3225,56 @@ export default function WebsiteBuilderView() {
               </>
             )}
           </div>
+          {/* §8 pre-publish build gate (GIFTZ, additive): the build runs BEFORE
+              the publish request; failures show honest diagnostics inline and
+              the dialog stays open — no deployment is created. */}
+          {mode === "giftz" && giftzPublishBuild && (
+            <div
+              className={cn(
+                "rounded-lg border p-3 text-xs leading-relaxed",
+                giftzPublishBuild.failed ? "border-destructive/40 bg-destructive/10" : "border-border/60 bg-muted/30"
+              )}
+              role="status"
+            >
+              {giftzPublishBuild.running && (
+                <p className="flex items-center gap-2 font-medium text-foreground">
+                  <Loader2 className="size-3.5 animate-spin" aria-hidden /> Running the pre-publish build…
+                </p>
+              )}
+              {giftzPublishBuild.failed && (
+                <div role="alert">
+                  <p className="flex items-center gap-1.5 font-medium text-destructive">
+                    <TriangleAlert className="size-3.5" aria-hidden /> Build failed — publish stopped.
+                  </p>
+                  {giftzPublishBuild.summary && <p className="mt-1 text-[11px] text-muted-foreground">{giftzPublishBuild.summary}</p>}
+                  {giftzPublishBuild.diagnostics.length > 0 && (
+                    <ul className="mt-2 max-h-40 space-y-1 overflow-y-auto" style={{ scrollbarWidth: "thin" }}>
+                      {giftzPublishBuild.diagnostics.map((d, i) => (
+                        <li key={`${d.path}-${i}`} className="flex items-start gap-1.5 rounded border border-destructive/30 bg-background/40 px-2 py-1">
+                          <TriangleAlert className="mt-0.5 size-3 shrink-0 text-destructive" aria-hidden />
+                          <span className="min-w-0">
+                            <span className="block truncate font-mono text-[11px]">{d.path}</span>
+                            <span className="block break-words font-mono text-[11px] leading-snug text-muted-foreground">{d.message}</span>
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <p className="mt-2 text-[11px] text-muted-foreground">
+                    No deployment was created — the previously published website (if any) is untouched.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setPublishDialogOpen(false)}>
               Review more
             </Button>
-            <Button onClick={() => { setPublishDialogOpen(false); void publish(); }} disabled={publishing}>
+            <Button
+              onClick={() => void handlePublishConfirmed()}
+              disabled={publishing || (mode === "giftz" && Boolean(giftzPublishBuild?.running))}
+            >
               {publishing ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <CloudUpload className="size-4" aria-hidden />}
               {mode === "giftz" ? (giftzSite?.status === "PUBLISHED" ? "Republish now" : "Publish now") : published ? "Republish now" : "Publish now"}
             </Button>
@@ -2992,6 +3397,16 @@ export default function WebsiteBuilderView() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ---------------- GIFTZ generated site: version history (contract §8) ---------------- */}
+      {mode === "giftz" && giftzSite && (
+        <GiftzVersionDialog
+          open={giftzVersionsOpen}
+          onOpenChange={setGiftzVersionsOpen}
+          siteId={giftzSite.id}
+          onRestored={handleGiftzRestored}
+        />
+      )}
     </div>
   );
 }

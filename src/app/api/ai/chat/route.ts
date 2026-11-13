@@ -35,6 +35,9 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
 
   // Resolve or create the conversation (strict ownership).
   let conversation;
+  // Whether THIS request created the row — a failed turn must not leave an
+  // empty orphan conversation behind in the owner's history list.
+  let createdConversation = false;
   if (conversationId) {
     conversation = await db.aiConversation.findFirst({
       where: { id: conversationId, userId: user.id },
@@ -44,6 +47,7 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
     conversation = await db.aiConversation.create({
       data: { userId: user.id, title: message.slice(0, 40) },
     });
+    createdConversation = true;
   }
 
   // ---- Context: ONLY the user's own data, never anyone else's. ----
@@ -142,7 +146,16 @@ ${automationOutcome.replyInstruction}`
     const { text: reply } = await aiComplete(
       replySystemPrompt,
       llmMessages.map((m) => ({ role: m.role, content: m.content })),
-      { agent: "RIISHE", feature: "chat", userId: user.id }
+      {
+        agent: "RIISHE",
+        feature: "chat",
+        userId: user.id,
+        // Per-attempt provider deadline. Conversational replies complete in
+        // seconds; capping each attempt at 45s bounds the WORST case (two
+        // transient attempts + backoff) at roughly 92s so a dead provider can
+        // never hold a chat request (and the user's loading state) for minutes.
+        timeoutMs: 45_000,
+      }
     );
 
     // Cross-agent delegation (one hop, user-approved downstream): when the
@@ -192,6 +205,15 @@ ${automationOutcome.replyInstruction}`
       ...(workflowCard ? { automation: workflowCard } : {}),
     });
   } catch (e) {
+    // A failed turn must not leak an empty conversation into the history
+    // list. Only rows created by THIS request are eligible, and only when
+    // nothing was persisted into them.
+    if (createdConversation) {
+      const leaked = await db.aiMessage.count({ where: { conversationId: conversation.id } }).catch(() => 1);
+      if (leaked === 0) {
+        await db.aiConversation.delete({ where: { id: conversation.id } }).catch(() => undefined);
+      }
+    }
     if (e instanceof AiProviderError) return err(e.message, 502);
     throw e;
   }
