@@ -24,12 +24,15 @@ export function PersonCard({ person, className }: { person: PublicPerson; classN
       </Avatar>
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-2">
-          <Link href={`#/u/${person.username}`} className="truncate font-medium text-foreground transition-colors hover:text-primary">
+          <Link href={`#/u/${person.username}`} aria-label={`View ${person.name}'s profile`} className="truncate font-medium text-foreground transition-colors hover:text-primary">
             {person.name}
           </Link>
           <FollowButton person={person} />
         </div>
         {person.headline && <p className="truncate text-sm text-muted-foreground">{person.headline}</p>}
+        <Link href={`#/u/${person.username}`} className="mt-0.5 inline-block text-xs text-muted-foreground/80 transition-colors hover:text-primary">
+          @{person.username} · View profile
+        </Link>
         <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
           {person.location && (
             <span className="inline-flex items-center gap-1">

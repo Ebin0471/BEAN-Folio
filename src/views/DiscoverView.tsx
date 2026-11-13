@@ -2,86 +2,42 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { CloudOff, Compass, Inbox, Loader2 } from "lucide-react";
-import { toast } from "sonner";
+import { CloudOff, Compass, Film, Inbox, Loader2, PenLine, UserPlus, Users } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { ProjectCard, categoryFromLabel } from "@/components/bean/ProjectCard";
-import { CategoryScroller } from "@/components/bean/CategoryScroller";
+import { Skeleton } from "@/components/ui/skeleton";
+import { PersonCard } from "@/components/bean/PersonCard";
+import { PostCard, recordPostView } from "@/components/bean/PostCard";
+import { VideoCard } from "@/components/bean/VideoCard";
+import { PostComposer } from "@/components/bean/PostComposer";
 import { EmptyState } from "@/components/bean/EmptyState";
-import { CardsSkeleton } from "@/components/bean/Spinner";
+import { SectionHeader } from "@/components/bean/SectionHeader";
 import { api } from "@/lib/client";
 import { navigate } from "@/lib/hash-router";
-import { useProfessionOptions } from "@/lib/use-professions";
 import { useSession } from "@/lib/session";
-import type { DiscoverItem } from "@/lib/types";
+import type { PublicPost, SuggestedCreator } from "@/lib/types";
 
-type Category = string | null; // null = All
+/**
+ * The Discover homepage: the creator social feed.
+ *
+ * Section order (owner spec): navigation (global shell, unchanged) → hero →
+ * Suggested Profiles → Reels & Video feed → Recent creator posts → more
+ * creators to explore. Project cards no longer appear here — project
+ * discovery stays on its existing surfaces (/explore, profiles, /p/ deep
+ * links, published websites), none of which are modified.
+ *
+ * Every section paginates progressively (offset cursors) and renders honest
+ * empty states. All content comes from real database-backed endpoints — no
+ * mock profiles, no mock posts, no placeholder media.
+ */
 
-const PAGE_SIZE = 12;
+const SUGGESTED_PAGE = 8;
+const POSTS_PAGE = 10;
 
 export default function DiscoverView() {
   const { user } = useSession();
+  const [composerOpen, setComposerOpen] = useState(false);
 
-  const [category, setCategory] = useState<Category>(null);
-  const [items, setItems] = useState<DiscoverItem[]>([]);
-  const [cursor, setCursor] = useState<string | null>(null);
-  const [phase, setPhase] = useState<"loading" | "ready" | "error">("loading");
-  const [error, setError] = useState<string | null>(null);
-  const [loadingMore, setLoadingMore] = useState(false);
-
-  // Live taxonomy (Profession table) — canonical categories for the chips.
-  const professionOptions = useProfessionOptions();
-
-  // Request id guards against stale responses when the category changes quickly.
-  const reqRef = useRef(0);
-
-  const loadInitial = useCallback((cat: Category) => {
-    const id = ++reqRef.current;
-    setPhase("loading");
-    setError(null);
-    const params = new URLSearchParams({ limit: String(PAGE_SIZE) });
-    if (cat) params.set("category", cat);
-    api<{ items: DiscoverItem[]; nextCursor: string | null }>(`/api/discover?${params.toString()}`)
-      .then((r) => {
-        if (reqRef.current !== id) return;
-        setItems(r.items);
-        setCursor(r.nextCursor);
-        setPhase("ready");
-      })
-      .catch((err) => {
-        if (reqRef.current !== id) return;
-        setError(err instanceof Error ? err.message : "Could not load the feed.");
-        setPhase("error");
-      });
-  }, []);
-
-  useEffect(() => {
-    loadInitial(category);
-  }, [category, loadInitial]);
-
-  async function loadMore() {
-    if (!cursor || loadingMore || phase !== "ready") return;
-    setLoadingMore(true);
-    const id = reqRef.current;
-    try {
-      const params = new URLSearchParams({ limit: String(PAGE_SIZE) });
-      if (category) params.set("category", category);
-      params.set("cursor", cursor);
-      const r = await api<{ items: DiscoverItem[]; nextCursor: string | null }>(`/api/discover?${params.toString()}`);
-      if (reqRef.current !== id) return;
-      setItems((prev) => [...prev, ...r.items]);
-      setCursor(r.nextCursor);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not load more projects.");
-    } finally {
-      setLoadingMore(false);
-    }
-  }
-
-  const categoryOptions = ["All", ...professionOptions.map((p) => p.label)];
-  const activeLabel = category ? professionOptions.find((p) => p.slug === category)?.label ?? category : "All";
-  const isEmptyFeed = phase === "ready" && items.length === 0;
   const startCta = (
     <Button onClick={() => navigate(user ? "/studio" : "/auth")} className="h-11">
       Start your portfolio
@@ -90,7 +46,7 @@ export default function DiscoverView() {
 
   return (
     <>
-      {/* ---------------------------------------------------------- hero */}
+      {/* ---------------------------------------------------------- hero (unchanged) */}
       <motion.section
         aria-label="Welcome"
         initial={{ opacity: 0, y: 10 }}
@@ -123,75 +79,481 @@ export default function DiscoverView() {
         </div>
       </motion.section>
 
-      {/* ---------------------------------------------------------- feed */}
-      <section aria-label="Discover feed" className="py-8 md:py-10">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6">
-          <h2 className="font-display text-xl font-semibold tracking-tight text-foreground sm:text-2xl">
-            {category ? `${activeLabel} on BEAN Folio` : "Fresh from the community"}
-          </h2>
-
-          {/* category filter chips — single accessible horizontal row */}
-          <div className="mt-4">
-            <CategoryScroller
-              options={categoryOptions}
-              activeLabel={activeLabel}
-              onSelect={(label) => setCategory(label === "All" ? null : categoryFromLabel(label, professionOptions))}
-            />
-          </div>
-
-          <div className="mt-6">
-            {phase === "loading" ? (
-              <CardsSkeleton count={8} />
-            ) : phase === "error" ? (
-              <EmptyState
-                icon={CloudOff}
-                title="The feed could not load"
-                description={error ?? "Something went wrong on our side."}
-                action={
-                  <Button variant="outline" onClick={() => loadInitial(category)}>
-                    Try again
-                  </Button>
-                }
-              />
-            ) : isEmptyFeed ? (
-              category ? (
-                <EmptyState
-                  icon={Inbox}
-                  title={`Nothing in ${activeLabel} yet`}
-                  description="Try another category — or be the first to publish work here."
-                  action={startCta}
-                />
-              ) : (
-                <EmptyState
-                  icon={Inbox}
-                  title="No projects yet — be the first to publish."
-                  description="Your first case study could be live in minutes. The community is waiting."
-                  action={startCta}
-                />
-              )
-            ) : (
-              <>
-                <p className="mb-3 text-sm text-muted-foreground" aria-live="polite">
-                  Showing {items.length} {items.length === 1 ? "project" : "projects"}
-                </p>
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                  {items.map((item) => (
-                    <ProjectCard key={item.project.id} project={item.project} reason={item.reason} />
-                  ))}
-                </div>
-                {cursor && (
-                  <div className="mt-8 flex justify-center">
-                    <Button variant="outline" onClick={() => void loadMore()} disabled={loadingMore} className="h-11 min-w-44">
-                      {loadingMore ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-                      {loadingMore ? "Loading…" : "Load more projects"}
-                    </Button>
-                  </div>
-                )}
-              </>
-            )}
-          </div>
+      {/* ---------------------------------------------------------- create post */}
+      <section aria-label="Create a post" className="py-6 md:py-7">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 sm:px-6">
+          {user ? (
+            <Button onClick={() => setComposerOpen(true)} className="h-11 gap-2">
+              <PenLine className="size-4" aria-hidden /> Create post
+            </Button>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Sign in to post updates, reels and photos — and to follow the creators you find here.
+            </p>
+          )}
         </div>
       </section>
+
+      <SuggestedProfiles />
+      <VideoFeed onCompose={() => setComposerOpen(true)} />
+      <RecentPosts onCompose={() => setComposerOpen(true)} />
+      <MoreCreators />
+
+      {user ? (
+        <PostComposer
+          open={composerOpen}
+          onOpenChange={setComposerOpen}
+          onCreated={() => {
+            // A fresh post is prepended by RecentPosts itself on the next
+            // load-more cycle; nudge it with a custom event to refresh now.
+            window.dispatchEvent(new CustomEvent("bean:post-created"));
+          }}
+        />
+      ) : null}
     </>
+  );
+}
+
+// ---------------------------------------------------------------- profiles
+
+function SuggestedProfiles() {
+  const [items, setItems] = useState<SuggestedCreator[]>([]);
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [phase, setPhase] = useState<"loading" | "ready" | "error">("loading");
+  const [loadingMore, setLoadingMore] = useState(false);
+  const reqRef = useRef(0);
+
+  const load = useCallback((nextCursor: string | null, append: boolean) => {
+    const id = ++reqRef.current;
+    if (append) setLoadingMore(true);
+    else setPhase("loading");
+    const params = new URLSearchParams({ limit: String(SUGGESTED_PAGE) });
+    if (nextCursor) params.set("cursor", nextCursor);
+    api<{ items: SuggestedCreator[]; nextCursor: string | null }>(`/api/discover/suggested?${params}`)
+      .then((r) => {
+        if (reqRef.current !== id) return;
+        setItems((prev) => (append ? [...prev, ...r.items] : r.items));
+        setCursor(r.nextCursor);
+        setPhase("ready");
+      })
+      .catch(() => {
+        if (reqRef.current !== id) return;
+        setPhase("error");
+      });
+  }, []);
+
+  // Initial page fetch — state updates happen only after the await (never
+  // synchronously inside the effect).
+  useEffect(() => {
+    const id = ++reqRef.current;
+    api<{ items: SuggestedCreator[]; nextCursor: string | null }>(`/api/discover/suggested?limit=${SUGGESTED_PAGE}`)
+      .then((r) => {
+        if (reqRef.current !== id) return;
+        setItems(r.items);
+        setCursor(r.nextCursor);
+        setPhase("ready");
+      })
+      .catch(() => {
+        if (reqRef.current !== id) return;
+        setPhase("error");
+      });
+  }, []);
+
+  return (
+    <section aria-label="Suggested profiles" className="border-b border-border/60 py-8 md:py-10">
+      <div className="mx-auto max-w-7xl px-4 sm:px-6">
+        <SectionHeader
+          title="Suggested profiles"
+          description="Creators matched by profession, skills, location and community activity."
+        />
+        <div className="mt-6">
+          {phase === "loading" ? (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <Skeleton key={i} className="h-24 rounded-xl" />
+              ))}
+            </div>
+          ) : phase === "error" ? (
+            <EmptyState
+              icon={CloudOff}
+              title="Suggestions could not load"
+              description="Please try again in a moment."
+              action={
+                <Button variant="outline" onClick={() => load(null, false)}>
+                  Try again
+                </Button>
+              }
+            />
+          ) : items.length === 0 ? (
+            <EmptyState
+              icon={Users}
+              title="No creator suggestions yet"
+              description="As creators publish work and posts, their profiles will appear here."
+            />
+          ) : (
+            <>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                {items.map((p) => (
+                  <div key={p.username} className="flex flex-col gap-2">
+                    <PersonCard person={p} />
+                    {p.reason ? <p className="px-1 text-xs text-muted-foreground">{p.reason}</p> : null}
+                  </div>
+                ))}
+              </div>
+              {cursor ? (
+                <div className="mt-6 flex justify-center">
+                  <Button variant="outline" onClick={() => void load(cursor, true)} disabled={loadingMore} className="h-11 min-w-44">
+                    {loadingMore ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <UserPlus className="size-4" aria-hidden />}
+                    {loadingMore ? "Loading…" : "More suggested creators"}
+                  </Button>
+                </div>
+              ) : null}
+            </>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------- video feed
+
+function VideoFeed({ onCompose }: { onCompose: () => void }) {
+  const { user } = useSession();
+  const [items, setItems] = useState<PublicPost[]>([]);
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [phase, setPhase] = useState<"loading" | "ready" | "error">("loading");
+  const [loadingMore, setLoadingMore] = useState(false);
+  const reqRef = useRef(0);
+
+  const load = useCallback((nextCursor: string | null, append: boolean) => {
+    const id = ++reqRef.current;
+    if (append) setLoadingMore(true);
+    else setPhase("loading");
+    const params = new URLSearchParams({ kind: "video", limit: String(POSTS_PAGE) });
+    if (nextCursor) params.set("cursor", nextCursor);
+    api<{ items: PublicPost[]; nextCursor: string | null }>(`/api/discover/posts?${params}`)
+      .then((r) => {
+        if (reqRef.current !== id) return;
+        setItems((prev) => (append ? [...prev, ...r.items] : r.items));
+        setCursor(r.nextCursor);
+        setPhase("ready");
+      })
+      .catch(() => {
+        if (reqRef.current !== id) return;
+        setPhase("error");
+      });
+  }, []);
+
+  // Initial page fetch — state updates happen only after the await.
+  useEffect(() => {
+    const id = ++reqRef.current;
+    api<{ items: PublicPost[]; nextCursor: string | null }>(`/api/discover/posts?kind=video&limit=${POSTS_PAGE}`)
+      .then((r) => {
+        if (reqRef.current !== id) return;
+        setItems(r.items);
+        setCursor(r.nextCursor);
+        setPhase("ready");
+      })
+      .catch(() => {
+        if (reqRef.current !== id) return;
+        setPhase("error");
+      });
+  }, []);
+
+  // Register a deduped view (server: one per viewer per UTC day) for reels
+  // that actually render in the feed.
+  useEffect(() => {
+    for (const p of items) recordPostView(p.id);
+  }, [items]);
+
+  function patch(next: PublicPost) {
+    setItems((prev) => prev.map((p) => (p.id === next.id ? next : p)));
+  }
+
+  return (
+    <section aria-label="Reels and video feed" className="border-b border-border/60 py-8 md:py-10">
+      <div className="mx-auto max-w-7xl px-4 sm:px-6">
+        <SectionHeader
+          title="Reels & video"
+          description="Short reels, showreels, tutorials and behind-the-scenes work from the community."
+          action={
+            <Button variant="outline" onClick={onCompose} className="gap-2">
+              <Film className="size-4" aria-hidden /> Post a reel
+            </Button>
+          }
+        />
+        <div className="mt-6">
+          {phase === "loading" ? (
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <Skeleton key={i} className="aspect-[9/16] rounded-xl" />
+              ))}
+            </div>
+          ) : phase === "error" ? (
+            <EmptyState
+              icon={CloudOff}
+              title="The video feed could not load"
+              description="Please try again in a moment."
+              action={
+                <Button variant="outline" onClick={() => load(null, false)}>
+                  Try again
+                </Button>
+              }
+            />
+          ) : items.length === 0 ? (
+            <EmptyState
+              icon={Film}
+              title="No reels yet — be the first"
+              description="Share an editing showreel, a motion piece, a tutorial or behind-the-scenes footage with Create post → Video."
+              action={
+                user ? undefined : (
+                  <Button onClick={() => navigate("/auth")}>Sign in to post</Button>
+                )
+              }
+            />
+          ) : (
+            <>
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+                {items.map((p) => (
+                  <VideoCard key={p.id} post={p} onChange={patch} />
+                ))}
+              </div>
+              {cursor ? (
+                <div className="mt-6 flex justify-center">
+                  <Button variant="outline" onClick={() => void load(cursor, true)} disabled={loadingMore} className="h-11 min-w-44">
+                    {loadingMore ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
+                    {loadingMore ? "Loading…" : "More reels"}
+                  </Button>
+                </div>
+              ) : null}
+            </>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------- posts feed
+
+function RecentPosts({ onCompose }: { onCompose: () => void }) {
+  const [items, setItems] = useState<PublicPost[]>([]);
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [phase, setPhase] = useState<"loading" | "ready" | "error">("loading");
+  const [loadingMore, setLoadingMore] = useState(false);
+  const reqRef = useRef(0);
+
+  const load = useCallback((nextCursor: string | null, append: boolean) => {
+    const id = ++reqRef.current;
+    if (append) setLoadingMore(true);
+    else setPhase("loading");
+    const params = new URLSearchParams({ limit: String(POSTS_PAGE) });
+    if (nextCursor) params.set("cursor", nextCursor);
+    api<{ items: PublicPost[]; nextCursor: string | null }>(`/api/discover/posts?${params}`)
+      .then((r) => {
+        if (reqRef.current !== id) return;
+        setItems((prev) => (append ? [...prev, ...r.items] : r.items));
+        setCursor(r.nextCursor);
+        setPhase("ready");
+      })
+      .catch(() => {
+        if (reqRef.current !== id) return;
+        setPhase("error");
+      });
+  }, []);
+
+  // Initial page fetch — state updates happen only after the await.
+  useEffect(() => {
+    const id = ++reqRef.current;
+    api<{ items: PublicPost[]; nextCursor: string | null }>(`/api/discover/posts?limit=${POSTS_PAGE}`)
+      .then((r) => {
+        if (reqRef.current !== id) return;
+        setItems(r.items);
+        setCursor(r.nextCursor);
+        setPhase("ready");
+      })
+      .catch(() => {
+        if (reqRef.current !== id) return;
+        setPhase("error");
+      });
+  }, []);
+
+  // A just-created post appears at the top of the public feed — refresh on
+  // the composer's post-created event instead of a blind optimistic insert.
+  useEffect(() => {
+    const refresh = () => load(null, false);
+    window.addEventListener("bean:post-created", refresh);
+    return () => window.removeEventListener("bean:post-created", refresh);
+  }, [load]);
+
+  // Deduped view registration for rendered posts.
+  useEffect(() => {
+    for (const p of items) recordPostView(p.id);
+  }, [items]);
+
+  function patch(next: PublicPost) {
+    setItems((prev) => prev.map((p) => (p.id === next.id ? next : p)));
+  }
+
+  function remove(id: string) {
+    setItems((prev) => prev.filter((p) => p.id !== id));
+  }
+
+  const { user } = useSession();
+
+  return (
+    <section aria-label="Recent creator posts" className="border-b border-border/60 py-8 md:py-10">
+      <div className="mx-auto max-w-7xl px-4 sm:px-6">
+        <SectionHeader
+          title="Recent creator posts"
+          description="Updates, questions, insights and work-in-progress from creators you can follow."
+          action={
+            user ? (
+              <Button variant="outline" onClick={onCompose} className="gap-2">
+                <PenLine className="size-4" aria-hidden /> Create post
+              </Button>
+            ) : null
+          }
+        />
+        <div className="mt-6">
+          {phase === "loading" ? (
+            <div className="mx-auto max-w-2xl space-y-4">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <Skeleton key={i} className="h-48 rounded-xl" />
+              ))}
+            </div>
+          ) : phase === "error" ? (
+            <EmptyState
+              icon={CloudOff}
+              title="Posts could not load"
+              description="Please try again in a moment."
+              action={
+                <Button variant="outline" onClick={() => load(null, false)}>
+                  Try again
+                </Button>
+              }
+            />
+          ) : items.length === 0 ? (
+            <EmptyState
+              icon={Inbox}
+              title="No posts yet — start the conversation"
+              description="Share a professional update, a question or your latest work with the community."
+              action={
+                user ? (
+                  <Button onClick={onCompose} className="gap-2">
+                    <PenLine className="size-4" aria-hidden /> Create the first post
+                  </Button>
+                ) : (
+                  <Button onClick={() => navigate("/auth")}>Sign in to post</Button>
+                )
+              }
+            />
+          ) : (
+            <>
+              <div className="mx-auto flex max-w-2xl flex-col gap-4">
+                {items.map((p) => (
+                  <PostCard key={p.id} post={p} onChange={patch} onDelete={remove} />
+                ))}
+              </div>
+              {cursor ? (
+                <div className="mt-6 flex justify-center">
+                  <Button variant="outline" onClick={() => void load(cursor, true)} disabled={loadingMore} className="h-11 min-w-44">
+                    {loadingMore ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
+                    {loadingMore ? "Loading…" : "Load more posts"}
+                  </Button>
+                </div>
+              ) : null}
+            </>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------- more creators
+
+function MoreCreators() {
+  const [items, setItems] = useState<SuggestedCreator[]>([]);
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [phase, setPhase] = useState<"loading" | "ready" | "error">("loading");
+  const [loadingMore, setLoadingMore] = useState(false);
+  const reqRef = useRef(0);
+
+  const load = useCallback((nextCursor: string | null, append: boolean) => {
+    const id = ++reqRef.current;
+    if (append) setLoadingMore(true);
+    else setPhase("loading");
+    const params = new URLSearchParams({ limit: String(SUGGESTED_PAGE) });
+    if (nextCursor) params.set("cursor", nextCursor);
+    api<{ items: SuggestedCreator[]; nextCursor: string | null }>(`/api/discover/suggested?${params}`)
+      .then((r) => {
+        if (reqRef.current !== id) return;
+        setItems((prev) => (append ? [...prev, ...r.items] : r.items));
+        setCursor(r.nextCursor);
+        setPhase("ready");
+      })
+      .catch(() => {
+        if (reqRef.current !== id) return;
+        setPhase("error");
+      });
+  }, []);
+
+  // This section shows the CONTINUATION of the suggestion ranking — it starts
+  // at page 2 so it never repeats the Suggested Profiles grid above it.
+  useEffect(() => {
+    const id = ++reqRef.current;
+    api<{ items: SuggestedCreator[]; nextCursor: string | null }>(`/api/discover/suggested?limit=${SUGGESTED_PAGE}&cursor=${SUGGESTED_PAGE}`)
+      .then((r) => {
+        if (reqRef.current !== id) return;
+        setItems(r.items);
+        setCursor(r.nextCursor);
+        setPhase("ready");
+      })
+      .catch(() => {
+        if (reqRef.current !== id) return;
+        setPhase("error");
+      });
+  }, []);
+
+  if (phase === "ready" && items.length === 0) return null;
+
+  return (
+    <section aria-label="More creators to explore" className="py-8 md:py-10">
+      <div className="mx-auto max-w-7xl px-4 sm:px-6">
+        <SectionHeader title="More creators to explore" description="Keep discovering — every profile here is a real BEAN Folio creator." />
+        <div className="mt-6">
+          {phase === "loading" ? (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <Skeleton key={i} className="h-24 rounded-xl" />
+              ))}
+            </div>
+          ) : phase === "error" ? (
+            <p className="text-sm text-muted-foreground">More suggestions could not be loaded right now.</p>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                {items.map((p) => (
+                  <div key={p.username} className="flex flex-col gap-2">
+                    <PersonCard person={p} />
+                    {p.reason ? <p className="px-1 text-xs text-muted-foreground">{p.reason}</p> : null}
+                  </div>
+                ))}
+              </div>
+              {cursor ? (
+                <div className="mt-6 flex justify-center">
+                  <Button variant="outline" onClick={() => void load(cursor, true)} disabled={loadingMore} className="h-11 min-w-44">
+                    {loadingMore ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
+                    {loadingMore ? "Loading…" : "More creators"}
+                  </Button>
+                </div>
+              ) : null}
+            </>
+          )}
+        </div>
+      </div>
+    </section>
   );
 }

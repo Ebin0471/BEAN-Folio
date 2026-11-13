@@ -91,6 +91,11 @@ model User {
   siteStudioSessions SiteStudioSession[] @relation("siteStudioSessions")
   riisheAutomations  RiisheAutomation[]  @relation("riisheAutomations")
   riisheContactNotes RiisheContactNote[] @relation("riisheContactNotes")
+  // ---------- Creator social feed (Discover) ----------
+  posts         Post[]
+  postLikes     PostLike[]
+  postBookmarks PostBookmark[]
+  postComments  PostComment[]
 }
 
 model Session {
@@ -196,6 +201,8 @@ model MediaAsset {
 
   projectMedia ProjectMedia[]
   projectCovers Project[]
+  postMedia        PostMedia[]
+  postMediaPosters PostMedia[] @relation("PostMediaPoster")
   siteMaterials SiteMaterial[]
   laxiiVersions LaxiiImageVersion[]
   agentArtifacts AgentArtifact[]
@@ -437,6 +444,103 @@ model ProfileView {
 
   @@unique([profileUserId, viewerKey, day])
   @@index([profileUserId])
+}
+
+// ---------- Creator social feed (Discover) ----------
+// Posts are the creator social layer on the Discover homepage: text updates,
+// image carousels and video/reel posts built on the EXISTING MediaAsset
+// upload+streaming infrastructure (no new storage system). Public reach is
+// always derived from the author's live visibility ladder (lib/visibility.ts)
+// enforced server-side on every read path — a post by an author whose profile
+// is PRIVATE, demo or soft-deleted never leaves their own workspace.
+
+model Post {
+  id         String   @id @default(cuid())
+  authorId   String
+  author     User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  mediaKind  String   @default("TEXT") // TEXT | IMAGE | VIDEO — derived at creation from the attached media, kept denormalized for feed queries
+  body       String   @default("") // caption / text body
+  hashtags   String   @default("[]") // JSON string[] of normalized tags (lowercase, no '#') — creator-selected, no auto-keywords
+  profession String? // creator-selected category = Profession.slug (loose reference, matches the curated-taxonomy style)
+  status     String   @default("PUBLISHED") // PUBLISHED (DRAFT reserved — no draft UI ships)
+  visibility String   @default("PUBLIC") // PUBLIC | PRIVATE (PRIVATE = author-only, never indexed)
+  shares     Int      @default(0) // share-click counter (like real social share counts)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  media     PostMedia[]
+  likes     PostLike[]
+  comments  PostComment[]
+  bookmarks PostBookmark[]
+  views     PostView[]
+
+  @@index([authorId, createdAt])
+  @@index([status, visibility, createdAt])
+  @@index([mediaKind, status, visibility, createdAt])
+}
+
+model PostMedia {
+  id                 String @id @default(cuid())
+  postId             String
+  post               Post       @relation(fields: [postId], references: [id], onDelete: Cascade)
+  mediaAssetId       String
+  mediaAsset         MediaAsset @relation(fields: [mediaAssetId], references: [id], onDelete: Cascade)
+  order              Int        @default(0)
+  altText            String     @default("") // creator-written media alt text (accessibility + SEO)
+  posterMediaAssetId String? // optional IMAGE asset used as the video thumbnail
+  posterMediaAsset   MediaAsset? @relation("PostMediaPoster", fields: [posterMediaAssetId], references: [id], onDelete: SetNull)
+
+  @@unique([postId, mediaAssetId])
+  @@index([postId])
+}
+
+model PostLike {
+  postId    String
+  userId    String
+  post      Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([postId, userId]) // duplicate likes are structurally impossible
+  @@index([userId])
+}
+
+model PostBookmark {
+  postId    String
+  userId    String
+  post      Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([postId, userId]) // duplicate bookmarks are structurally impossible
+  @@index([userId])
+}
+
+model PostComment {
+  id        String   @id @default(cuid())
+  postId    String
+  post      Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    User @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  parentId  String? // replies (one level — the UI threads replies under their parent)
+  parent    PostComment?  @relation("commentThread", fields: [parentId], references: [id], onDelete: Cascade)
+  replies   PostComment[] @relation("commentThread")
+  body      String
+  createdAt DateTime @default(now())
+
+  @@index([postId, createdAt])
+  @@index([authorId])
+}
+
+model PostView {
+  postId    String
+  viewerKey String // "u:<userId>" for signed-in, "a:<anonCookie>" otherwise — same scheme as ProjectView
+  day       String // UTC "YYYY-MM-DD"
+  post      Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([postId, viewerKey, day]) // deduped per viewer per day
+  @@index([postId])
 }
 
 // ---------- AI ----------

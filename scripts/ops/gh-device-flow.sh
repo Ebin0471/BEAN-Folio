@@ -38,13 +38,13 @@ case "${1:-}" in
         -d "grant_type=urn:ietf:params:oauth:grant-type:device_code")
       ERR=$(printf '%s' "$RESP" | python3 -c "import json,sys;d=json.load(sys.stdin);print(d.get('error',''))")
       if [ "$ERR" = "authorization_pending" ] || [ "$ERR" = "slow_down" ]; then sleep 5; continue; fi
-      if [ "$ERR" != "" ]; then echo "AUTH FAILED: $ERR (do not retry endlessly; restart the flow)" >&2; exit 1; fi
+      if [ "$ERR" != "" ]; then echo "AUTH FAILED: $ERR (restart the flow)" >&2; exit 1; fi
       # success — hand the token to gh WITHOUT echoing it
       printf '%s' "$RESP" | python3 -c "import json,sys;print(json.load(sys.stdin)['access_token'])" \
         | "$GH" auth login --hostname github.com --with-token
       rm -f "$STATE"
       echo "AUTH STORED in persistent vault (gh keyring, mode 600)."
-      "$GH" auth status -h github.com | sed 's/ghp_[A-Za-z0-9]*/***MASKED***/g'
+      "$GH" auth status -h github.com | sed 's/gho_[A-Za-z0-9]*/***MASKED***/g'
       exit 0
     done
     echo "AUTH TIMED OUT — run 'scripts/ops/gh-device-flow.sh start' again" >&2; exit 1

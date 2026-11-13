@@ -52,6 +52,7 @@ import ExploreView from "@/views/ExploreView";
 import StudioView from "@/views/StudioView";
 import ProjectEditorView from "@/views/ProjectEditorView";
 import ProjectDetailView from "@/views/ProjectDetailView";
+import PostDetailView from "@/views/PostDetailView";
 import FolioView from "@/views/FolioView";
 import PublicProfileView from "@/views/PublicProfileView";
 import PublishedSiteView from "@/views/PublishedSiteView";
@@ -541,6 +542,10 @@ function Router() {
         return <NotFound />;
       case "p":
         return b ? <ProjectDetailView projectId={b} /> : <NotFound />;
+      case "post":
+        // Public creator social-feed post (Discover) — same path-form deep
+        // link mechanism as /u/ and /p/ (see src/proxy.ts).
+        return b ? <PostDetailView postId={b} /> : <NotFound />;
       case "u":
         // The BEAN Folio public PROFILE — always the platform profile
         // experience, for every account, published website or not.

@@ -66,6 +66,27 @@ export async function GET(req: NextRequest): Promise<Response> {
         lastmod: (p.publishedAt ?? new Date(0)).toISOString().slice(0, 10),
       });
     }
+
+    // Creator social posts — indexable ONLY when PUBLISHED + PUBLIC and the
+    // author passes the live public-visibility ladder (lib/visibility.ts);
+    // private posts, drafts, demo fixtures and soft-deleted authors are
+    // structurally excluded by the same where-clause the API serves.
+    const posts = await db.post.findMany({
+      where: {
+        status: "PUBLISHED",
+        visibility: "PUBLIC",
+        author: publicOwnerFilter,
+      },
+      select: { id: true, updatedAt: true },
+      orderBy: { createdAt: "desc" },
+      take: 1000,
+    });
+    for (const p of posts) {
+      urls.push({
+        loc: `${origin}/post/${p.id}`,
+        lastmod: p.updatedAt.toISOString().slice(0, 10),
+      });
+    }
   } catch {
     // A database hiccup must not break the sitemap entirely — the root entry
     // alone is still valid and truthful.

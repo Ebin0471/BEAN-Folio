@@ -489,3 +489,53 @@ export type RiisheActionCard =
   | RiisheRelationshipCard
   | RiisheNotesCard
   | RiisheStatusCard;
+
+// ---------- Creator social feed (Discover) ----------
+
+export interface PublicPostMedia {
+  id: string;
+  mediaAssetId: string;
+  url: string;
+  kind: string; // IMAGE | VIDEO
+  mime: string;
+  width: number | null;
+  height: number | null;
+  altText: string;
+  posterUrl: string | null;
+}
+
+export interface PublicPost {
+  id: string;
+  body: string;
+  hashtags: string[];
+  profession: string | null;
+  mediaKind: "TEXT" | "IMAGE" | "VIDEO";
+  visibility: string;
+  shares: number;
+  createdAt: string;
+  author: {
+    id: string;
+    username: string;
+    name: string;
+    headline: string | null;
+    avatarUrl: string | null;
+  };
+  media: PublicPostMedia[];
+  counts: { likes: number; comments: number; bookmarks: number; views: number };
+  liked: boolean;
+  bookmarked: boolean;
+}
+
+export interface PublicComment {
+  id: string;
+  postId: string;
+  parentId: string | null;
+  body: string;
+  createdAt: string;
+  author: { id: string; username: string; name: string; avatarUrl: string | null };
+}
+
+/** A suggested creator (Suggested Profiles) with an explainable reason. */
+export interface SuggestedCreator extends PublicPerson {
+  reason: string;
+}

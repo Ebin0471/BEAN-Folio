@@ -49,17 +49,18 @@ export interface SeoInput {
  * configured: callers then OMIT the absolute URL rather than emit a wrong one.
  *
  * Form: public portfolio routes (`u/<username>`, `p/<id>`, `site/<username>`)
- * are served AT the path by src/proxy.ts (boot-route seeding) — their
- * canonical is the plain path, no fragment. Every other route lives only
- * inside the hash router on the single `/` document and keeps the hash-form
- * canonical (documented limitation of the SPA architecture).
+ * and public creator posts (`post/<id>`) are served AT the path by
+ * src/proxy.ts (boot-route seeding) — their canonical is the plain path, no
+ * fragment. Every other route lives only inside the hash router on the
+ * single `/` document and keeps the hash-form canonical (documented
+ * limitation of the SPA architecture).
  */
 function canonicalUrl(path?: string): string | null {
   const origin = seoOrigin();
   if (!origin) return null;
   const p = path ?? (typeof window !== "undefined" ? window.location.hash.replace(/^#/, "") || "/" : "/");
   const normalized = p.startsWith("/") ? p : `/${p}`;
-  if (/^\/(u|p|site)\//.test(normalized)) return `${origin}${normalized}`;
+  if (/^\/(u|p|site|post)\//.test(normalized)) return `${origin}${normalized}`;
   return `${origin}/#${normalized}`;
 }
 

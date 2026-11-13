@@ -85,5 +85,8 @@ data/giftz-workspaces/
 # never committed — see DEVELOPMENT_SAFETY.md)
 /upload/
 
-# Persistent GitHub authentication vault (OAuth token, gh binary) — NEVER commit
-/.github-auth/
+# NOTE: the GitHub credential vault (/.github-auth/) is intentionally NOT
+# listed here — the platform snapshot drops gitignored paths, which would
+# destroy the persistent auth on every recycle. It is hidden from git via
+# .git/info/exclude (survives recycles, verified) and double-guarded by the
+# publisher's staged-diff leak scan. NEVER commit it, never re-add it here.

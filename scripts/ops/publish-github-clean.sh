@@ -51,6 +51,19 @@ if git diff --quiet HEAD; then
   exit 0
 fi
 git add -A
+
+# 3b) Staged-diff scan — second guard after `git add -A`. Catches anything
+#     the index ignore-rules failed to exclude (e.g. the credential vault
+#     losing its .git/info/exclude protection on a fresh clone).
+staged_leaks=$(git diff --cached --name-only | grep -E '^\.github-auth/' || true)
+if [ -n "$staged_leaks" ]; then
+  echo "FATAL: credential vault reached the staged snapshot — publish aborted:" >&2
+  echo "$staged_leaks" | sed -n '1,10p' >&2
+  git reset --quiet HEAD 2>/dev/null || true
+  git checkout --quiet main
+  exit 1
+fi
+
 git commit --quiet -m "$MSG"
 HASH=$(git rev-parse HEAD)
 git checkout --quiet main

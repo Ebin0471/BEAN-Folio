@@ -28,6 +28,9 @@ import { NextRequest, NextResponse } from "next/server";
  * creator shares. No redirect is involved, so no redirect caching, no extra
  * round trip, and no origin-dependent Location header can exist.
  *
+ * `/post/<id>` (creator social-feed post deep links, SEO-indexable when the
+ * post is public) follows the identical path-form mechanism.
+ *
  * The client (lib/hash-router) treats the boot route as the initial route and
  * canonicalizes legacy `/?#/u/<slug>` deep links to the path form, so both
  * address styles keep opening the same website.
@@ -40,7 +43,7 @@ import { NextRequest, NextResponse } from "next/server";
  */
 
 const PUBLIC_PATH_SLUG_RE =
-  /^(?:\/u\/[^/]+|\/p\/[^/]+|\/site\/[^/]+(?:\/projects\/[^/]+|\/g\/[^/]+)?)$/;
+  /^(?:\/u\/[^/]+|\/p\/[^/]+|\/site\/[^/]+(?:\/projects\/[^/]+|\/g\/[^/]+)?|\/post\/[^/]+)$/;
 
 /**
  * Boot route for a public path-form URL. The route IS the requested pathname
@@ -84,14 +87,16 @@ export function proxy(req: NextRequest): NextResponse {
       ? "public-profile-shell"
       : bootRoute.startsWith("/site/")
         ? "public-site-shell"
-        : "public-project-shell"
+        : bootRoute.startsWith("/post/")
+          ? "public-post-shell"
+          : "public-project-shell"
   );
   return res;
 }
 
 export const config = {
   // Only the public route families — never /api, /_next or static assets.
-  matcher: ["/u/:path*", "/p/:path*", "/site/:path*"],
+  matcher: ["/u/:path*", "/p/:path*", "/site/:path*", "/post/:path*"],
 };
 
 // (P3 edge-cache headers for /u/* and /p/* are set in proxy() above —

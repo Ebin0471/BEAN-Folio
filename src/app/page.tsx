@@ -23,7 +23,7 @@ import { SEO_DEFAULTS } from "@/lib/seo-defaults";
  */
 export const dynamic = "force-dynamic";
 
-const BOOT_ROUTE_RE = /^\/(u|p|site)\/[^/]+$/;
+const BOOT_ROUTE_RE = /^\/(u|p|site|post)\/[^/]+$/;
 
 /**
  * Server-side SEO/social metadata for public portfolio paths (P3).
@@ -44,10 +44,59 @@ export async function generateMetadata(): Promise<Metadata> {
   const seeded = h.get("x-bean-boot-route");
   const bootRoute = seeded && BOOT_ROUTE_RE.test(seeded) ? seeded : null;
 
-  if (!bootRoute || !bootRoute.startsWith("/u/")) {
-    // The app shell (and /p/<id> project deep links, whose payload is viewer-
-    // dependent) keep the platform defaults. Crawlers land on the same
-    // canonical the client SEO manager would emit.
+  if (!bootRoute) {
+    // The app shell keeps the platform defaults.
+    return {
+      title: SEO_DEFAULTS.title,
+      description: SEO_DEFAULTS.description,
+    };
+  }
+
+  // `/post/<id>` — public creator posts get REAL post metadata (caption,
+  // author, media). Restricted content resolves to null → noindex, never
+  // leaking a private post's existence through metadata.
+  if (bootRoute.startsWith("/post/")) {
+    const { getPublicPostMeta } = await import("@/lib/public-post");
+    const post = await getPublicPostMeta(decodeURIComponent(bootRoute.slice(6))).catch(() => null);
+    if (!post) {
+      return {
+        title: SEO_DEFAULTS.title,
+        description: SEO_DEFAULTS.description,
+        robots: { index: false, follow: false },
+      };
+    }
+    const origin = seoOrigin();
+    const canonical = `/post/${post.id}`;
+    const title = `${post.authorName}: ${post.excerpt ?? (post.mediaKind === "VIDEO" ? "a new reel" : "a new post")}`.slice(0, 120);
+    const ogImage = origin && post.imageMediaId ? `${origin}/api/media/${post.imageMediaId}/raw` : null;
+    const ogVideo = origin && post.videoMediaId ? `${origin}/api/media/${post.videoMediaId}/raw` : null;
+    return {
+      title,
+      description: post.description ?? SEO_DEFAULTS.description,
+      keywords: post.hashtags.length > 0 ? post.hashtags : undefined,
+      ...(origin ? { alternates: { canonical: `${origin}${canonical}` } } : {}),
+      openGraph: {
+        title,
+        description: post.description ?? SEO_DEFAULTS.description,
+        type: "article",
+        publishedTime: post.createdAt.toISOString(),
+        ...(origin ? { url: `${origin}${canonical}` } : {}),
+        ...(ogImage ? { images: [{ url: ogImage }] } : {}),
+        ...(ogVideo ? { videos: [{ url: ogVideo }] } : {}),
+      },
+      twitter: {
+        card: ogImage ? "summary_large_image" : "summary",
+        title,
+        description: post.description ?? SEO_DEFAULTS.description,
+        ...(ogImage ? { images: [ogImage] } : {}),
+      },
+    };
+  }
+
+  if (!bootRoute.startsWith("/u/")) {
+    // /p/<id> project deep links keep platform defaults (payload is viewer-
+    // dependent). Crawlers land on the same canonical the client SEO
+    // manager would emit.
     return {
       title: SEO_DEFAULTS.title,
       description: SEO_DEFAULTS.description,

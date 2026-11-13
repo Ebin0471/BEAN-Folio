@@ -1,0 +1,215 @@
+"use client";
+
+import { useState } from "react";
+import { Bookmark, Eye, Heart, MessageCircle, Play } from "lucide-react";
+
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { LazyMount } from "@/components/bean/LazyMount";
+import { VideoPlayerDialog } from "@/components/bean/PostMediaView";
+import { PostComments, timeAgo } from "@/components/bean/PostComments";
+import { api } from "@/lib/client";
+import { useSession } from "@/lib/session";
+import { navigate } from "@/lib/hash-router";
+import type { PublicPost } from "@/lib/types";
+import { cn } from "@/lib/utils";
+
+/**
+ * A reel-style vertical video card for the Discover "Reels & Video" feed.
+ * The media preview stays lazy (poster / metadata frame only) — full
+ * playback happens in the player dialog, which also carries the real
+ * like/save/share interaction row and the comments thread.
+ */
+export function VideoCard({ post, onChange }: { post: PublicPost; onChange?: (next: PublicPost) => void }) {
+  const { user } = useSession();
+  const [playerOpen, setPlayerOpen] = useState(false);
+  const [showComments, setShowComments] = useState(false);
+
+  const media = post.media[0];
+  const initials = post.author.name
+    .split(" ")
+    .map((w) => w[0])
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+
+  async function toggleLike() {
+    if (!user) {
+      navigate("/auth");
+      return;
+    }
+    const r = await api<{ liked: boolean; likes: number }>(`/api/posts/${post.id}/like`, {
+      method: post.liked ? "DELETE" : "POST",
+    });
+    onChange?.({ ...post, liked: r.liked, counts: { ...post.counts, likes: r.likes } });
+  }
+
+  async function toggleSave() {
+    if (!user) {
+      navigate("/auth");
+      return;
+    }
+    const r = await api<{ bookmarked: boolean; bookmarks: number }>(`/api/posts/${post.id}/bookmark`, {
+      method: post.bookmarked ? "DELETE" : "POST",
+    });
+    onChange?.({ ...post, bookmarked: r.bookmarked, counts: { ...post.counts, bookmarks: r.bookmarks } });
+  }
+
+  return (
+    <>
+      <article className="group overflow-hidden rounded-xl border border-border/60 bg-card transition-colors hover:border-primary/25">
+        <button
+          type="button"
+          onClick={() => setPlayerOpen(true)}
+          aria-label={`Play ${post.author.name}'s video`}
+          className="relative block w-full focus-visible:outline-2"
+        >
+          <LazyMount placeholderClassName="aspect-[9/16] w-full animate-pulse bg-secondary/50">
+            {media.posterUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={media.posterUrl}
+                alt={media.altText || "Video thumbnail"}
+                loading="lazy"
+                className="aspect-[9/16] w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
+              />
+            ) : (
+              <video
+                src={media.url}
+                muted
+                playsInline
+                preload="metadata"
+                className="aspect-[9/16] w-full object-cover"
+                aria-label={media.altText || "Video preview"}
+              />
+            )}
+          </LazyMount>
+          <span className="absolute inset-0 flex items-center justify-center bg-gradient-to-t from-black/70 via-black/10 to-black/30 opacity-90 transition-opacity group-hover:opacity-100">
+            <span className="flex size-12 items-center justify-center rounded-full bg-primary/90 text-primary-foreground shadow-lg transition-transform group-hover:scale-105">
+              <Play className="ml-0.5 size-5" aria-hidden />
+            </span>
+          </span>
+          <span className="absolute bottom-2 left-2 flex items-center gap-1 text-xs text-white/90">
+            <Eye className="size-3.5" aria-hidden /> {post.counts.views}
+          </span>
+        </button>
+
+        {/* creator + quick actions */}
+        <div className="flex items-center gap-2 px-3 py-2.5">
+          <Avatar className="size-7 shrink-0 ring-1 ring-border">
+            <AvatarImage src={post.author.avatarUrl ?? undefined} alt={`${post.author.name}'s avatar`} />
+            <AvatarFallback className="text-[10px]">{initials}</AvatarFallback>
+          </Avatar>
+          <a href={`#/u/${post.author.username}`} className="min-w-0 flex-1 truncate text-sm font-medium hover:text-primary">
+            {post.author.name}
+          </a>
+          <button
+            type="button"
+            onClick={() => void toggleLike()}
+            aria-label={post.liked ? "Unlike" : "Like"}
+            aria-pressed={post.liked}
+            className={cn("inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground", post.liked && "text-primary")}
+          >
+            <Heart className={cn("size-4", post.liked && "fill-current")} aria-hidden /> {post.counts.likes}
+          </button>
+          <button
+            type="button"
+            onClick={() => void toggleSave()}
+            aria-label={post.bookmarked ? "Remove save" : "Save"}
+            aria-pressed={post.bookmarked}
+            className={cn("inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground", post.bookmarked && "text-primary")}
+          >
+            <Bookmark className={cn("size-4", post.bookmarked && "fill-current")} aria-hidden />
+          </button>
+        </div>
+      </article>
+
+      <VideoPlayerDialog media={media} open={playerOpen} onOpenChange={setPlayerOpen}>
+        <div className="px-1 pb-1 pt-2">
+          <div className="flex items-center gap-2">
+            <Avatar className="size-8 shrink-0 ring-1 ring-border">
+              <AvatarImage src={post.author.avatarUrl ?? undefined} alt="" />
+              <AvatarFallback className="text-[10px]">{initials}</AvatarFallback>
+            </Avatar>
+            <div className="min-w-0 flex-1">
+              <a href={`#/u/${post.author.username}`} className="block truncate text-sm font-medium hover:text-primary">
+                {post.author.name}
+              </a>
+              <span className="text-[11px] text-muted-foreground">{timeAgo(post.createdAt)}</span>
+            </div>
+            <ReelActions
+              post={post}
+              onChange={onChange}
+              commentsOpen={showComments}
+              onToggleComments={() => setShowComments((v) => !v)}
+            />
+          </div>
+          {post.body.trim() ? <p className="mt-2 line-clamp-3 text-sm text-foreground/90">{post.body}</p> : null}
+          <a
+            href={`#/post/${post.id}`}
+            className="mt-2 inline-flex items-center gap-1 text-xs text-muted-foreground underline-offset-2 hover:text-primary hover:underline"
+            onClick={() => setPlayerOpen(false)}
+          >
+            Open post
+          </a>
+          {showComments ? (
+            <div className="mt-2 max-h-72 overflow-y-auto">
+              <PostComments postId={post.id} commentsCount={post.counts.comments} postAuthorId={post.author.id} />
+            </div>
+          ) : null}
+        </div>
+      </VideoPlayerDialog>
+    </>
+  );
+}
+
+function ReelActions({
+  post,
+  onChange,
+  commentsOpen,
+  onToggleComments,
+}: {
+  post: PublicPost;
+  onChange?: (next: PublicPost) => void;
+  commentsOpen: boolean;
+  onToggleComments: () => void;
+}) {
+  const { user } = useSession();
+
+  async function toggleLike() {
+    if (!user) {
+      navigate("/auth");
+      return;
+    }
+    const r = await api<{ liked: boolean; likes: number }>(`/api/posts/${post.id}/like`, {
+      method: post.liked ? "DELETE" : "POST",
+    });
+    onChange?.({ ...post, liked: r.liked, counts: { ...post.counts, likes: r.likes } });
+  }
+
+  return (
+    <div className="flex items-center gap-1">
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => void toggleLike()}
+        aria-label={post.liked ? "Unlike" : "Like"}
+        aria-pressed={post.liked}
+        className={cn("gap-1.5 text-muted-foreground hover:text-foreground", post.liked && "text-primary")}
+      >
+        <Heart className={cn("size-4", post.liked && "fill-current")} aria-hidden /> {post.counts.likes}
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={onToggleComments}
+        aria-label="Comments"
+        aria-pressed={commentsOpen}
+        className="gap-1.5 text-muted-foreground hover:text-foreground"
+      >
+        <MessageCircle className="size-4" aria-hidden /> {post.counts.comments}
+      </Button>
+    </div>
+  );
+}
