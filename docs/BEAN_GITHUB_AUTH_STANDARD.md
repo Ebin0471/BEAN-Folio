@@ -1,6 +1,6 @@
 # BEAN GITHUB AUTH STANDARD — Master Standardization (Folio / Intelligence / FX)
 
-Status: **PARTIAL — BEAN Folio fully verified; BEAN Intelligence provisioned but push-BLOCKED by account permissions; BEAN FX BLOCKED (inaccessible).**
+Status: **PARTIAL — BEAN Folio fully verified (M19 hardening COMPLETE for in-session tests); BEAN Intelligence provisioned but push-BLOCKED by account permissions; BEAN FX BLOCKED (inaccessible).**
 
 Created: 2026-11-14. Supersedes per-project improvisation; aligned with `docs/GITHUB_AUTHENTICATION_AND_SYNC.md` (M18, Folio) and `docs/HANDOFF.md` §0 (Intelligence).
 
@@ -200,6 +200,79 @@ auth failure, single clear recovery hint instead of auth loops.
 - Device-flow authorizations take the identity of the browser session that
   enters the code — the sandbox cannot force an account; wrong-account
   results must be handled by fail-safe erasure (as done here), not retries.
+
+## 9. M19 hardening and verification — BEAN Folio only (2026-11-14)
+
+Scope: BEAN Folio exclusively. No other BEAN repository was opened, cloned,
+or modified in this milestone.
+
+### Immutable identity (verified, not assumed)
+
+| Item | Verified value |
+|---|---|
+| Authenticated identity (`GET /user`) | `Ebin0471` (id `204152288`, type `User`) |
+| Repository (`GET /repos/Ebin0471/BEAN-Folio`) | `Ebin0471/BEAN-Folio`, private, `default_branch: main` |
+| Permissions | `push: true`, `admin: true` |
+| Remote URL | `https://github.com/Ebin0471/BEAN-Folio.git` (correct — preserved, no correction needed) |
+| Branch | `main` |
+| Local HEAD / Remote main SHA | `90ffaa5663754d7469fa6873bcb841e9a87d89ee` (identical at verification time; commit confirmed present locally via `git cat-file -t` and remotely as ancestor of `origin/main`) |
+
+### M18 asset preservation
+
+All six assets inspected and preserved (no recreation): `scripts/ops/
+bean-credential-helper.sh`, `scripts/ops/bean-auth.sh`, `scripts/ops/
+bean-sync.sh`, `.git/bean-auth/` (dir 700, token 600), `.git/config`
+(helper wired), both auth documents. Reference commit `90ffaa5` preserved
+locally and remotely.
+
+### Concrete defect found and fixed (architecture unchanged)
+
+The M18 credential helper answered **any** host when invoked directly
+(a probe with `host=gitlab.com` returned a full credential block — 107
+bytes). In practice Git never invoked it for other hosts because the
+helper is wired under the repo-local
+`credential.https://github.com.helper` key, but the M19 requirement
+("never return credentials for arbitrary hosts") mandates defense in
+depth. Fix (inside the same helper script, no architecture change): the
+`get` operation now parses the credential request from stdin and answers
+only for `protocol=https` **and** `host=github.com`; every other
+host/protocol gets zero output and Git fails fast.
+
+Post-fix verification: `gitlab.com` → 0 bytes; `http://github.com` →
+0 bytes; `https://github.com` → credential served; 3× real fetch OK.
+
+### M19 test results (exact)
+
+| Test | Result | Evidence |
+|---|---|---|
+| A — Identity | PASS | `/user` → `login: Ebin0471` |
+| B — Repository | PASS | `/repos/Ebin0471/BEAN-Folio` → full_name, private, main, push:true |
+| C — Auth reuse | PASS | 3× fetch, no prompt, no device flow; helper returns exactly `protocol/host/username/password` keys |
+| D — Auto commit | PASS | `bean-sync.sh commit` (this milestone's doc + helper hardening), explicit staging, secret scan clean |
+| E — Push | PASS | plain fast-forward push via `bean-sync.sh`, no force |
+| F — Remote verify | PASS | `git ls-remote origin refs/heads/main` == local HEAD (reported in the M19 delivery report) |
+| G — Session persistence | VERIFIED across session turns | Token minted 2026-11-14 02:43:57 UTC still answers `/user` as `Ebin0471` and fetches without device flow at this later session. Recycle-boundary survival remains architecturally evidenced only (`.git/` survived the prior workspace restore); the first natural recycle will complete it. |
+
+### Credential-manager migration tradeoff (required check)
+
+No alternative persistent credential manager exists in this sandbox
+(no `gh`, no Git Credential Manager, no `git-credential-store` binary, no
+SSH client, no secrets mounts — swept in the M18 audit). The `.git/`
+vault is the only storage plane with demonstrated persistence. **No
+migration performed** — none available, and the current architecture has
+no concrete defect remaining after the host-scoping fix.
+
+### Remaining Folio limitations
+
+1. Recycle-boundary persistence pending first natural recycle (Test G
+   evidence covers session turns; `.git/` survival of restore is strong
+   architectural evidence).
+2. The OAuth token's lifetime is governed by GitHub; if it is revoked,
+   the single recovery path is one device flow (`bean-auth.sh start`/`poll`
+   as `Ebin0471`).
+3. The Intelligence clone's copy of `bean-credential-helper.sh` still has
+   the pre-hardening helper (out of M19 scope by mandate); it will receive
+   the same hardening when that project unblocks.
 
 ---
 

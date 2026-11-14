@@ -19,7 +19,21 @@ TOKEN_FILE="$REPO_ROOT/.git/bean-auth/token"
 
 case "${1:-}" in
   get)
-    # git sends protocol/host on stdin; we respond only if a token exists.
+    # git sends the credential request (protocol=, host=, ...) on stdin,
+    # terminated by a blank line. Defense in depth (M19): answer ONLY for
+    # the exact approved host+protocol, even if the helper is ever invoked
+    # outside the repo-local credential.https://github.com.helper wiring.
+    REQ_HOST=""
+    REQ_PROTOCOL=""
+    while IFS= read -r req_line; do
+      [ -n "$req_line" ] || break
+      case "$req_line" in
+        host=*)     REQ_HOST="${req_line#host=}" ;;
+        protocol=*) REQ_PROTOCOL="${req_line#protocol=}" ;;
+      esac
+    done
+    [ "$REQ_HOST" = "github.com" ] || exit 0
+    [ "$REQ_PROTOCOL" = "https" ] || exit 0
     [ -s "$TOKEN_FILE" ] || exit 0
     printf 'protocol=https\nhost=github.com\n'
     printf 'username=bean-folio-vault\n'
