@@ -36,6 +36,7 @@ import { Prisma } from "@prisma/client";
 import type { BackgroundJob } from "@prisma/client";
 
 import { db } from "@/lib/db";
+import { reportError } from "@/lib/monitoring";
 
 // ---------------------------------------------------------------------------
 // Types + tunables
@@ -277,7 +278,8 @@ export async function fail(id: string, error: unknown): Promise<FailOutcome> {
       where: { id, status: "RUNNING" },
       data: { status: "DEAD", lastError: message, finishedAt: new Date(), ...cleared },
     });
-    logEvent("queue.job.dead", { kind: job.kind, jobId: id, attempts: job.attempts });
+    // Dead-letter = operational alarm: structured log + optional webhook.
+    reportError("queue.job.dead", { kind: job.kind, jobId: id, attempts: job.attempts, lastError: message });
     return "DEAD";
   }
 

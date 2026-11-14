@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { ZodType } from "zod";
 import { memoryBackend, hitRateLimit } from "@/lib/rate-limit-backend";
+import { reportError } from "@/lib/monitoring";
 
 /** Success response */
 export function ok<T>(data: T, status = 200): NextResponse {
@@ -237,26 +238,51 @@ export function handler<A extends unknown[]>(
           e instanceof Error
             ? { name: e.name, message: e.message }
             : { name: "Error", message: String(e) };
-        const log: Record<string, unknown> = {
-          event: "api.error",
-          requestId,
-          method,
-          path,
-          status,
-          durationMs: Date.now() - start,
-          error,
-        };
-        if (process.env.NODE_ENV !== "production" && e instanceof Error && e.stack) {
-          log.stack = e.stack;
+        const durationMs = Date.now() - start;
+        if (status === 500) {
+          // Structured log + optional ERROR_WEBHOOK_URL alert (reportError
+          // emits the single JSON line itself). Metadata only — never bodies.
+          reportError("api.error", {
+            requestId,
+            method,
+            path,
+            status,
+            durationMs,
+            error,
+            // Stacks stay dev-only (same policy as before the webhook wiring).
+            ...(process.env.NODE_ENV !== "production" && e instanceof Error && e.stack ? { stack: e.stack } : {}),
+          });
+        } else {
+          // Client errors (413) are not alarms — structured line only.
+          console.error(
+            JSON.stringify({ event: "api.error", requestId, method, path, status, durationMs, error })
+          );
         }
-        // Single structured line — no multi-line stack dumps in production.
-        console.error(JSON.stringify(log));
         const res = tooLarge ? ERR.payloadTooLarge() : ERR.server();
         res.headers.set("x-request-id", requestId);
         return res;
       }
     });
   };
+}
+
+/**
+ * Same-origin guard for state-changing endpoints (CSRF defense-in-depth on
+ * top of SameSite cookies — M22 Phase 2). Browsers attach `Origin` to every
+ * POST: a cross-host Origin is refused; a same-host Origin, a missing Origin
+ * (non-browser API clients) and embed-marked partner requests pass. Compares
+ * against the forwarded host so TLS-terminating proxies work unchanged.
+ */
+export function sameOriginOk(req: NextRequest): boolean {
+  const origin = req.headers.get("origin");
+  if (!origin) return true; // non-browser client — session/cookie policy governs
+  if (req.headers.get("x-bean-embed") === "1") return true; // embedded partner client
+  try {
+    const expected = req.headers.get("x-forwarded-host") ?? req.headers.get("host") ?? "";
+    return new URL(origin).host === expected;
+  } catch {
+    return false; // malformed Origin can never be trusted
+  }
 }
 
 /** Simple username validation shared across endpoints. */

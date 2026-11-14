@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth";
-import { ok, handler } from "@/lib/api-helpers";
+import { getClientKey, handler, ok, rateLimitShared } from "@/lib/api-helpers";
 import { publicProfileBaseFilter, publicOwnerFilter } from "@/lib/visibility";
 import { publicPostFilter } from "@/lib/posts";
 import { containsCI } from "@/lib/api-helpers";
@@ -17,6 +17,9 @@ export const dynamic = "force-dynamic";
  */
 
 export const GET = handler(async (req: NextRequest) => {
+  // Generous public-read budget (M22): 300 req/min/IP — abuse throttle, not a UX limit.
+  const limited = await rateLimitShared("read:search:all:" + getClientKey(req), 300, 60_000);
+  if (limited) return limited;
   const url = new URL(req.url);
   const raw = (url.searchParams.get("q") ?? "").trim().slice(0, 80);
   if (raw.length === 0) return ok({ people: [], posts: [], hashtags: [] });

@@ -31,6 +31,7 @@ import { claimJob, getJob, persistJob, releaseLease, applyFailure, appendEvent, 
 import { runDesignJob, type StepProvider, type StepContext } from "@/lib/ai-design/execute";
 import { fetchPortfolioBlock } from "@/lib/ai-design/context";
 import { loadMaterialsForRequest, materialsBlock } from "@/lib/ai-design/ingest";
+import { log } from "@/lib/logger";
 
 /** Wall-clock budget for ONE poll-driven chunk (stays under request deadlines). */
 export const TICK_BUDGET_MS = 40_000;
@@ -111,7 +112,7 @@ export async function driveJob(
     } catch (e) {
       // Context loading or persistence failed — leave an honest failed state
       // with completed steps kept, never a phantom "queued" orphan.
-      console.error("[design-driver] job crashed:", e instanceof Error ? e.message : e);
+      log.error("ai_design.job_crashed", { message: String(e instanceof Error ? e.message : e).slice(0, 300) });
       applyFailure(job, "The execution stopped unexpectedly. You can retry the remaining steps.", { backoff: false });
       appendEvent(job, "error", "Driver crashed while loading context or persisting progress.");
       await persistJob(job).catch(() => {});

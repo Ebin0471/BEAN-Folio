@@ -1,0 +1,46 @@
+# BEAN Folio — systemd unit (M22 Phase 2, O3).
+#
+# Bare-metal alternative to the Docker path: runs the standalone Next server
+# (built once with `bun run build` on the host or in CI) under systemd with
+# automatic restart. NOT activated by this change — install deliberately:
+#
+#   sudo cp deploy/bean-folio.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now bean-folio
+#
+# Expected on-host layout (see docs/deployment/production-deployment.md):
+#   /opt/beanfolio/.next/standalone/server.js   ← built artifact
+#   /opt/beanfolio/.env                         ← real secrets, 600 root-owned
+#
+# Restart policy: always + backoff; the app drains its queue on SIGTERM
+# (≤27s) so KillSignal=SIGTERM and a generous TimeoutStopSec matter.
+
+[Unit]
+Description=BEAN Folio (Next.js standalone)
+Wants=network-online.target
+After=network-online.target postgresql.service
+
+[Service]
+Type=simple
+User=beanfolio
+Group=beanfolio
+WorkingDirectory=/opt/beanfolio
+EnvironmentFile=/opt/beanfolio/.env
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=HOSTNAME=127.0.0.1
+Environment=NEXT_TELEMETRY_DISABLED=1
+ExecStart=/usr/bin/node /opt/beanfolio/.next/standalone/server.js
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=35
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/beanfolio/uploads /opt/beanfolio/db
+ProtectHome=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

@@ -30,6 +30,7 @@ import {
   type ResumeSectionKey,
 } from "./resume-schema";
 import { findResumeProfession, type ResumeCoreSectionKey } from "./resume-professions";
+import { log } from "@/lib/logger";
 
 const AI_PROVIDER_LABEL = "bean-ai";
 const AI_MODEL_LABEL = "managed gateway (server-side)";
@@ -427,7 +428,7 @@ export async function appendResumeTurn(input: ResumeTurnInput): Promise<void> {
       },
     });
   } catch (e) {
-    console.error("[laxii-resume] usage metering failure:", e instanceof Error ? e.message : e);
+    log.error("laxii.resume.usage_meter_failed", { message: String(e instanceof Error ? e.message : e).slice(0, 300) });
   }
   await db.laxiiConversation.update({
     where: { id: conversation.id },

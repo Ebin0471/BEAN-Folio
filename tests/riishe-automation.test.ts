@@ -195,8 +195,8 @@ afterAll(async () => {
 
 // ------------------------------------------------------------------- helpers
 
-function ctx(params: Record<string, string>) {
-  return { params: Promise.resolve(params) } as unknown as { params: Promise<Record<string, string>> };
+function ctx<P extends Record<string, string>>(params: P) {
+  return { params: Promise.resolve(params) } as { params: Promise<P> };
 }
 
 async function loginViaSession(userId: string) {
@@ -610,7 +610,7 @@ describe("automation routes + notes", () => {
     const fList = (await (await automationsRoute()).json()) as { automations: Array<{ id: string }> };
     expect(fList.automations.some((x) => x.id === aAutomation.id)).toBe(false);
 
-    const stopRes = await stopAllRoute(request("/api/riishe/automations", "POST"));
+    const stopRes = await stopAllRoute();
     expect(stopRes.status).toBe(200);
     const stopBody = (await stopRes.json()) as { cancelled: number };
     expect(stopBody.cancelled).toBeGreaterThanOrEqual(1);

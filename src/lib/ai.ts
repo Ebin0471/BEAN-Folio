@@ -10,6 +10,7 @@ import {
 } from "@/lib/intelligence/gateway";
 import { GATEWAY_LABEL } from "@/lib/intelligence/personas";
 import type { GatewayAgent } from "@/lib/intelligence/observability";
+import { log } from "@/lib/logger";
 
 /**
  * BEAN Folio AI gateway facade (server-side only) — BACKWARD-COMPATIBLE API.
@@ -128,7 +129,7 @@ export async function recordAiUsage(userId: string, feature: string, costEstimat
   try {
     await db.aiUsage.create({ data: { userId, feature, costEstimateCents } });
   } catch (e) {
-    console.error("[ai] usage record failed:", e instanceof Error ? e.message : e);
+    log.error("ai.usage_record_failed", { message: String(e instanceof Error ? e.message : e).slice(0, 300) });
   }
 }
 

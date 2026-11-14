@@ -181,7 +181,7 @@ describe("follow requests (private accounts)", () => {
 
   test("approve flips the edge to ACTIVE, sets respondedAt, notifies the requester", async () => {
     asUser(priv.id);
-    const res = await requestsPOST(req("/api/me/requests", { method: "POST", body: { username: "socnet-viewer", action: "approve" } }), undefined as never);
+    const res = await requestsPOST(req("/api/me/requests", { method: "POST", body: { username: "socnet-viewer", action: "approve" } }));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.state).toBe("ACTIVE");
@@ -200,7 +200,7 @@ describe("follow requests (private accounts)", () => {
 
   test("me/followers lists ACTIVE followers under people and PENDING under requests", async () => {
     asUser(priv.id);
-    const res = await followersGET(req("/api/me/followers"));
+    const res = await followersGET();
     const body = await res.json();
     expect(body.people.some((p: { person: { username: string } }) => p.person.username === "socnet-viewer")).toBe(true);
     expect(body.requests.every((r: { person: { username: string } }) => r.person.username !== "socnet-viewer")).toBe(true);
@@ -211,7 +211,7 @@ describe("follow requests (private accounts)", () => {
     asUser(outsider.id);
     await followPOST(req("/api/profiles/socnet-priv/follow"), ctxUsername("socnet-priv"));
     asUser(priv.id);
-    const res = await requestsPOST(req("/api/me/requests", { method: "POST", body: { username: "socnet-out", action: "decline" } }), undefined as never);
+    const res = await requestsPOST(req("/api/me/requests", { method: "POST", body: { username: "socnet-out", action: "decline" } }));
     expect(res.status).toBe(200);
     const gone = await db.follow.findUnique({
       where: { followerId_followingId: { followerId: outsider.id, followingId: priv.id } },

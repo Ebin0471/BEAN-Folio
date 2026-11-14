@@ -194,6 +194,16 @@ Verified 2026-11-14 at baseline `d1921e324dbdd5ee72c4d7c5bee045a4c0c6d7f0`:
 | M21 backups | `backup-db.ts` and `backup-media.ts` verified end-to-end (row parity, SHA-256 manifests, 29 media files == 29 MediaAsset rows) |
 | Git | local main == origin/main == `d1921e3…`; main history clean of runtime data |
 
+**M22 Phase 2 re-baseline (2026-11-14, verified after implementation):** `bunx tsc
+--noEmit` → **0 errors**; `bun run lint` → 0 errors / 13 warnings; all 63 test
+files executed → **0 failures** (~950 tests; the previously known 3
+feed-video-autoplay storage-fixture failures were root-caused to a
+workspace-recycle-wiped fixture blob and fixed by restoring it); M21
+`backup-all.ts` verified end-to-end on the restored schema (85 tables).
+Known environmental risk: workspace recycles wipe untracked runtime state
+(`uploads/`, `db/custom.db` data, backup dirs) — run `./ensure-dev.sh` and
+the backup scripts first on every session start.
+
 Consequence: `next build` is **expected to fail** until the M22 blockers are
 resolved (see Appendix A CB-1) — a failing build at this baseline is a known
 blocker, not a new regression.

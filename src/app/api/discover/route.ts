@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth";
-import { ok, handler } from "@/lib/api-helpers";
+import { getClientKey, handler, ok, rateLimitShared } from "@/lib/api-helpers";
 import { projectCardInclude, toProjectCard } from "@/lib/serialize";
 import { publicOwnerFilter } from "@/lib/visibility";
 
@@ -37,6 +37,9 @@ async function blockedUserIds(userId: string): Promise<string[]> {
  * score = recency * engagement + same-profession boost + new-creator boost + deterministic jitter.
  */
 export const GET = handler(async (req: NextRequest) => {
+  // Generous public-read budget (M22): 300 req/min/IP — abuse throttle, not a UX limit.
+  const limited = await rateLimitShared("read:discover:" + getClientKey(req), 300, 60_000);
+  if (limited) return limited;
   const sp = req.nextUrl.searchParams;
 
   const limitRaw = Number.parseInt(sp.get("limit") ?? "", 10);

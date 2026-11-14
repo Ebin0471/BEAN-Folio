@@ -20,6 +20,7 @@ import { normalizeConfig } from "@/lib/site-config";
 import { publicSiteGiftzPath } from "@/lib/site-url";
 import { resolveShareOriginForRequest } from "@/lib/workspace-origin";
 import { log } from "@/lib/logger";
+import { reportError } from "@/lib/monitoring";
 import { parseBuildDiagnostics, runProjectBuild, type BuildDiagnostic } from "./project-build";
 import { snapshotProjectVersion } from "./project-versions";
 import { recordGiftzActivity } from "./project-activity";
@@ -265,7 +266,7 @@ export async function publishGiftzSiteProject(
     };
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
-    log.error("giftz.deploy.failed", { siteId: site.id, buildId: build.id, error: message });
+    reportError("giftz.deploy.failed", { siteId: site.id, buildId: build.id, error: message });
     if (deploymentId) {
       // Never leave a DEPLOYING row dangling — the honest terminal state is FAILED.
       await db.giftzDeployment

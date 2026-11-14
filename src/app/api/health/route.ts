@@ -15,5 +15,8 @@ import { cacheHealthSnapshot } from "@/lib/cache";
 export const GET = handler(async () => {
   const queue = await queueStats();
   const cache = cacheHealthSnapshot();
-  return ok({ ok: true, service: "bean-folio", time: new Date().toISOString(), queue, cache });
+  const res = ok({ ok: true, service: "bean-folio", time: new Date().toISOString(), queue, cache });
+  // Probes are always fresh — never cached by any intermediary (M22 Phase 2).
+  res.headers.set("Cache-Control", "no-store");
+  return res;
 });

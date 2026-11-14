@@ -1,4 +1,4 @@
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 import { handler, err, ERR, rateLimit, getClientKey } from "@/lib/api-helpers";
 import { aiGate, recordAiUsage } from "@/lib/ai";
@@ -42,5 +42,5 @@ export const POST = handler(async (req: NextRequest, { params }: Ctx) => {
   }
 
   await recordAiUsage(user.id, "design-retry");
-  return Response.json({ taskId, jobId: r.jobId, status: "running" }, { status: 202 });
+  return NextResponse.json({ taskId, jobId: r.jobId, status: "running" }, { status: 202 });
 });

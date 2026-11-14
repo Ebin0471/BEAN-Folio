@@ -196,6 +196,97 @@ export function validateStartupEnvironment(options: StartupValidationOptions = {
     }
   }
 
+  // ---- Check 6: S3 media storage configuration (partial = fatal in production) ----
+  // The storage driver auto-detects: all four S3_* vars → S3, otherwise local
+  // disk (src/lib/storage.ts). A PARTIAL configuration therefore silently
+  // serves/writes media to local disk — harmless in dev, DATA LOSS on
+  // stateless production hosts (ephemeral filesystem). Fail fast in
+  // production; warn elsewhere. MEDIA_STORAGE_DRIVER=local is an explicit
+  // opt-out and skips the check.
+  const s3Required = ["S3_ENDPOINT", "S3_BUCKET", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"] as const;
+  const s3Set = s3Required.filter((k) => (env[k] ?? "").trim() !== "");
+  const driverForced = (env.MEDIA_STORAGE_DRIVER ?? "").trim().toLowerCase();
+  if (driverForced === "local") {
+    checks.push({ name: "storage_s3_config", status: "ok", detail: "MEDIA_STORAGE_DRIVER=local — local disk media storage is explicit" });
+  } else if (s3Set.length === 0) {
+    checks.push({
+      name: "storage_s3_config",
+      status: "warn",
+      detail: "No S3 media storage configured — uploads persist to local disk (fine for single-node hosts; stateless hosts need the S3_* set)",
+    });
+  } else if (s3Set.length === s3Required.length) {
+    checks.push({ name: "storage_s3_config", status: "ok", detail: "S3 media storage fully configured" });
+  } else {
+    const missing = s3Required.filter((k) => !s3Set.includes(k));
+    checks.push({
+      name: "storage_s3_config",
+      status: nodeEnv === "production" ? "fail" : "warn",
+      detail: `PARTIAL S3 configuration — set but incomplete: ${s3Set.join(", ")}; missing: ${missing.join(
+        ", "
+      )}. The app would silently fall back to local disk${
+        nodeEnv === "production" ? " — refusing to start in production; complete the S3_* set or set MEDIA_STORAGE_DRIVER=local" : ""
+      }`,
+    });
+  }
+
+  // ---- Check 7: session cookie policy (production escape hatch) ----
+  // Production cookies are Secure by default (src/lib/auth.ts). An explicit
+  // SESSION_SECURE_COOKIES=false in production is only honored with the
+  // BEAN_ALLOW_INSECURE_COOKIES=true escape hatch (e.g. plain-HTTP LAN
+  // deployments) — otherwise it fails fast instead of silently issuing
+  // non-secure session cookies.
+  const secureCookies = (env.SESSION_SECURE_COOKIES ?? "").trim().toLowerCase();
+  if (secureCookies === "") {
+    checks.push({ name: "session_cookie_policy", status: "ok", detail: "SESSION_SECURE_COOKIES unset — Secure-by-default per environment" });
+  } else if (secureCookies !== "true" && secureCookies !== "false") {
+    checks.push({
+      name: "session_cookie_policy",
+      status: "fail",
+      detail: `SESSION_SECURE_COOKIES must be "true" or "false" (got an unknown value — names only are logged)`,
+    });
+  } else if (secureCookies === "false" && nodeEnv === "production") {
+    if ((env.BEAN_ALLOW_INSECURE_COOKIES ?? "").trim().toLowerCase() === "true") {
+      checks.push({
+        name: "session_cookie_policy",
+        status: "warn",
+        detail: "SESSION_SECURE_COOKIES=false in production WITH BEAN_ALLOW_INSECURE_COOKIES=true — session cookies are NOT Secure (plain-HTTP escape hatch)",
+      });
+    } else {
+      checks.push({
+        name: "session_cookie_policy",
+        status: "fail",
+        detail:
+          "SESSION_SECURE_COOKIES=false in production without the BEAN_ALLOW_INSECURE_COOKIES=true escape hatch — refusing to issue non-Secure session cookies in production",
+      });
+    }
+  } else {
+    checks.push({ name: "session_cookie_policy", status: "ok", detail: `SESSION_SECURE_COOKIES=${secureCookies}` });
+  }
+
+  // ---- Check 8: known-variable value validation ----
+  // These backends are selected by string match at runtime; a typo would
+  // silently fall back to the default. Known values only — names logged,
+  // never values.
+  const knownValues: Record<string, readonly string[]> = {
+    RATE_LIMIT_BACKEND: ["memory", "postgres"],
+    CACHE_BACKEND: ["memory", "postgres"],
+    MEDIA_STORAGE_DRIVER: ["local", "s3"],
+    QUEUE_ENABLED: ["true", "false"],
+    LOG_LEVEL: ["debug", "info", "warn", "error"],
+  };
+  const unknownEnvVars = Object.entries(knownValues)
+    .filter(([k]) => (env[k] ?? "").trim() !== "")
+    .filter(([k, allowed]) => !allowed.includes((env[k] ?? "").trim().toLowerCase()))
+    .map(([k]) => k);
+  checks.push({
+    name: "known_variable_values",
+    status: unknownEnvVars.length > 0 ? "fail" : "ok",
+    detail:
+      unknownEnvVars.length > 0
+        ? `Unknown values for known variables (allowed sets: RATE_LIMIT_BACKEND/CACHE_BACKEND=memory|postgres, MEDIA_STORAGE_DRIVER=local|s3, QUEUE_ENABLED=true|false, LOG_LEVEL=debug|info|warn|error): ${unknownEnvVars.join(", ")}`
+        : "All known environment variables carry recognized values",
+  });
+
   const failed = checks.filter((c) => c.status === "fail");
   const result: StartupValidationResult = {
     ok: failed.length === 0,

@@ -18,11 +18,11 @@ Checked directly in the repository/host (nothing inferred):
 
 | Check | Result (verified) |
 |---|---|
-| Connected to GitHub? | **NO** — `git remote -v` returns nothing; no remote exists |
+| Connected to GitHub? | **YES** — `origin = https://github.com/Ebin0471/BEAN-Folio.git` (owner-confirmed PRIVATE). Publishing runs exclusively through the verified `scripts/ops/bean-sync.sh` workflow (source only — see docs/ops/MILESTONE_EXECUTION_PROTOCOL.md §5); local `main` history is verified clean of runtime data |
 | Deployed on Vercel? | **NO** — no `.vercel/` directory, no CLI auth, no project |
 | Production domain? | **NONE exists** — there is no `.vercel.app` URL to use; `NEXT_PUBLIC_APP_URL` therefore cannot be set to anything real yet |
 | Runtime | Bun + Next.js 16 (App Router); no Bun-specific APIs in `src/` — builds as a standard Node/Next app |
-| Database | SQLite (`db/custom.db`) — **does not persist on Vercel** (ephemeral filesystem). Postgres mirror schema (`prisma/schema.postgres.prisma`, 36 models incl. the LAXII set) + ETL (`scripts/migrate-to-postgres.ts`, `verify-postgres-migration.ts`) exist; `prisma generate --schema prisma/schema.postgres.prisma` and the 36-table DDL (`bunx prisma migrate diff --from-empty --to-schema-datamodel … --script`) both verified |
+| Database | SQLite (`db/custom.db`) — **does not persist on Vercel** (ephemeral filesystem). Postgres mirror schema (`prisma/schema.postgres.prisma`, 85 models — full regeneration, M22 Phase 2) + ETL (`scripts/migrate-to-postgres.ts`, `verify-postgres-migration.ts`) exist; `prisma generate --schema prisma/schema.postgres.prisma` and the schema DDL (`bunx prisma migrate diff --from-empty --to-schema-datamodel … --script`) both verified |
 | Media | **Storage layer implemented** (`src/lib/storage.ts`): local-disk driver in the sandbox, S3-compatible driver (`@aws-sdk/client-s3`) for production — verified end-to-end against a local S3-compatible server (upload → object stored → byte-identical serve → delete). The S3 driver MUST be configured on stateless hosts; until its env vars are set, uploads on Vercel are ephemeral. The multipart upload endpoint (`POST /api/media/upload`) serves bodies up to Vercel's ~4.5 MB function limit — large videos need the presigned-direct-upload upgrade (docs/media-pipeline.md §5) |
 | AI features | `z-ai-web-dev-sdk` is the sandbox runtime gateway; on Vercel, AI calls (`/api/ai/*`) will error at runtime until a provider key is configured (`docs/ai-integration.md` §9). **Not a build blocker**; publishing/sharing does not depend on AI |
 
@@ -49,17 +49,22 @@ Checked directly in the repository/host (nothing inferred):
 
 Nothing below has been executed; there is no deployment to verify. These are the real steps:
 
-**Step A — Push the repo to GitHub**
+**Step A — Publishing to GitHub (supersedes the pre-M18 deploy-branch flow)**
 
-> **Runtime data warning:** this sandbox's `main` branch tracks `db/custom.db` (account password
-> hashes) and user media so that sandbox restarts keep them. **Do NOT push `main`.** The repo
-> carries a ready-made clean branch with a single-commit history and a hardened `.gitignore`
-> (runtime data, `.env*`, tool artifacts and migration dumps excluded; demo seed fixtures kept):
+> **Runtime-data warning (updated 2026-11-14):** an older revision of this
+> document instructed `git push -u origin deploy:main`. That instruction is
+> **VOID and DANGEROUS**: the local `deploy` branch carries historical
+> `db/custom.db` blobs (account password hashes) and ~746 `uploads/` media
+> files in its history. It must NEVER be pushed, in any direction. The
+> current verified policy: publish **only** through `scripts/ops/bean-sync.sh`
+> from the verified-clean `main` lineage (secret scan + runtime-data scan +
+> push + remote-SHA verification), then confirm with
+> `git ls-remote origin main`. See docs/ops/MILESTONE_EXECUTION_PROTOCOL.md §5.
 
 ```bash
-git branch -v                       # expect: deploy  → "BEAN Folio — production deployment…"
-git remote add origin git@github.com:<your-username>/bean-folio.git   # or https URL
-git push -u origin deploy:main      # the clean branch becomes GitHub 'main'
+git branch -v                        # publish from 'main' only; 'deploy' and 'github-clean' are NEVER pushed
+scripts/ops/bean-sync.sh commit -m "feat(scope): what + why" -- <approved paths...>
+git ls-remote origin main            # MUST equal local HEAD (independent verification)
 ```
 
 Before pushing, sanity-check the branch you are about to push:
@@ -265,10 +270,14 @@ variable points at the same database; only the probe run against the real `DATAB
 from the provider dashboard on YOUR machine) verifies the target.
 
 **Committed artifacts (⚠️ HISTORICAL — generated from the pre-LAXII 31-table
-`prisma/schema.postgres.prisma`; the current schema holds 36 models and is proven data-model-identical
-to `prisma/schema.prisma` via normalized model-block comparison + `prisma migrate diff`. Do NOT
-apply the files below as-is to a database meant to serve the current app — the five LAXII tables
-would be missing; regenerate the DDL from the current schema instead):**
+`prisma/schema.postgres.prisma`; the current mirror holds 85 models and is proven parity-identical
+to `prisma/schema.prisma` via scripts/check-schema-parity.ts (M22 Phase 2 regeneration). Do NOT
+apply the files below as-is to a database meant to serve the current app — 50+ models incl. the
+whole social/GIFTZ/RIISHE layers would be missing; regenerate the DDL from the current mirror
+instead. The newer reviewed additive artifact
+`docs/deployment/additive-portfolio-models-migration.sql` (3 tables, 5 indexes — Portfolio /
+PortfolioRevision / DesignChatMessage restoration) is NOT historical: it is the current
+delta for databases created before the M22 model restoration):**
 
 | File | Contents | Use when |
 |---|---|---|
@@ -346,10 +355,10 @@ columns the whole write rolls back with a 500 instead of leaving a half-created 
 | Media | local `uploads/` directory |
 | AI | server-side z-ai SDK via the platform runtime |
 
-Note for later: `next.config.ts` currently sets `ignoreBuildErrors: true` (a scaffold default —
-TypeScript errors do not fail `next build`). Before relying on the build as a gate, either fix
-the remaining type issues and flip this off, or gate CI on `bunx tsc --noEmit` explicitly
-(`docs/testing.md`).
+Note (verified 2026-11-14): `next.config.ts` does **NOT** set `ignoreBuildErrors` — `next build`
+runs full type checking, and `bunx tsc --noEmit` is clean (0 errors) as of the M22 Phase 2
+baseline. Keep it that way: never re-enable `ignoreBuildErrors` to make a build pass
+(protocol §2 — no weakening TypeScript settings to hide errors).
 
 ## 2. Why nothing is deployed
 
@@ -404,14 +413,18 @@ render on is NEVER presented as the permanent link (request headers and
 `window.location` are never consulted — `src/lib/site-url.ts`, enforced by
 `tests/site-url.test.ts`). **No domain is ever hardcoded in the codebase.**
 
-Add a startup env check (fail fast on missing required vars) — recommended, not yet implemented.
+Startup env validation is IMPLEMENTED (M22 Phase 2): src/lib/startup-validation.ts fails fast on missing DATABASE_URL, partial S3 config (production), insecure-cookie policy, unknown backend values — see src/instrumentation.ts.
 
 ### 3.3 Database
 
 ```bash
 bun install
-bunx prisma generate
-bunx prisma migrate deploy     # NOT `db push` in production
+bunx prisma generate --schema prisma/schema.postgres.prisma
+# Schema application in production = reviewed additive SQL artifacts
+# (e.g. docs/deployment/additive-portfolio-models-migration.sql), applied
+# deliberately — NOT blanket `prisma migrate deploy` (no migrations/
+# directory exists in this repo) and never destructive. See
+# docs/deployment/production-deployment.md §2.5 and DEPLOYMENT_OPTIONS.md.
 bun run build                  # next build + standalone asset copy
 NODE_ENV=production bun .next/standalone/server.js
 ```

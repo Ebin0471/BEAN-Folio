@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth";
-import { ok, handler } from "@/lib/api-helpers";
+import { getClientKey, handler, ok, rateLimitShared } from "@/lib/api-helpers";
 import { publicPostFilter, postCardInclude, toPublicPost } from "@/lib/posts";
 
 export const dynamic = "force-dynamic";
@@ -21,6 +21,9 @@ const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 24;
 
 export const GET = handler(async (req: NextRequest) => {
+  // Generous public-read budget (M22): 300 req/min/IP — abuse throttle, not a UX limit.
+  const limited = await rateLimitShared("read:discover:posts:" + getClientKey(req), 300, 60_000);
+  if (limited) return limited;
   const url = new URL(req.url);
   const limit = Math.min(MAX_LIMIT, Math.max(1, Number(url.searchParams.get("limit")) || DEFAULT_LIMIT));
   const cursor = Math.max(0, Number(url.searchParams.get("cursor")) || 0);
