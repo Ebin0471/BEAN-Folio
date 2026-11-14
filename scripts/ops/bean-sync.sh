@@ -3,8 +3,12 @@
 #
 # Implements the approved per-task sync workflow:
 #   inspect diff -> exclude unintended files -> secret scan ->
-#   stage ONLY approved paths -> commit -> push (plain, never force) ->
-#   verify remote SHA -> report.
+#   runtime-data scan (M21) -> stage ONLY approved paths -> commit ->
+#   push (plain, never force) -> verify remote SHA -> report.
+#
+# M21 addition: the staged snapshot is audited for RUNTIME DATA (databases,
+# media, backups, coordinated manifests, env files, vaults). GitHub receives
+# source only — any such path aborts the publish before the commit lands.
 #
 # Refuses to run when auth is missing (prints the exact recovery command
 # once; never loops authentication requests). Refuses to push when the
@@ -75,6 +79,19 @@ scan_secrets() { # $@ = paths already staged; scans staged content
   ok "secret scan: no credential patterns in staged diff"
 }
 
+scan_runtime_data() { # M21: databases, media, backups and vaults are NEVER published
+  local staged_paths hits
+  staged_paths="$(git diff --cached --name-only || true)"
+  # (`.env.example` is tracked documentation — excluded from the .env guard.)
+  hits="$(printf '%s\n' "$staged_paths" | grep -E \
+    '(^db/.*\.db$|^db/.*\.db-journal$|^backups/|^uploads/|^upload/|^\.env$|^\.env\.[^.]+$|\.sqlite3?$|\.sqlite-wal$|\.dump$|^data/laxii-tmp/|^public/downloads/|^pg-migration/|^tool-results/|^\.github-auth/|^backup-manifest-|^beanfolio-[0-9]{8}-[0-9]{6}\.db$)' | grep -v '^\.env\.example$' || true)"
+  if [ -n "$hits" ]; then
+    printf '%s\n' "$hits" >&2
+    fail "runtime data (databases / media / backups / env / vaults) reached the staged snapshot — publish aborted. GitHub receives source only (DEVELOPMENT_SAFETY.md §8, M21 §6)."
+  fi
+  ok "runtime-data scan: no db/media/backup/secret paths staged"
+}
+
 verify_push_result() {
   remote_now="$(git ls-remote origin "refs/heads/$BRANCH" | awk '{print $1}')"
   local_now="$(git rev-parse HEAD)"
@@ -108,6 +125,7 @@ case "$CMD" in
 
     git add -- "$@"
     scan_secrets
+    scan_runtime_data
     ok "staged ONLY approved paths: $*"
 
     COMMIT_SHA="$(git commit -m "$MSG" >/dev/null 2>&1 && git rev-parse HEAD)"

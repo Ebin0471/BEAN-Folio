@@ -263,6 +263,14 @@ row names the minimum external tool.
 
 ## 6. Backups & restore cadence
 
+M21 adds the coordinated, fully verified tooling behind this table —
+`scripts/ops/backup-all.ts` (orchestrator: DB + media in one run, one
+connecting manifest, every checksum re-verified, fail-closed) and
+`scripts/ops/restore-from-backup.ts` (manifest+checksum validation, fresh
+pre-restore backup, isolated staging drill by default, live restore only
+behind `--confirm-live --yes`). Full reference:
+**`docs/ops/BACKUP_AND_RECOVERY.md`**.
+
 | Store | Method | Schedule | Restore test |
 |---|---|---|---|
 | SQLite (`db/custom.db`) | `bun scripts/backup-db.ts` (VACUUM INTO, manifest sha256, keeps 14) | hourly cron + **before every schema change**; ship off-host (object storage w/ encryption) | drill per `docs/ops/MIGRATIONS.md` §5 — quarterly + after every schema change; restore into a throwaway `--target`, never over the live file |
