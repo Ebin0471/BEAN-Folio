@@ -14,6 +14,7 @@
 import type { SiteConfig } from "@/lib/site-config";
 import type { DesignPlan, PlanStep } from "@/lib/ai-design/plan";
 import type { VerificationReport } from "@/lib/ai-design/verify";
+import type { StepContext } from "@/lib/ai-design/execute";
 
 export type JobStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 export type StepStatus = "pending" | "running" | "done" | "repaired" | "failed" | "skipped";
@@ -40,6 +41,18 @@ export interface DesignJob {
   materialIds: string[];
   createdAt: number;
   updatedAt: number;
+  /** Persisted execution grounding (driver re-validates material ownership before reuse). */
+  context?: StepContext;
+  /** Bounded driver diagnostics (warn/error notes), capped to keep snapshots small. */
+  events?: JobEvent[];
+  /** In-memory claim lease (ms epoch) — set by claimJob, cleared by releaseLease. */
+  leaseUntil?: number | null;
+}
+
+export interface JobEvent {
+  at: number;
+  level: "info" | "warn" | "error";
+  message: string;
 }
 
 const TTL_MS = 30 * 60 * 1000; // finished jobs are forgettable after 30 minutes
@@ -62,7 +75,7 @@ export class JobConflictError extends Error {
   }
 }
 
-export function createJob(params: { userId: string; plan: DesignPlan; baseConfig: SiteConfig; materialIds?: string[] }): DesignJob {
+export function createJob(params: { userId: string; plan: DesignPlan; baseConfig: SiteConfig; materialIds?: string[]; context?: StepContext }): DesignJob {
   prune();
   for (const job of store.values()) {
     if (job.userId === params.userId && (job.status === "running" || job.status === "queued")) {
@@ -89,6 +102,7 @@ export function createJob(params: { userId: string; plan: DesignPlan; baseConfig
     error: null,
     cancelRequested: false,
     materialIds: params.materialIds ?? [],
+    ...(params.context ? { context: params.context } : {}),
     createdAt: now,
     updatedAt: now,
   };
@@ -192,4 +206,73 @@ export function jobSnapshot(job: DesignJob, includeConfig: boolean) {
     updatedAt: job.updatedAt,
     ...(includeConfig ? { config: job.working } : {}),
   };
+}
+
+// ------------------------------------------------------- driver primitives
+// M20 audit fix: driver.ts (committed referencing these) never compiled —
+// claimJob/persistJob/releaseLease/applyFailure/appendEvent were missing from
+// this module in every lineage, so the production build failed with 5
+// "Export doesn't exist in target module" errors. Implemented faithfully
+// against the driver's documented contract: bounded, lease-guarded chunks
+// with honest pause/resume — never a fake background run.
+
+/** How long a claim keeps other drivers out; expired leases allow reclaim. */
+const LEASE_MS = 90_000;
+/** Diagnostic events are capped so in-memory jobs and snapshots stay small. */
+const MAX_EVENTS = 50;
+
+/** Append a bounded diagnostic event to a job (no-op safe on finished jobs). */
+export function appendEvent(job: DesignJob, level: JobEvent["level"], message: string): void {
+  if (!job.events) job.events = [];
+  job.events.push({ at: Date.now(), level, message });
+  if (job.events.length > MAX_EVENTS) job.events.splice(0, job.events.length - MAX_EVENTS);
+  job.updatedAt = Date.now();
+}
+
+/**
+ * Atomically claim a job for one bounded execution chunk. Returns the job
+ * only when it is known, owned, NOT finished, and NOT actively leased —
+ * otherwise null ("unclaimable"). Concurrent callers: exactly one wins.
+ */
+export async function claimJob(userId: string, jobId: string): Promise<DesignJob | null> {
+  const job = getJob(userId, jobId);
+  if (!job) return null;
+  const finished = job.status === "completed" || job.status === "failed" || job.status === "cancelled";
+  if (finished) return null;
+  const now = Date.now();
+  if (job.leaseUntil && job.leaseUntil > now) return null; // leased elsewhere
+  job.leaseUntil = now + LEASE_MS;
+  if (job.status === "queued") job.status = "running";
+  job.updatedAt = now;
+  return job;
+}
+
+/**
+ * Persist the current job state. The store holds live object references, so
+ * in-process persistence is the timestamp bump; the async signature matches
+ * the driver's await-based contract (and future durable mirrors).
+ */
+export async function persistJob(job: DesignJob): Promise<void> {
+  touch(job);
+}
+
+/** Release the claim lease so the next poll/kick can drive the next chunk. */
+export async function releaseLease(job: DesignJob): Promise<void> {
+  job.leaseUntil = null;
+  job.updatedAt = Date.now();
+}
+
+/**
+ * Mark a job failed with a user-safe message while keeping every completed
+ * step (retry remains possible via prepareRetry). `backoff` is accepted for
+ * API compatibility with the driver's call sites.
+ */
+export async function applyFailure(
+  job: DesignJob,
+  message: string,
+  _opts: { backoff?: boolean } = {}
+): Promise<void> {
+  job.status = "failed";
+  job.error = message;
+  job.updatedAt = Date.now();
 }

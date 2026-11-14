@@ -345,9 +345,11 @@ const PRIVATE_ROUTE_LABELS: Record<string, string> = {
   folio: "My Folio",
   studio: "Studio",
   intelligence: "RIISHE",
+  laxii: "LAXII", // M20 audit fix: was missing — tab showed "Page not found"
   giftz: "GIFTZ",
   website: "GIFTZ", // legacy #/website — redirects to #/giftz
   connect: "Connect",
+  messages: "Messages", // M20 audit fix: was missing — tab showed "Page not found"
   insights: "Insights",
   settings: "Trust & settings",
   collections: "Saves & collections",
@@ -378,6 +380,27 @@ function RouteSeo() {
         title: "Explore work — BEAN Folio",
         description: "Search published projects across every craft on BEAN Folio.",
         path: "/explore",
+        jsonLd: null,
+      });
+      return;
+    }
+    if (root === "search") {
+      // M20 audit fix: search is a PUBLIC route over public data — it fell
+      // into the unknown-route branch ("Page not found" + noindex) before.
+      applySeo({
+        title: "Search — BEAN Folio",
+        description: "Search people, projects and posts across BEAN Folio.",
+        path: "/search",
+        jsonLd: null,
+      });
+      return;
+    }
+    if (root === "hashtags") {
+      // Public hashtag page — the view refines the title with the real tag
+      // once its content loads, same pattern as profile/project routes.
+      applySeo({
+        title: "Hashtag — BEAN Folio",
+        description: "Posts tagged with this hashtag on BEAN Folio.",
         jsonLd: null,
       });
       return;

@@ -46,6 +46,11 @@ export interface StepContext {
   portfolioText?: string;
   /** Pre-rendered BINDING creative-direction block — keeps every step on-brief. */
   directionText?: string;
+  /**
+   * Media ids the execution may reference (driver-supplied; owner-validated
+   * before every chunk — see resolveStepContext in ai-design/driver.ts).
+   */
+  allowedMediaIds?: string[];
 }
 
 /** Error with a user-safe message — step-level failures never leak internals. */
@@ -385,8 +390,23 @@ function digestShape(base: SiteConfig) {
 // ------------------------------------------------------------ job runner
 
 export interface RunOutcome {
-  status: "completed" | "failed" | "cancelled";
+  status: "completed" | "failed" | "cancelled" | "yielded";
   failedSteps: number;
+}
+
+/**
+ * Optional driver controls (M20 audit fix): the execution driver drives jobs
+ * in BOUNDED chunks under an atomic lease. When `budgetMs` is provided the
+ * runner yields between steps once the budget is spent (completed steps are
+ * persisted and never re-run); `persist` receives the job after every step
+ * so progress survives; `recheckCancel` re-validates cancellation against
+ * the live store before each step starts. All are optional — the routes'
+ * direct run-to-completion calls are unchanged.
+ */
+export interface RunOptions {
+  budgetMs?: number;
+  persist?: (job: DesignJob) => Promise<void> | void;
+  recheckCancel?: () => Promise<boolean>;
 }
 
 /**
@@ -416,19 +436,26 @@ export function describeFailedSteps(job: DesignJob): string {
  * polling the store. `stepContext` carries the grounding built once by the
  * execute route (source materials + portfolio block).
  */
-export async function runDesignJob(job: DesignJob, provider: StepProvider, stepContext: StepContext = {}): Promise<RunOutcome> {
+export async function runDesignJob(job: DesignJob, provider: StepProvider, stepContext: StepContext = {}, opts: RunOptions = {}): Promise<RunOutcome> {
   job.status = "running";
   touch(job);
   const constraintTargets = resolvedConstraintTargets(job.plan, digestShape(job.baseConfig));
+  const budgetDeadline = opts.budgetMs ? Date.now() + opts.budgetMs : null;
 
   for (const step of job.steps) {
-    if (job.cancelRequested) {
+    const cancelFlagged = job.cancelRequested || (opts.recheckCancel ? await opts.recheckCancel().catch(() => false) : false);
+    if (cancelFlagged) {
       for (const s of job.steps) if (s.status === "pending") s.status = "skipped";
       job.status = "cancelled";
       job.error = "Cancelled at your request — completed steps are kept in the preview.";
       touch(job);
       void persistDesignJobTerminalState(job);
       return { status: "cancelled", failedSteps: 0 };
+    }
+    // Bounded chunking: yield BEFORE starting another step once the budget
+    // is spent — completed steps are persisted and the next poll resumes.
+    if (budgetDeadline !== null && Date.now() >= budgetDeadline && job.steps.some((s) => s.status === "pending")) {
+      return { status: "yielded", failedSteps: 0 };
     }
     // dependent steps of a failed/skipped step are skipped
     if (step.status === "pending") {
@@ -472,6 +499,9 @@ export async function runDesignJob(job: DesignJob, provider: StepProvider, stepC
       step.error = e instanceof StepError ? e.message : "The step failed while applying changes. You can retry from here.";
       touch(job);
     }
+    // Per-step progress persistence (driver lease model: whoever can execute
+    // drives progress; a vanished poll never loses completed work).
+    if (opts.persist) await Promise.resolve(opts.persist(job)).catch(() => {});
   }
 
   const failed = job.steps.filter((s) => s.status === "failed").length;

@@ -275,19 +275,25 @@ function ChatTab({
 
       {/* Sidebar (desktop) */}
       <aside className="hidden md:flex md:flex-col">
-        <div className="flex items-center justify-between pb-2">
-          <h3 className="text-sm font-medium text-foreground">Conversations</h3>
-          <div className="flex items-center gap-1.5">
+        {/* Header row: heading + actions must never overlap. At the fixed
+            260px sidebar width the heading (~96px) plus both buttons
+            (~205px) exceed the container, so the row wraps onto a second
+            line instead of colliding / bleeding into the thread panel
+            (M20 UI audit fix: measured 46px overflow before). */}
+        <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5 pb-2">
+          <h3 className="min-w-0 text-sm font-medium text-foreground">Conversations</h3>
+          <div className="flex shrink-0 items-center gap-1.5">
             <Button
               variant={dashboardOpen ? "default" : "outline"}
               size="sm"
+              className="shrink-0"
               onClick={() => setDashboardOpen((v) => !v)}
               aria-label={dashboardOpen ? "Back to chat" : "Open automation dashboard"}
               aria-pressed={dashboardOpen}
             >
               <Workflow className="size-3.5" aria-hidden /> Automations
             </Button>
-            <Button variant="outline" size="sm" onClick={newChat}>
+            <Button variant="outline" size="sm" className="shrink-0" onClick={newChat}>
               <Plus className="size-3.5" aria-hidden /> New
             </Button>
           </div>
