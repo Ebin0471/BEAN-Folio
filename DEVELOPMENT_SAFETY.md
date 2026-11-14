@@ -133,6 +133,22 @@ Local `main` keeps the full local history — **it must NEVER be pushed**
 (its history contains historical `db/custom.db` blobs with password hashes
 and private user media).
 
+> **Amendment (2026-11-14, verified):** the publishing mechanism above was
+> superseded by the M18+ bean-sync workflow. Local `main` was rebuilt on the
+> verified-clean published lineage (reconciliation commits `09e67a9`,
+> `ddd1a1d`); `git log main -- db/custom.db`, `-- uploads/`, `-- .env`,
+> `-- backups/`, `-- pg-migration/` are all empty at `d1921e3`, so `main` is
+> now published **directly** via `scripts/ops/bean-sync.sh` (secret scan +
+> runtime-data scan + push + remote-SHA verification). The credential vault
+> likewise moved to the workspace-persistent `.git/bean-auth/` managed by
+> `scripts/ops/bean-auth.sh`. The runtime-data-exclusion **intent** of this
+> section is unchanged and is enforced mechanically on every publish. The
+> `github-clean`/`publish-github-clean.sh` flow is retired, and the
+> `git push origin deploy:main` instruction in `docs/deployment.md` §0.2 is
+> VOID — the `deploy` branch retains the historical db/media blobs and must
+> never be pushed. The binding publishing policy now lives in
+> [`docs/ops/MILESTONE_EXECUTION_PROTOCOL.md`](./docs/ops/MILESTONE_EXECUTION_PROTOCOL.md) §5.
+
 Remote of record: **`https://github.com/Ebin0471/BEAN-Folio.git`** — the
 owner-confirmed PRIVATE repository (connected 2026-11-11).
 

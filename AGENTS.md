@@ -1,10 +1,14 @@
 # BEAN FOLIO — Agent Instructions
 
-**Read and follow [`DEVELOPMENT_SAFETY.md`](./DEVELOPMENT_SAFETY.md) before
-making ANY change to this repository. It is binding, version-controlled
-policy — not optional guidance.**
+**Read and follow [`DEVELOPMENT_SAFETY.md`](./DEVELOPMENT_SAFETY.md) and
+[`docs/ops/MILESTONE_EXECUTION_PROTOCOL.md`](./docs/ops/MILESTONE_EXECUTION_PROTOCOL.md)
+before making ANY change to this repository. Both are binding,
+version-controlled policy — not optional guidance.** The milestone protocol
+(mandatory workflow, approval gates, publishing policy, final-report
+requirements) governs every milestone, hotfix, feature, refactor, audit,
+deployment and maintenance task.
 
-Non-negotiables (details and rationale in the policy):
+Non-negotiables (details and rationale in the policies):
 
 1. **Preserve everything.** This is a long-lived product: never delete
    projects, media, GIFTZ history, database rows, or unrelated work. No
@@ -24,11 +28,20 @@ Non-negotiables (details and rationale in the policy):
    live DB; never restore an older DB without approval (§3).
 6. **GitHub discipline — MANDATORY after every completed task.** Repository
    of record: `https://github.com/Ebin0471/BEAN-Folio.git` (remote `origin`,
-   PRIVATE). GitHub receives source-only snapshots through the
-   `github-clean` lineage pushed to remote `main`; local `main` and `deploy`
-   are never pushed; no force-push or remote history rewrite, ever.
-   Synchronization after every completed task is REQUIRED: tests/lint →
-   full diff review → descriptive commit → `scripts/ops/publish-github-clean.sh`
-   → push → verify the remote hash → end-of-task report. Never claim a sync
-   succeeded without the verified remote hash; never discard local work to
-   make a push succeed (§8).
+   PRIVATE). GitHub receives **source only** — databases, media, backups,
+   env files and vaults are never pushed; `deploy` and `github-clean` are
+   never pushed; no force-push or remote history rewrite, ever.
+   Synchronization after every completed task is REQUIRED and runs through
+   the verified workflow: tests/lint → full diff review → descriptive
+   commit → `scripts/ops/bean-sync.sh commit -m "<message>" -- <approved paths>`
+   (secret scan + runtime-data scan + push + SHA verification built in) →
+   independent `git ls-remote origin main` verification → end-of-task
+   report. The pre-M18 `publish-github-clean.sh` snapshot flow is retired;
+   the `git push origin deploy:main` instruction in `docs/deployment.md` is
+   VOID (the `deploy` branch carries historical db/media blobs — protocol
+   §5.4). Never claim a sync succeeded without the verified remote hash;
+   never discard local work to make a push succeed (§8).
+7. **Milestone protocol.** Every task follows the full workflow in
+   `docs/ops/MILESTONE_EXECUTION_PROTOCOL.md` (§1 mandatory 12-step
+   workflow, §2 permanent restrictions, §3 approval gates, §4 required
+   final report, §5 verified publishing policy, §6 known-baseline register).
