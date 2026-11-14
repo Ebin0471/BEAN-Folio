@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { getSessionUser } from "@/lib/auth";
-import { ok, err, handler } from "@/lib/api-helpers";
+import { err, getClientKey, handler, ok, rateLimitShared } from "@/lib/api-helpers";
 import { feedPage, type FeedMode } from "@/lib/feed";
 
 export const dynamic = "force-dynamic";
@@ -25,6 +25,9 @@ const MODES: FeedMode[] = ["following", "foryou", "trending", "video"];
  * per post (Post.impressions + daily buckets) — separate from actual views.
  */
 export const GET = handler(async (req: NextRequest) => {
+  // Generous public-read budget (M22): 300 req/min/IP — abuse throttle, not a UX limit.
+  const limited = await rateLimitShared("read:feed:" + getClientKey(req), 300, 60_000);
+  if (limited) return limited;
   const url = new URL(req.url);
   const modeParam = url.searchParams.get("mode") ?? "foryou";
   if (!MODES.includes(modeParam as FeedMode)) return err(`Unknown feed mode — use one of: ${MODES.join(", ")}`, 400);

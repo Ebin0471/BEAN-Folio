@@ -21,6 +21,7 @@ import {
   getResumeDetail,
   listResumes,
 } from "@/lib/laxii/resume-service";
+import { log } from "@/lib/logger";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -157,7 +158,7 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
     if (e instanceof ResumeServiceError) {
       return err(e.message, e.status >= 500 ? 502 : e.status);
     }
-    console.error("[laxii-resume] unexpected failure:", e);
+    log.error("laxii.resume.unexpected_failure", { message: String(e instanceof Error ? e.message : e).slice(0, 300) });
     return err("Resume generation failed. Please try again.", 502);
   }
 });

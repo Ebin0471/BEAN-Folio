@@ -117,7 +117,7 @@ describe("taxonomy completeness — every family has a profile", () => {
   test("every taxonomy profession maps to a family profile via helpers", () => {
     for (const p of flattenTaxonomy()) {
       const fam = familyForProfession(p.slug);
-      expect(fam, `${p.slug} has no family`).not.toBeNull();
+      if (fam === null) throw new Error(`${p.slug} has no family`);
       const profile = workProfileForFamily(fam);
       expect(profile.familySlug).toBe(fam);
     }

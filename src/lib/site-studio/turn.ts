@@ -24,6 +24,7 @@ import {
 } from "@/lib/ai-design/quality";
 import { changedFilesBetween, type ChangedFile } from "./files";
 import { classifyProjectRequest, runProjectTurn } from "@/lib/giftz/project-agent";
+import { log } from "@/lib/logger";
 
 /**
  * Website Studio conversational turn — the real code-generation pipeline.
@@ -267,7 +268,7 @@ export async function startStudioTurn(params: StartTurnParams): Promise<StartTur
     context: params.context ?? null,
     history,
   }).catch(async (e) => {
-    console.error("[site-studio] turn crashed:", e);
+    log.error("site_studio.turn.crashed", { message: String(e instanceof Error ? e.message : e).slice(0, 300) });
     await db.siteStudioMessage
       .update({
         where: { id: assistantMessage.id },
@@ -1008,7 +1009,7 @@ export async function retryStudioTurnStep(
         })
         .catch(() => undefined);
     } catch (e) {
-      console.error("[site-studio] retry crashed:", e);
+      log.error("site_studio.turn.retry_crashed", { message: String(e instanceof Error ? e.message : e).slice(0, 300) });
       await db.siteStudioMessage
         .update({
           where: { id: message.id },

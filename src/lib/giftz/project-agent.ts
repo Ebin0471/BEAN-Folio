@@ -157,7 +157,7 @@ export async function classifyProjectRequest(
     const parsed = parseJsonFromText<{ intent?: unknown; reason?: unknown }>(text);
     const intent = parsed?.intent === "files" || parsed?.intent === "config" ? parsed.intent : null;
     if (!intent) {
-      log.warn("giftz.agent.classify_invalid", { siteId: site.id, text: text.slice(0, 200) });
+      log.warn("giftz.agent.classify_invalid", { siteId: site.id, textLength: text.length });
       return configDefault;
     }
     void recordAiUsage(userId, "giftz-project-agent");

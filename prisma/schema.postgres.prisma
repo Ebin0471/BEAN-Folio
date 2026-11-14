@@ -1,36 +1,24 @@
 // BEAN Folio — PostgreSQL target schema (Phase A: zero-app-change mirror)
 //
-// This is the migration companion to `schema.prisma` (SQLite). It is byte-for-byte
-// the same data model — identical models, fields, constraints and indexes — with
-// only the datasource provider switched. Keeping the model identical means the
-// generated Prisma client has exactly the same TypeScript surface, so the
-// application code, zod schemas and ETL all run unchanged against PostgreSQL.
-//
-// Re-sync note (post-cutover audit fix): the mirror had drifted behind
-// schema.prisma — it was missing the avatar/cover focal-point fields, the
-// experienceLevel field, the account-recovery fields, the Project.coverMedia
-// relation + category index, and the whole SiteDesign / SiteMaterial /
-// SiteRevision / PasswordResetToken set. All are added here so a client
-// generated from THIS schema has exactly the same surface as one generated
-// from schema.prisma (the Vercel build generates from this file).
-//
-// Re-sync note (LAXII, 2026-11): the mirror was also missing the entire LAXII
-// AI-studio set — LaxiiConversation / LaxiiMessage / LaxiiImageVersion /
-// LaxiiUsage / LaxiiResume — and the inverse relations on User (laxiiConversations,
-// laxiiUsage, laxiiResumes) and MediaAsset (laxiiVersions). Both schemas now
-// hold the same 38 models; scripts/check-postgres-schema-readiness.ts expects
-// the matching 38-table inventory.
+// FULLY REGENERATED 2026-11-14 (M22 Phase 2, owner-approved O2) from
+// prisma/schema.prisma — the mirror had drifted 31 models behind (51 vs 82)
+// and is now byte-for-byte the same data model (85 models including the
+// restored Portfolio / PortfolioRevision / DesignChatMessage), with only the
+// datasource provider switched. Identical models = identical generated
+// client surface, so application code, zod schemas and ETL run unchanged
+// against PostgreSQL. The Vercel build generates from this file
+// (package.json vercel-build). Verified by scripts/check-schema-parity.ts.
 //
 // Usage (only on a host with a real PostgreSQL instance):
-//   1. cp prisma/schema.postgres.prisma prisma/schema.prisma        (after committing the SQLite one)
-//   2. Set DATABASE_URL=postgresql://user:pass@host:5432/beanfolio
-//   3. bunx prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script > pg-migration/01_schema.sql
+//   1. Set DATABASE_URL=postgresql://user:pass@host:5432/beanfolio
+//   2. bunx prisma generate --schema prisma/schema.postgres.prisma
+//   3. bunx prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.postgres.prisma --script > pg-migration/01_schema.sql
 //   4. Apply 01_schema.sql, then run scripts/migrate-to-postgres.ts (import),
 //      then scripts/verify-postgres-migration.ts.
 //
-// Phase B (AFTER cutover, separate PR — see docs/database.md §6): switch
+// Phase B (AFTER cutover, separate change — see docs/database.md §6): switch
 // status/visibility/kind/type/role String columns to native Prisma `enum` blocks,
-// `tools` → String[] , `Notification.payload` / `AuditEvent.meta` → Json, and add
+// `tools` → String[], `Notification.payload` / `AuditEvent.meta` → Json, and add
 // tsvector/GIN search columns. Each of those changes the generated client surface,
 // so they deliberately do NOT ship in the same change as the engine swap.
 
@@ -40,20 +28,21 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
   // Production connection budget (P4 reliability — exhaustion posture):
-  // each Next instance opens `connection_limit` Postgres connections. The
-  // TOTAL across all instances + workers must stay under the database's
-  // max_connections (managed providers cap it: e.g. Supabase small ≈ 60 on
-  // the direct port, far more via their pooled port). RULE OF THUMB:
-  //   connection_limit = floor(max_connections * 0.8 / instance_count)
-  // and ALWAYS deploy against a pooler (pgBouncer / provider pooler) at
-  // more than ~2 instances — docs/ops/DEPLOYMENT_TIERS.md. Under exhaustion
-  // Prisma queues queries with `pool_timeout` (default 10s) and then fails
-  // the request — the queue worker and rate limiter degrade per design
-  // (docs/ops/RUNBOOK.md §DB saturation) instead of cascading.
-  connection_limit = 10
-  pool_timeout     = 10
+  // append the pool arguments to DATABASE_URL as query parameters, e.g.
+  //   postgresql://user:pass@host:5432/beanfolio?connection_limit=10&pool_timeout=10
+  // (they are URL arguments, NOT datasource-block properties — Prisma
+  // rejects them as block fields). Each Next instance opens `connection_limit`
+  // Postgres connections. The TOTAL across all instances + workers must stay
+  // under the database's max_connections (managed providers cap it: e.g.
+  // Supabase small ≈ 60 on the direct port, far more via their pooled port).
+  // RULE OF THUMB: connection_limit = floor(max_connections * 0.8 /
+  // instance_count) — and ALWAYS deploy against a pooler (pgBouncer /
+  // provider pooler) at more than ~2 instances — docs/ops/DEPLOYMENT_TIERS.md.
+  // Under exhaustion Prisma queues queries with `pool_timeout` (default 10s)
+  // and then fails the request — the queue worker and rate limiter degrade
+  // per design (docs/ops/RUNBOOK.md §DB saturation) instead of cascading.
+  url = env("DATABASE_URL")
 }
 
 // ---------- Identity ----------
@@ -131,6 +120,34 @@ model User {
   giftzRepositories GiftzRepository[]
   giftzSites        GiftzSite[]        @relation("giftzSites")
   siteStudioSessions SiteStudioSession[] @relation("siteStudioSessions")
+  riisheAutomations  RiisheAutomation[]  @relation("riisheAutomations")
+  riisheContactNotes RiisheContactNote[] @relation("riisheContactNotes")
+  riisheWorkflows    RiisheWorkflow[]    @relation("riisheWorkflows")
+  riisheWorkflowSteps RiisheWorkflowStep[] @relation("riisheWorkflowSteps")
+  riisheShortlist    RiisheCreatorShortlist[] @relation("riisheShortlist")
+  riishePreferences  RiisheUserPreference[]   @relation("riishePreferences")
+  // ---------- Creator social feed (Discover) ----------
+  posts         Post[]
+  postLikes     PostLike[]
+  postBookmarks PostBookmark[]
+  postComments  PostComment[]
+  // ---------- Social network expansion (additive) ----------
+  accountEdgesSet      AccountEdge[] @relation("accountEdgeOwner") // mute/restrict this user set on others
+  accountEdgesReceived AccountEdge[] @relation("accountEdgeTarget") // mute/restrict others set on this user
+  postCommentLikes     PostCommentLike[]
+  hiddenPosts          PostHidden[] // negative feed feedback ("not interested")
+  conversationMemberships ConversationParticipant[]
+  directMessages       Message[]
+  searchHistory        SearchQuery[]
+  notificationSettings NotificationSetting[]
+  // ---------- Portfolio studio + AI design chat (M22 restoration, additive) ----------
+  // Restored 2026-11-14 after the models were lost in the 2026-11-11 lineage
+  // reconstruction (see docs/ops/MILESTONE_EXECUTION_PROTOCOL.md §7 CB-2).
+  // Field definitions were reconstructed from the surviving route/lib/view
+  // code that references them — every field is evidenced by an actual query
+  // or consumed response shape.
+  portfolio           Portfolio?
+  designChatMessages  DesignChatMessage[]
 }
 
 model Session {
@@ -230,12 +247,14 @@ model MediaAsset {
   size        Int
   width       Int?
   height      Int?
-  status      String   @default("READY") // READY | FAILED
+  status      String   @default("READY") // PENDING (presigned, awaiting direct upload) | READY | FAILED
   storagePath String // path under /uploads
   createdAt   DateTime @default(now())
 
   projectMedia ProjectMedia[]
   projectCovers Project[]
+  postMedia        PostMedia[]
+  postMediaPosters PostMedia[] @relation("PostMediaPoster")
   siteMaterials SiteMaterial[]
   laxiiVersions LaxiiImageVersion[]
   agentArtifacts AgentArtifact[]
@@ -263,15 +282,27 @@ model Project {
   challenges   String?
   outcome      String?
   role         String? // creator's contribution
-  tools        String? // JSON string array of tool names (SQLite has no array type)
+  tools         String? // JSON string array of tool names (SQLite has no array type)
   // Universal Studio (additive, optional): JSON envelope with the project's
   // profession-aware metadata — { kind, templateId, fields, custom }. Nullable
   // so every pre-existing project stays valid untouched; parsed defensively at
   // the serializer boundary (lib/serialize.ts).
-  customFields String?
+  customFields  String?
   externalUrl  String?
   repoUrl      String?
   publishedAt  DateTime?
+  // Universal Studio portfolio curation (additive, optional): when set, the
+  // creator has featured this project — it orders first on their public
+  // profile and website project sections. Nullable so every pre-existing
+  // project stays valid untouched; only PUBLISHED projects may be featured.
+  featuredAt   DateTime?
+  // Universal Studio project management (additive, optional): when set, the
+  // project lives in the owner's private Archive — hidden from the active
+  // Drafts/Published lists but never deleted, and restorable at any time.
+  // Nullable so every pre-existing project stays valid untouched. Archived
+  // projects are always excluded from every public surface (they are owner-
+  // private regardless of status).
+  archivedAt   DateTime?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
@@ -367,13 +398,17 @@ model CollectionItem {
 model Follow {
   followerId  String
   followingId String
+  status      String   @default("ACTIVE") // ACTIVE | PENDING (private-account follow request awaiting approval)
   createdAt   DateTime @default(now())
+  respondedAt DateTime? // when a PENDING request was approved (stays null for instant follows)
 
   follower  User @relation("follower", fields: [followerId], references: [id], onDelete: Cascade)
   following User @relation("following", fields: [followingId], references: [id], onDelete: Cascade)
 
   @@id([followerId, followingId])
   @@index([followingId])
+  @@index([followingId, status]) // ACTIVE-only follower counts + follower lists
+  @@index([followerId, status]) // ACTIVE-only following lists
 }
 
 // ---------- Connections ----------
@@ -402,13 +437,18 @@ model Notification {
   id        String    @id @default(cuid())
   userId    String
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  type      String // FOLLOW | INQUIRY | INQUIRY_RESPONSE | SAVE | SYSTEM
+  type      String // FOLLOW | FOLLOW_REQUEST | FOLLOW_ACCEPTED | POST_LIKE | POST_COMMENT | COMMENT_REPLY | MENTION | POST_SHARE | MESSAGE | MESSAGE_REQUEST | INQUIRY | INQUIRY_RESPONSE | SAVE | SYSTEM
   payload   String    @default("{}") // JSON string
+  actorId   String? // who triggered the notification (self-actions never notify) — used for grouping + suppression
+  targetId  String? // post/comment/conversation id the notification is about — used for grouping
+  dedupKey  String? // retry-safety: retries with the same key upsert instead of duplicating (null = never deduped)
   readAt    DateTime?
   createdAt DateTime  @default(now())
 
+  @@unique([dedupKey]) // NULL dedupKeys are never deduped (SQLite allows multiple NULLs)
   @@index([userId])
   @@index([userId, readAt]) // unread-count queries
+  @@index([userId, createdAt])
 }
 
 model Block {
@@ -465,6 +505,282 @@ model ProfileView {
 
   @@unique([profileUserId, viewerKey, day])
   @@index([profileUserId])
+}
+
+// ---------- Creator social feed (Discover) ----------
+// Posts are the creator social layer on the Discover homepage: text updates,
+// image carousels and video/reel posts built on the EXISTING MediaAsset
+// upload+streaming infrastructure (no new storage system). Public reach is
+// always derived from the author's live visibility ladder (lib/visibility.ts)
+// enforced server-side on every read path — a post by an author whose profile
+// is PRIVATE, demo or soft-deleted never leaves their own workspace.
+
+model Post {
+  id           String    @id @default(cuid())
+  authorId     String
+  author       User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  mediaKind    String    @default("TEXT") // TEXT | IMAGE | VIDEO — derived at creation from the attached media, kept denormalized for feed queries
+  body         String    @default("") // caption / text body
+  hashtags     String    @default("[]") // JSON string[] of normalized tags (lowercase, no '#') — creator-selected, no auto-keywords (mirror of PostHashtag rows)
+  kind         String    @default("UPDATE") // UPDATE | ANNOUNCEMENT | WIP | TUTORIAL | QUESTION — creator-selected professional post type
+  location     String?   // optional creator-written location tag (plain text, never GPS)
+  profession   String?   // creator-selected category = Profession.slug (loose reference, matches the curated-taxonomy style)
+  status       String    @default("PUBLISHED") // PUBLISHED | DRAFT (author-only) | SCHEDULED (auto-publishes at scheduledAt)
+  visibility   String    @default("PUBLIC") // PUBLIC | PRIVATE (PRIVATE = author-only, never indexed)
+  scheduledAt  DateTime? // for SCHEDULED posts: publish moment (sweeps on read + queue worker)
+  shares       Int       @default(0) // share-click counter (like real social share counts)
+  impressions  Int       @default(0) // lifetime feed impressions (served-in-feed counter; distinct from PostView = actual views)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  media       PostMedia[]
+  likes       PostLike[]
+  comments    PostComment[]
+  bookmarks   PostBookmark[]
+  views       PostView[]
+  postHashtags PostHashtag[]
+  shareEvents  PostShareEvent[]
+  impressionDays PostImpressionDay[]
+  hiddenBy     PostHidden[]
+
+  @@index([authorId, createdAt])
+  @@index([status, visibility, createdAt])
+  @@index([mediaKind, status, visibility, createdAt])
+}
+
+model PostMedia {
+  id                 String @id @default(cuid())
+  postId             String
+  post               Post       @relation(fields: [postId], references: [id], onDelete: Cascade)
+  mediaAssetId       String
+  mediaAsset         MediaAsset @relation(fields: [mediaAssetId], references: [id], onDelete: Cascade)
+  order              Int        @default(0)
+  altText            String     @default("") // creator-written media alt text (accessibility + SEO)
+  posterMediaAssetId String? // optional IMAGE asset used as the video thumbnail
+  posterMediaAsset   MediaAsset? @relation("PostMediaPoster", fields: [posterMediaAssetId], references: [id], onDelete: SetNull)
+
+  @@unique([postId, mediaAssetId])
+  @@index([postId])
+}
+
+model PostLike {
+  postId    String
+  userId    String
+  post      Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([postId, userId]) // duplicate likes are structurally impossible
+  @@index([userId])
+}
+
+model PostBookmark {
+  postId    String
+  userId    String
+  post      Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([postId, userId]) // duplicate bookmarks are structurally impossible
+  @@index([userId])
+}
+
+model PostComment {
+  id        String   @id @default(cuid())
+  postId    String
+  post      Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    User @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  parentId  String? // replies (one level — the UI threads replies under their parent)
+  parent    PostComment?  @relation("commentThread", fields: [parentId], references: [id], onDelete: Cascade)
+  replies   PostComment[] @relation("commentThread")
+  body      String
+  status    String   @default("VISIBLE") // VISIBLE | HIDDEN — a RESTRICTED author's comments start HIDDEN; visible to their author + the post owner, who can approve (→ VISIBLE)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  commentLikes PostCommentLike[]
+
+  @@index([postId, status, createdAt]) // public listing filters status
+  @@index([authorId])
+}
+
+model PostView {
+  postId    String
+  viewerKey String // "u:<userId>" for signed-in, "a:<anonCookie>" otherwise — same scheme as ProjectView
+  day       String // UTC "YYYY-MM-DD"
+  post      Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([postId, viewerKey, day]) // deduped per viewer per day
+  @@index([postId])
+}
+
+// ---------- Social network expansion (additive — real social graph) ----------
+
+/// Per-pair relationship controls the OWNER sets on the TARGET: mute (their
+/// activity never reaches my feeds or notifications) and restrict (their new
+/// comments on MY posts start HIDDEN until I approve). Block remains its own
+/// dedicated model — it is a stronger, bidirectional exclusion.
+model AccountEdge {
+  id        String   @id @default(cuid())
+  userId    String // who set the controls
+  targetId  String // who they are controlled for
+  muted      Boolean @default(false)
+  restricted Boolean @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner  User @relation("accountEdgeOwner", fields: [userId], references: [id], onDelete: Cascade)
+  target User @relation("accountEdgeTarget", fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, targetId])
+  @@index([targetId]) // "who muted/restricted me" reverse checks
+}
+
+model PostCommentLike {
+  commentId String
+  userId    String
+  createdAt DateTime @default(now())
+
+  comment PostComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  user    User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([commentId, userId]) // duplicate likes are structurally impossible
+  @@index([userId])
+}
+
+/// Negative relevance feedback: "not interested" — excluded from For You and
+/// Trending for that user forever. Private to the viewer; never affects others.
+model PostHidden {
+  userId    String
+  postId    String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@id([userId, postId])
+  @@index([postId])
+}
+
+/// Real share-event ledger behind the Post.shares counter (analytics need
+/// time-scoped share totals; a bare counter cannot provide them).
+model PostShareEvent {
+  id        String   @id @default(cuid())
+  postId    String
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  userId    String? // null for anonymous shares
+  channel   String   @default("link") // link | copy | native
+  createdAt DateTime @default(now())
+
+  @@index([postId, createdAt])
+}
+
+/// Daily impression buckets — time-scoped analytics without scanning events.
+/// Sum over days = impressions in range; Post.impressions stays the lifetime cache.
+model PostImpressionDay {
+  postId String
+  day    String // UTC "YYYY-MM-DD"
+  count  Int    @default(0)
+  post   Post   @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@id([postId, day])
+  @@index([postId])
+}
+
+/// Hashtag dictionary (normalized names) — powers discovery, trending and
+/// autocomplete. Post.hashtags stays the denormalized mirror for cheap reads.
+model Hashtag {
+  id         String   @id @default(cuid())
+  name       String   @unique // lowercase, no '#', [a-z0-9_]
+  postCount  Int      @default(0) // ACTIVE public-post usage count (maintained on post create/edit/delete)
+  lastUsedAt DateTime @default(now())
+
+  posts PostHashtag[]
+
+  @@index([postCount]) // trending queries
+}
+
+model PostHashtag {
+  postId    String
+  hashtagId String
+  post      Post    @relation(fields: [postId], references: [id], onDelete: Cascade)
+  hashtag   Hashtag @relation(fields: [hashtagId], references: [id], onDelete: Cascade)
+
+  @@id([postId, hashtagId])
+  @@index([hashtagId])
+}
+
+/// Per-user, per-type notification preferences (absent row = enabled).
+model NotificationSetting {
+  userId  String
+  type    String
+  enabled Boolean @default(true)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, type])
+}
+
+/// One-to-one conversations. Message REQUESTS: when the recipient does not
+/// follow the sender (ACTIVE), the recipient's participant row starts PENDING
+/// — they must accept before the sender can continue the thread.
+model Conversation {
+  id            String    @id @default(cuid())
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  lastMessageAt DateTime?
+
+  participants ConversationParticipant[]
+  messages     Message[]
+
+  @@index([lastMessageAt]) // inbox ordering
+}
+
+model ConversationParticipant {
+  conversationId String
+  userId         String
+  requestState   String    @default("ACTIVE") // ACTIVE | PENDING | DECLINED (recipient side of a message request)
+  lastReadAt     DateTime? // read receipts (own reads are always visible to self)
+  archivedAt     DateTime? // inbox archive (per-participant, private)
+  typingUntil    DateTime? // short-lived typing indicator (polled, ≤6s horizon)
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([conversationId, userId])
+  @@index([userId, archivedAt]) // inbox listing
+}
+
+model Message {
+  id             String    @id @default(cuid())
+  conversationId String
+  senderId       String
+  body           String    @default("")
+  mediaAssetId   String? // loose ref to MediaAsset — ownership + READY validated at send; streamed via existing /api/media/[id]/raw
+  sharedPostId   String? // loose ref to Post — viewability re-validated for every recipient at read time
+  createdAt      DateTime  @default(now())
+  deletedAt      DateTime? // sender-initiated unsend (soft delete keeps thread structure)
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt]) // thread paging
+}
+
+/// Search history (signed-in users only, per-scope). Private to the owner;
+/// clearable at any time (privacy control).
+model SearchQuery {
+  id        String   @id @default(cuid())
+  userId    String
+  query     String
+  scope     String   @default("all") // people | posts | hashtags | all
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
 }
 
 // ---------- AI ----------
@@ -687,39 +1003,6 @@ model GiftzRepository {
   @@index([ownerId, updatedAt])
 }
 
-// ---------- GIFTZ generated sites (independent prompt-driven websites) ----------
-// GIFTZ builds COMPLETE websites from natural-language prompts. Each generated
-// site is its OWN artifact — fully separate from the user's portfolio website
-// (SiteDesign) and from Customization state.
-model GiftzSite {
-  id              String   @id @default(cuid())
-  userId          String
-  user            User     @relation("giftzSites", fields: [userId], references: [id], onDelete: Cascade)
-  title           String   @default("Untitled site")
-  sourcePrompt    String?
-  config          String? // JSON SiteConfig working draft — private to the owner
-  publishedConfig String? // JSON snapshot published for visitors (PUBLISHED only)
-  status          String   @default("DRAFT") // DRAFT | PUBLISHED
-  publishedAt     DateTime?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-
-  revisions GiftzSiteRevision[]
-
-  @@index([userId, updatedAt])
-}
-
-model GiftzSiteRevision {
-  id        String    @id @default(cuid())
-  siteId    String
-  site      GiftzSite @relation(fields: [siteId], references: [id], onDelete: Cascade)
-  label     String
-  config    String // JSON SiteConfig snapshot
-  createdAt DateTime  @default(now())
-
-  @@index([siteId, createdAt])
-}
-
 // ---------- LAXII Resume Studio ----------
 // One editable resume document per resume conversation. dataJson holds the
 // full resume JSON (JSON-Resume-schema-informed structure); factsJson keeps
@@ -820,8 +1103,10 @@ model SiteStudioSession {
   user        User     @relation("siteStudioSessions", fields: [userId], references: [id], onDelete: Cascade)
   title       String   @default("New session")
   // Conversation target — PRODUCT SEPARATION (owner directive): "portfolio"
-  // sessions belong to Customization (SiteDesign); "giftz" sessions belong to
-  // GIFTZ (independently generated sites, GiftzSite).
+  // sessions belong to Customization (the user's single portfolio site,
+  // SiteDesign); "giftz" sessions belong to GIFTZ (independently generated
+  // sites, GiftzSite). A giftz turn never reads or writes the portfolio
+  // draft, and a portfolio turn never touches a GiftzSite.
   targetKind  String   @default("portfolio") // portfolio | giftz
   targetSiteId String? // GiftzSite id when targetKind = "giftz"
   createdAt   DateTime @default(now())
@@ -850,6 +1135,187 @@ model SiteStudioMessage {
 
   @@index([sessionId, createdAt])
   @@index([taskId])
+}
+
+// ---------- GIFTZ generated sites (independent prompt-driven websites) ----------
+// GIFTZ builds COMPLETE websites from natural-language prompts. Each generated
+// site is its OWN artifact — fully separate from the user's portfolio website
+// (SiteDesign) and from Customization state: generating, refining, saving or
+// publishing a GiftzSite never touches the portfolio draft/published snapshot,
+// and Customization never touches a GiftzSite. config is the working draft;
+// publishedConfig is the immutable snapshot visitors see once PUBLISHED.
+model GiftzSite {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation("giftzSites", fields: [userId], references: [id], onDelete: Cascade)
+  title           String   @default("Untitled site")
+  // The originating prompt (bounded) — provenance for the creator only.
+  sourcePrompt    String?
+  // Short project description (bounded, creator-facing metadata only).
+  description     String?
+  // Project framework of the generated file tree. "standard-static" is the
+  // compiled static site (HTML/CSS/JS + package.json + site.config.json).
+  framework       String   @default("standard-static")
+  config          String? // JSON SiteConfig working draft — private to the owner
+  publishedConfig String? // JSON snapshot published for visitors (PUBLISHED only)
+  status          String   @default("DRAFT") // DRAFT | PUBLISHED
+  // Standalone-platform publish pipeline state:
+  // DRAFT | BUILDING | PREVIEW | READY_TO_PUBLISH | DEPLOYING | PUBLISHED | FAILED
+  deployStatus    String   @default("DRAFT")
+  publishedAt     DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  revisions      GiftzSiteRevision[]
+  projectFiles   GiftzProjectFile[]  @relation("giftzProjectFiles")
+  versions       GiftzProjectVersion[] @relation("giftzProjectVersions")
+  builds         GiftzBuild[]        @relation("giftzBuilds")
+  deployments    GiftzDeployment[]   @relation("giftzDeployments")
+  domains        GiftzDomain[]       @relation("giftzDomains")
+  activities     GiftzActivity[]     @relation("giftzActivities")
+
+  @@index([userId, updatedAt])
+}
+
+// ---------- GIFTZ standalone platform: real project files ----------
+// Every GIFTZ website project owns a REAL editable file tree. Files are DB
+// rows (bounded content) — `source` tracks who last wrote the file so the
+// deterministic compiler can regenerate its own output without clobbering
+// creator or AI edits:
+//   generated — produced by compileGiftzProjectFiles() from the SiteConfig
+//               content model; safely regenerated on every config save.
+//   user      — written through the code editor; the compiler never
+//               overwrites these (regeneration skips them and reports it).
+//   ai        — written by the GIFTZ file-level agent; same protection.
+// `site.config.json` is the two-way bridge: the visual editor's content model
+// lives inside the file tree so code edits to it sync back into GiftzSite.config.
+model GiftzProjectFile {
+  id        String    @id @default(cuid())
+  siteId    String
+  site      GiftzSite @relation("giftzProjectFiles", fields: [siteId], references: [id], onDelete: Cascade)
+  path      String // confined relative path — no absolute, no "..", no backslash
+  content   String // text content (binary assets are base64-encoded data handled by the compiler with size caps)
+  encoding  String    @default("utf8") // utf8 | base64
+  source    String    @default("generated") // generated | user | ai
+  sizeBytes Int       @default(0)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@unique([siteId, path])
+  @@index([siteId, updatedAt])
+}
+
+// ---------- GIFTZ standalone platform: project version snapshots ----------
+// Full-file-tree snapshots taken on saves, AI proposal applies, publishes and
+// restores (bounded per site). `source` records who created the version.
+// Versions with source "publish" are protected from pruning — the last
+// published state is always recoverable.
+model GiftzProjectVersion {
+  id        String    @id @default(cuid())
+  siteId    String
+  site      GiftzSite @relation("giftzProjectVersions", fields: [siteId], references: [id], onDelete: Cascade)
+  label     String
+  // ai | user | publish | restore | auto
+  source    String    @default("auto")
+  filesJson String // JSON: { files: [{ path, content, encoding, source }], config: SiteConfig | null }
+  createdBy String?
+  createdAt DateTime  @default(now())
+
+  @@index([siteId, createdAt])
+}
+
+// ---------- GIFTZ standalone platform: build jobs ----------
+// Deterministic production/validation builds of the project file tree.
+// Diagnostics are honest per-file findings; the artifact is the built file
+// set (deployments serve from it). No fabricated success.
+model GiftzBuild {
+  id              String    @id @default(cuid())
+  siteId          String
+  site            GiftzSite @relation("giftzBuilds", fields: [siteId], references: [id], onDelete: Cascade)
+  // QUEUED | BUILDING | SUCCEEDED | FAILED
+  status          String    @default("QUEUED")
+  // manual | publish | ai
+  trigger         String    @default("manual")
+  diagnosticsJson String? // JSON: { checks: [{ path, severity, message }], summary, checksRun, durationMs }
+  artifactJson    String? // SUCCEEDED only: { files: [{ path, mime, encoding, content }] }
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  createdAt       DateTime  @default(now())
+
+  deployments GiftzDeployment[]
+
+  @@index([siteId, createdAt])
+}
+
+// ---------- GIFTZ standalone platform: deployment records ----------
+// Real publishing lifecycle records. provider "bean-folio-hosting" serves the
+// built artifact at the site's public path; external providers go through
+// deployment adapters and are honestly reported as not-configured when absent.
+model GiftzDeployment {
+  id         String     @id @default(cuid())
+  siteId     String
+  site       GiftzSite  @relation("giftzDeployments", fields: [siteId], references: [id], onDelete: Cascade)
+  buildId    String?
+  build      GiftzBuild? @relation(fields: [buildId], references: [id], onDelete: SetNull)
+  // PREPARING | DEPLOYING | LIVE | FAILED | ROLLED_BACK
+  status     String     @default("PREPARING")
+  provider   String     @default("bean-folio-hosting")
+  url        String? // public URL of this deployment (set only when LIVE)
+  filesJson  String? // served artifact: { files: [{ path, mime, encoding, content }] }
+  error      String?
+  deployedAt DateTime?
+  createdAt  DateTime   @default(now())
+
+  @@index([siteId, createdAt])
+}
+
+// ---------- GIFTZ standalone platform: custom domains ----------
+// Configuration + verification records for custom domains. Verification is a
+// real DNS resolution check (never fabricated); routing requires an external
+// hosting/DNS configuration that is honestly reported when absent.
+model GiftzDomain {
+  id                String    @id @default(cuid())
+  siteId            String
+  site              GiftzSite @relation("giftzDomains", fields: [siteId], references: [id], onDelete: Cascade)
+  hostname          String // lowercase, no scheme, no path
+  // PENDING | VERIFIED | FAILED
+  status            String    @default("PENDING")
+  verificationToken String    @default("")
+  verifiedAt        DateTime?
+  lastError         String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@unique([hostname])
+  @@index([siteId])
+}
+
+// ---------- GIFTZ standalone platform: project activity ----------
+// Append-only activity feed for AI agent operations and creator actions on a
+// project (audit trail per project; AuditEvent remains the platform-wide log).
+model GiftzActivity {
+  id         String    @id @default(cuid())
+  siteId     String
+  site       GiftzSite @relation("giftzActivities", fields: [siteId], references: [id], onDelete: Cascade)
+  userId     String
+  kind       String // site.create | ai.compose | ai.edit | file.write | file.delete | build | deploy | publish | version.save | version.restore | domain.add | domain.verify
+  detailJson String    @default("{}")
+  createdAt  DateTime  @default(now())
+
+  @@index([siteId, createdAt])
+}
+
+// Snapshots of a GiftzSite taken before each save — revisions preserve the
+// creator's earlier generated versions (bounded per site, pruned to newest 10).
+model GiftzSiteRevision {
+  id        String    @id @default(cuid())
+  siteId    String
+  site      GiftzSite @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  label     String
+  config    String // JSON SiteConfig snapshot
+  createdAt DateTime  @default(now())
+
+  @@index([siteId, createdAt])
 }
 
 model AuditEvent {
@@ -959,7 +1425,7 @@ model RateLimitBucket {
 // every instance reads the same data and sees the same invalidation. The
 // cache API enforces a public-key whitelist — private/per-viewer data is
 // refused at the write boundary and can never enter a shared store.
-// tags is a JSON string array (portable across providers).
+// SQLite has no arrays: tags is a JSON string array.
 model CacheEntry {
   key        String   @id
   value      String // JSON payload (viewer-independent public shapes only)
@@ -983,6 +1449,7 @@ model CacheGeneration {
   generation Int      @default(0)
   updatedAt  DateTime @updatedAt
 }
+
 // ---------- Google OAuth (direct OIDC — src/lib/auth/google-oauth.ts) ----------
 // Server-side authorization-flow records. The browser never carries state,
 // nonce or the PKCE verifier — they live here, keyed by hashes, single-use and
@@ -1018,4 +1485,248 @@ model GoogleLink {
   expiresAt DateTime
 
   @@index([expiresAt])
+}
+
+// ---------- RIISHE creator automation (additive) ----------
+// Durable, owner-scoped automation rules the RIISHE assistant prepares at the
+// user's request through the existing chat. Automations NEVER duplicate the
+// platform's own records: enquiries always flow through the existing Inquiry
+// model/API, reminders track an EXISTING Inquiry, and notifications reuse the
+// existing Notification model (SYSTEM type). Every row is strictly scoped to
+// its owner — every read/write verifies userId.
+model RiisheAutomation {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation("riisheAutomations", fields: [userId], references: [id], onDelete: Cascade)
+  // FOLLOW_UP_REMINDER | WEEKLY_SUMMARY | OPPORTUNITY_RADAR
+  kind        String
+  // ACTIVE | PAUSED | COMPLETED | CANCELLED
+  status      String   @default("ACTIVE")
+  // For FOLLOW_UP_REMINDER: the existing Inquiry this reminder tracks.
+  targetId    String?
+  // JSON { runAt?: ISO string, repeatDays?: number } — next run + cadence.
+  scheduleJson String  @default("{}")
+  // JSON { autoSend: boolean, recipientCapDays?: number } — autoSend is ALWAYS
+  // false unless the account owner explicitly opts in.
+  configJson  String   @default("{}")
+  // JSON runtime state written by runs: { lastRunAt, lastRunSummary, autoCancelledAt? }
+  stateJson   String   @default("{}")
+  // Explicit opt-in for automatic sending of prepared follow-up drafts.
+  // Default false: the engine only PREPARES drafts; nothing is ever sent
+  // externally without the owner's explicit approval.
+  autoSend    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  runs RiisheAutomationRun[]
+
+  @@index([userId, status])
+  @@index([status, kind])
+}
+
+// Execution history for automations (one row per worker run — the durable
+// record of what the engine actually did, including honest failures).
+model RiisheAutomationRun {
+  id           String           @id @default(cuid())
+  automationId String
+  automation   RiisheAutomation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  userId       String
+  // SUCCEEDED | FAILED
+  status       String           @default("SUCCEEDED")
+  // JSON result: what was prepared/observed (drafts, counts, matches).
+  resultJson   String           @default("{}")
+  error        String?
+  createdAt    DateTime         @default(now())
+
+  @@index([automationId, createdAt])
+  @@index([userId, createdAt])
+}
+
+// User-authored PRIVATE notes about a person, owned strictly by the author.
+// personId is a loose reference to a User row (no FK) so a note about someone
+// who later deletes their account keeps the author's private history honest —
+// the note never exposes the other user's data beyond what the author wrote.
+model RiisheContactNote {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation("riisheContactNotes", fields: [userId], references: [id], onDelete: Cascade)
+  personId  String
+  // Optional collaboration status the author assigns:
+  // NEW | CONTACTED | IN_CONVERSATION | COLLABORATING | CLOSED
+  status    String?
+  note      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, personId])
+  @@index([userId, updatedAt])
+}
+
+// ---------- RIISHE advanced automation agent (additive) ----------
+// Multi-step workflows planned from natural language: every plan and every
+// step is a real persistent record with its own execution history. Steps run
+// through the permission-aware tool registry (riishe.tools) on the durable
+// BackgroundJob queue — the model NEVER executes anything by itself and a
+// step only "succeeds" when its registered tool handler actually completed.
+model RiisheWorkflow {
+  id   String @id @default(cuid())
+  userId String
+  user User   @relation("riisheWorkflows", fields: [userId], references: [id], onDelete: Cascade)
+  title  String
+  // The user's original natural-language goal (verbatim, for auditability).
+  goal   String
+  // AWAITING_APPROVAL | ACTIVE | PAUSED | COMPLETED | FAILED | CANCELLED
+  status String   @default("ACTIVE")
+  // JSON { summary, planner: "llm" | "deterministic", createdAt }
+  planJson String @default("{}")
+  // Traceability: the AiConversation this workflow was planned from.
+  conversationId String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  steps RiisheWorkflowStep[]
+
+  @@index([userId, status])
+  @@index([status, updatedAt])
+}
+
+// One persistent execution record per planned step. Dependent steps wait for
+// their dependencies; HIGH/DESTRUCTIVE steps wait for explicit approval;
+// scheduled steps wait for their time. Retries, timeouts, failures and
+// results are all recorded here — never fabricated.
+model RiisheWorkflowStep {
+  id         String         @id @default(cuid())
+  workflowId String
+  workflow   RiisheWorkflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User           @relation("riisheWorkflowSteps", fields: [userId], references: [id], onDelete: Cascade)
+  // Display/execution order within the workflow (unique per workflow).
+  seq        Int
+  // Registered tool name (riishe.tools) — validated at plan time.
+  kind       String
+  title      String
+  // The planner's symbolic id (s1, s2, ...) used for cross-step references
+  // (draftRef / postRef params resolve through it at execution time).
+  ref        String?
+  // JSON tool input (validated against the tool's zod schema at plan time).
+  paramsJson String   @default("{}")
+  // JSON array of step ids this step depends on.
+  dependsOnJson String @default("[]")
+  // LOW | MEDIUM | HIGH | DESTRUCTIVE — copied from the tool registry,
+  // never from the model output.
+  risk       String   @default("LOW")
+  requiresApproval Boolean @default(false)
+  // PENDING | AWAITING_APPROVAL | READY | RUNNING | SUCCEEDED | FAILED | SKIPPED | CANCELLED
+  status     String   @default("PENDING")
+  resultJson String   @default("{}")
+  error      String?
+  attempts   Int      @default(0)
+  maxAttempts Int     @default(3)
+  timeoutMs  Int      @default(60000)
+  // Future execution time for scheduled steps (null = run when ready).
+  scheduledFor DateTime?
+  backgroundJobId String?
+  approvedAt DateTime?
+  startedAt  DateTime?
+  finishedAt DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([workflowId, seq])
+  @@index([workflowId, seq])
+  @@index([workflowId, ref])
+  @@index([userId, status])
+  @@index([status, scheduledFor])
+}
+
+// Creators the account owner shortlisted (from discovery/workflow results).
+// personId is a loose reference — shortlists survive the other account's
+// deletion exactly like private notes do.
+model RiisheCreatorShortlist {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation("riisheShortlist", fields: [userId], references: [id], onDelete: Cascade)
+  personId  String
+  reason    String?
+  source    String?
+  createdAt DateTime @default(now())
+
+  @@unique([userId, personId])
+  @@index([userId, createdAt])
+}
+
+// RIISHE-specific, user-approved preferences (tone, defaults, quiet hours).
+// Inspectable, editable and deletable through /api/riishe/preferences —
+// nothing is stored silently and no conversation content is persisted here.
+model RiisheUserPreference {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation("riishePreferences", fields: [userId], references: [id], onDelete: Cascade)
+  key       String
+  valueJson String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, key])
+}
+
+// ============================================================================
+// Portfolio studio (M22 restoration — models lost in the 2026-11-11 lineage
+// reconstruction, rebuilt 2026-11-14 from the surviving code that references
+// them: src/app/api/portfolio/*, src/app/api/site/[slug], src/lib/
+// portfolio-server.ts, src/lib/portfolio-schema.ts). One portfolio per user;
+// the public site is resolved by `slug` (/api/site/<slug>). `draft` and
+// `published` hold the full JSON site config (src/lib/portfolio-schema.ts,
+// capped at 200 000 bytes by MAX_CONFIG_BYTES) — `published` is the frozen
+// copy promoted by /api/portfolio/publish and cleared by unpublish.
+// ============================================================================
+model Portfolio {
+  id          String    @id @default(cuid())
+  userId      String    @unique
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  slug        String    @unique // public address — 3-24 chars, lowercase/digits/hyphens (RESERVED_SLUGS guarded)
+  templateId  String    @default("editorial")
+  draft       String // current JSON config (source of truth for the studio)
+  published   String? // frozen JSON config while published; null = unpublished
+  publishedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  revisions PortfolioRevision[]
+
+  @@index([updatedAt])
+}
+
+// Publish-time snapshot of Portfolio.draft ("Published <timestamp>" labels;
+// retention keeps the newest 20 — see /api/portfolio/publish). Restores are
+// always scoped by portfolioId, so foreign revision ids 404.
+model PortfolioRevision {
+  id          String    @id @default(cuid())
+  portfolioId String
+  portfolio   Portfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  data        String // JSON config snapshot (validateConfig round-trips it)
+  label       String?
+  createdAt   DateTime  @default(now())
+
+  @@index([portfolioId, createdAt])
+}
+
+// Site-studio design chat transcript (M22 restoration). One flat stream of
+// USER/ASSISTANT rows grouped by a client-generated `conversationId` string
+// (deliberately NOT a relation — ownership is enforced by the
+// userId+conversationId pair on every query; there is no conversation table).
+// `metaJson` carries assistant payload extras ({jobId, steps, mode} |
+// {steps, clarifying} | {error}) and is only set on ASSISTANT rows.
+// Persisted separately from RIISHE's AiConversation on purpose.
+model DesignChatMessage {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversationId String
+  role           String // "USER" | "ASSISTANT"
+  content        String // user text <=2000 chars; assistant text <=8000 chars
+  metaJson       String?
+  createdAt      DateTime @default(now())
+
+  @@index([userId, conversationId, createdAt])
 }

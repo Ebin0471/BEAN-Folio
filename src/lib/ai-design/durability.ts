@@ -12,6 +12,7 @@ import { db } from "@/lib/db";
 
 import type { DesignJob } from "./jobs";
 import type { VerificationReport } from "./verify";
+import { log } from "@/lib/logger";
 
 const KIND = "SITE_DESIGN_JOB";
 const AGENT = "CODE_GIFTZ";
@@ -65,7 +66,7 @@ export async function persistDesignJobTerminalState(job: DesignJob): Promise<voi
       });
     }
   } catch (error) {
-    console.error("[ai-design] durability shadow write failed:", error instanceof Error ? error.message : error);
+    log.error("ai_design.durability_shadow_failed", { message: String(error instanceof Error ? error.message : error).slice(0, 300) });
   }
 }
 

@@ -1,0 +1,29 @@
+# BEAN Folio — production Caddy edge (M22 Phase 2, O3).
+#
+# Automatic HTTPS via ACME (Let's Encrypt / ZeroSSL). BEAN_DOMAIN comes from
+# the compose environment. The proxy forwards the headers the app depends on:
+# Host (origin resolution) and X-Forwarded-For (rate-limit keying uses the
+# RIGHTMOST hop — Caddy appends the client IP, do not strip or prepend).
+#
+# The tracked dev Caddyfile at the repo root is a separate, HTTP-only sandbox
+# edge — this file is the TLS production variant and is NOT activated by this
+# change (owner deploys deliberately).
+
+{$BEAN_DOMAIN} {
+	encode zstd gzip
+
+	# Security headers (mirrors next.config.ts; no CSP — deferred Tier C,
+	# decision O4 2026-14-11).
+	header {
+		Strict-Transport-Security "max-age=15552000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+		-Server
+	}
+
+	reverse_proxy app:3000 {
+		header_up Host {host}
+		header_up X-Real-IP {remote_host}
+	}
+}

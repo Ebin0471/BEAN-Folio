@@ -88,7 +88,8 @@ async function makeUser(label: string): Promise<{ id: string; username: string }
     select: { id: true, username: true },
   });
   leakedUserIds.push(user.id);
-  return user;
+  if (!user.username) throw new Error("qa user username unexpectedly null");
+  return { ...user, username: user.username };
 }
 
 /** Real session row + cookie — the armed-auth-free login harness. */

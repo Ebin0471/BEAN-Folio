@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth";
-import { ok, err, handler, containsCI } from "@/lib/api-helpers";
+import { containsCI, err, getClientKey, handler, ok, rateLimitShared } from "@/lib/api-helpers";
 import { projectCardInclude, toProjectCard, type ProjectWithCardRelations } from "@/lib/serialize";
 import { publicOwnerFilter } from "@/lib/visibility";
 
@@ -60,6 +60,9 @@ function relevanceScore(row: Row, needle: string): number {
  * Offset-based `cursor`.
  */
 export const GET = handler(async (req: NextRequest) => {
+  // Generous public-read budget (M22): 300 req/min/IP — abuse throttle, not a UX limit.
+  const limited = await rateLimitShared("read:search:projects:" + getClientKey(req), 300, 60_000);
+  if (limited) return limited;
   const sp = req.nextUrl.searchParams;
 
   const q = (sp.get("q") ?? "").trim();

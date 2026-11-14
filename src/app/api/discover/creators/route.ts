@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth";
-import { ok, handler } from "@/lib/api-helpers";
+import { getClientKey, handler, ok, rateLimitShared } from "@/lib/api-helpers";
 import { toPublicPerson } from "@/lib/serialize";
 import { publicProfileBaseFilter } from "@/lib/visibility";
 
@@ -20,6 +20,9 @@ const MAX_LIMIT = 12;
  * publication (explainable — no fabricated popularity).
  */
 export const GET = handler(async (req: NextRequest) => {
+  // Generous public-read budget (M22): 300 req/min/IP — abuse throttle, not a UX limit.
+  const limited = await rateLimitShared("read:discover:creators:" + getClientKey(req), 300, 60_000);
+  if (limited) return limited;
   const sp = req.nextUrl.searchParams;
   const limitRaw = Number.parseInt(sp.get("limit") ?? "", 10);
   const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), MAX_LIMIT) : DEFAULT_LIMIT;

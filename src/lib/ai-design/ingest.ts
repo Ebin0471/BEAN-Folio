@@ -23,6 +23,7 @@ import { getObject } from "@/lib/storage";
 import { PDFParse } from "pdf-parse";
 import { aiVision } from "@/lib/ai";
 import type { MediaAsset } from "@prisma/client";
+import { log } from "@/lib/logger";
 
 export const MATERIAL_LIMITS = {
   /** Materials kept per user (oldest beyond the cap are pruned on add). */

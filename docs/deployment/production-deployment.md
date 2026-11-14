@@ -32,13 +32,19 @@ browser ──HTTPS──▶ reverse proxy (TLS termination, e.g. Caddy/nginx)
 
 1. Provision PostgreSQL 14+; create the database and an application role.
 2. Apply the schema:
-   - fresh install: `psql "$DATABASE_URL" -f docs/deployment/initial-schema.sql`
-     (full 40-table DDL, generated from the schema mirror — includes
-     `RateLimitBucket`).
-   - upgrading a Phase-5-era 36/39-table database:
-     `docs/deployment/additive-schema.sql` (CREATE-only delta; no DROP/ALTER
-     TYPE). Never apply it to a database that does not match the documented
-     baseline.
+   - fresh install: generate the DDL from the CURRENT mirror and apply the
+     reviewed output — `bunx prisma migrate diff --from-empty
+     --to-schema-datamodel prisma/schema.postgres.prisma --script > pg-ddl.sql`
+     (the checked-in `docs/deployment/initial-schema.sql` /
+     `additive-schema.sql` are HISTORICAL reference artifacts from the
+     pre-LAXII 31-table era — docs/deployment.md — and must NOT be applied
+     as-is to a current database).
+   - upgrading any pre-M22 database: apply the reviewed additive delta
+     `docs/deployment/additive-portfolio-models-migration.sql` (3 tables,
+     5 indexes, CREATE-only — the Portfolio / PortfolioRevision /
+     DesignChatMessage restoration). Verify on an isolated copy first
+     (M22 verified it: integrity ok, 0 FK violations, 15/15 query-shape
+     smoke tests).
 3. Verify: `bun run scripts/check-postgres-schema-readiness.ts` must **exit 0**
    (expected inventory: 40 tables incl. `AgentTask`, `GiftzRepository`,
    `AgentArtifact`, `RateLimitBucket`, their indexes and FKs).
@@ -91,15 +97,26 @@ production HTTPS origin — set BEFORE `next build`, or redeploy after
 changing). Server-side AI credentials per `docs/ai-integration.md` (optional;
 the managed gateway needs no key).
 
-Optional Phase 7 controls (defaults are safe; see `.env.example` for the full
+Optional controls (defaults are safe; see `.env.example` for the full
 annotated list): `SESSION_SECURE_COOKIES`, `BEAN_ALLOW_INSECURE_COOKIES`,
-`RATE_LIMIT_BACKEND=db` (multi-instance), `SCRYPT_COST=hardened` (new-hash
-cost; existing hashes verify regardless), `LOG_LEVEL`,
-`ERROR_WEBHOOK_URL`, `CSP_ENABLED=0` (escape hatch), `CSP_FRAME_ANCESTORS`.
+`RATE_LIMIT_BACKEND=postgres` (multi-instance — the value is `postgres`, not
+`db`), `LOG_LEVEL`, `ERROR_WEBHOOK_URL`. A CSP is deliberately NOT shipped
+(deferred Tier-C follow-up — docs/SECURITY_NOTES.md §2; M22 decision O4,
+2026-11-14), so `CSP_ENABLED` / `CSP_FRAME_ANCESTORS` are not read by any
+code. Likewise no code reads `SCRYPT_COST` (scrypt parameters are fixed in
+src/lib/auth.ts).
 
-Startup validation (`src/instrumentation.ts`) fails fast — exit 1 — on:
-missing production `DATABASE_URL`; `SESSION_SECURE_COOKIES=false` without the
-escape hatch; unknown values of known variables; partial S3 configuration.
+Startup validation (`src/lib/startup-validation.ts`, run from
+`src/instrumentation.ts`) fails fast — exit 1 — on: missing/malformed
+`DATABASE_URL`; control characters in any environment value;
+`SESSION_SECURE_COOKIES=false` in production without the
+`BEAN_ALLOW_INSECURE_COOKIES=true` escape hatch; unknown values of the known
+selection variables (`RATE_LIMIT_BACKEND`, `CACHE_BACKEND`,
+`MEDIA_STORAGE_DRIVER`, `QUEUE_ENABLED`, `LOG_LEVEL`,
+`SESSION_SECURE_COOKIES`); and a PARTIAL S3 configuration in production
+(some but not all of `S3_ENDPOINT`/`S3_BUCKET`/`S3_ACCESS_KEY_ID`/
+`S3_SECRET_ACCESS_KEY` set) — the serving path would otherwise silently fall
+back to local disk and lose media on stateless hosts.
 
 ## 6. HTTPS requirements
 
@@ -108,10 +125,13 @@ escape hatch; unknown values of known variables; partial S3 configuration.
   XFF hop — do not add client-controlled headers to that chain).
 - Cookies are `Secure` in production (browsers require it for the
   `SameSite=None` embed mode).
-- The app sends `Content-Security-Policy` (same-origin defaults; no
-  `frame-ancestors` by default). Set `CSP_FRAME_ANCESTORS="'self'"` (or an
-  explicit origin list) once the embedding story is fixed. Do NOT add
-  `X-Frame-Options` alongside a frame-ancestors decision — CSP supersedes it.
+- The app deliberately sends NO `Content-Security-Policy` / `X-Frame-Options`
+  (same-origin iframe previews need embedding; CSP is the documented Tier-C
+  follow-up — docs/SECURITY_NOTES.md §2, deferred by M22 decision O4,
+  2026-11-14). Other hardening headers are sent (nosniff, Referrer-Policy,
+  Permissions-Policy, COOP, production-only HSTS — next.config.ts). When a
+  CSP eventually ships, prefer `frame-ancestors` over `X-Frame-Options` —
+  CSP supersedes it.
 
 ## 7. Process startup
 

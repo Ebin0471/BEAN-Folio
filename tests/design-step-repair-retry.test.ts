@@ -311,7 +311,7 @@ describe("retrying only the failed step", () => {
 
     expect(prepareRetry(job)).toBe(true);
     expect(job.steps[0].status).toBe("done"); // done steps are NEVER reset
-    expect(job.steps[1].status).toBe("pending");
+    expect(job.steps[1].status as string).toBe("pending");
 
     job.status = "completed";
     expect(prepareRetry(job)).toBe(false); // a completed job is not retryable

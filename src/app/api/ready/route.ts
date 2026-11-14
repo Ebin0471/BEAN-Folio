@@ -33,14 +33,16 @@ export const GET = handler(async () => {
   const ready = startupOk && database === "reachable";
 
   if (!ready) {
-    return err(
+    const res = err(
       database === "unreachable" ? "Not ready — database is unreachable" : "Not ready — startup validation failed",
       503,
       "not_ready"
     );
+    res.headers.set("Cache-Control", "no-store");
+    return res;
   }
 
-  return ok({
+  const res = ok({
     ok: true,
     ready: true,
     service: "bean-folio",
@@ -50,4 +52,6 @@ export const GET = handler(async () => {
       : { ok: true, pending: true },
     database,
   });
+  res.headers.set("Cache-Control", "no-store");
+  return res;
 });

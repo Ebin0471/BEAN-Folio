@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
-import { ok, handler, containsCI } from "@/lib/api-helpers";
+import { containsCI, getClientKey, handler, ok, rateLimitShared } from "@/lib/api-helpers";
 import { publicProfileBaseFilter } from "@/lib/visibility";
 
 export const dynamic = "force-dynamic";
@@ -11,6 +11,9 @@ export const dynamic = "force-dynamic";
  * profession labels. No result bodies — just fast, bounded suggestions.
  */
 export const GET = handler(async (req: NextRequest) => {
+  // Generous public-read budget (M22): 300 req/min/IP — abuse throttle, not a UX limit.
+  const limited = await rateLimitShared("read:search:suggest:" + getClientKey(req), 300, 60_000);
+  if (limited) return limited;
   const url = new URL(req.url);
   const raw = (url.searchParams.get("q") ?? "").trim().slice(0, 40).toLowerCase();
   if (raw.length < 2) return ok({ people: [], hashtags: [], professions: [] });

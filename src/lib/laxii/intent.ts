@@ -22,6 +22,7 @@
 import { aiComplete, parseJsonFromText, AiProviderError } from "@/lib/ai";
 
 import type { LaxiiOperation } from "./types";
+import { log } from "@/lib/logger";
 
 export type LaxiiIntentKind =
   | "NEW_IMAGE"
@@ -316,7 +317,7 @@ export async function classifyLaxiiIntent(ctx: IntentContext): Promise<LaxiiInte
     };
   } catch (e) {
     if (!(e instanceof AiProviderError)) {
-      console.error("[laxii] intent classifier failure:", e instanceof Error ? e.message : e);
+      log.error("laxii.intent.classifier_failed", { message: String(e instanceof Error ? e.message : e).slice(0, 300) });
     }
     return fallback;
   }

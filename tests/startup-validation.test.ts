@@ -157,3 +157,111 @@ describe("startup validation — idempotence & snapshot", () => {
     expect(snapshot?.checks.some((c) => c.status === "fail")).toBe(true);
   });
 });
+
+describe("startup validation — S3 storage configuration", () => {
+  test("no S3 vars and no driver override: soft warning (local disk is legitimate for single-node hosts)", () => {
+    const result = validateStartupEnvironment({ env: envWith({}), cache: false });
+    const check = result.checks.find((c) => c.name === "storage_s3_config");
+    expect(check?.status).toBe("warn");
+    expect(result.ok).toBe(true);
+  });
+
+  test("explicit MEDIA_STORAGE_DRIVER=local is honored as an opt-out", () => {
+    const result = validateStartupEnvironment({ env: envWith({ MEDIA_STORAGE_DRIVER: "local", S3_ENDPOINT: "https://s3.example" }), cache: false });
+    const check = result.checks.find((c) => c.name === "storage_s3_config");
+    expect(check?.status).toBe("ok");
+    expect(result.ok).toBe(true);
+  });
+
+  test("partial S3 configuration in PRODUCTION fails fast (silent local fallback = data loss)", () => {
+    const partial = { S3_ENDPOINT: "https://s3.example", S3_BUCKET: "bean-media" }; // missing the two key vars
+    expect(() => validateStartupEnvironment({ env: envWith({ NODE_ENV: "production", ...partial }), cache: false })).toThrow(StartupValidationError);
+    try {
+      validateStartupEnvironment({ env: envWith({ NODE_ENV: "production", ...partial }), cache: false });
+    } catch (e) {
+      const err = e as StartupValidationError;
+      const check = err.result.checks.find((c) => c.name === "storage_s3_config");
+      expect(check?.status).toBe("fail");
+      expect(check?.detail).toContain("missing");
+      // Names may be logged; VALUES never are.
+      expect(check?.detail).not.toContain("https://s3.example");
+      expect(check?.detail).toContain("S3_ENDPOINT");
+    }
+  });
+
+  test("partial S3 configuration outside production is only a warning", () => {
+    const result = validateStartupEnvironment({ env: envWith({ S3_ENDPOINT: "https://s3.example" }), cache: false });
+    const check = result.checks.find((c) => c.name === "storage_s3_config");
+    expect(check?.status).toBe("warn");
+    expect(result.ok).toBe(true);
+  });
+
+  test("complete S3 configuration passes", () => {
+    const result = validateStartupEnvironment({
+      env: envWith({ S3_ENDPOINT: "https://s3.example", S3_BUCKET: "b", S3_ACCESS_KEY_ID: "k", S3_SECRET_ACCESS_KEY: "s" }),
+      cache: false,
+    });
+    const check = result.checks.find((c) => c.name === "storage_s3_config");
+    expect(check?.status).toBe("ok");
+  });
+});
+
+describe("startup validation — session cookie policy", () => {
+  test("unset: Secure-by-default (ok)", () => {
+    const result = validateStartupEnvironment({ env: envWith({}), cache: false });
+    expect(result.checks.find((c) => c.name === "session_cookie_policy")?.status).toBe("ok");
+  });
+
+  test("SESSION_SECURE_COOKIES=false in production without the escape hatch FAILS", () => {
+    expect(() =>
+      validateStartupEnvironment({ env: envWith({ NODE_ENV: "production", SESSION_SECURE_COOKIES: "false" }), cache: false })
+    ).toThrow(StartupValidationError);
+  });
+
+  test("SESSION_SECURE_COOKIES=false in production WITH BEAN_ALLOW_INSECURE_COOKIES=true is a warning, not a failure", () => {
+    const result = validateStartupEnvironment({
+      env: envWith({ NODE_ENV: "production", SESSION_SECURE_COOKIES: "false", BEAN_ALLOW_INSECURE_COOKIES: "true" }),
+      cache: false,
+    });
+    const check = result.checks.find((c) => c.name === "session_cookie_policy");
+    expect(check?.status).toBe("warn");
+    expect(result.ok).toBe(true);
+  });
+
+  test("SESSION_SECURE_COOKIES=false outside production is honored (dev convenience)", () => {
+    const result = validateStartupEnvironment({ env: envWith({ SESSION_SECURE_COOKIES: "false" }), cache: false });
+    expect(result.checks.find((c) => c.name === "session_cookie_policy")?.status).toBe("ok");
+  });
+
+  test("unknown SESSION_SECURE_COOKIES value fails (boolean flag, not free text)", () => {
+    expect(() => validateStartupEnvironment({ env: envWith({ SESSION_SECURE_COOKIES: "yes-please" }), cache: false })).toThrow(StartupValidationError);
+  });
+});
+
+describe("startup validation — known-variable values", () => {
+  test("recognized values pass", () => {
+    const result = validateStartupEnvironment({
+      env: envWith({ RATE_LIMIT_BACKEND: "postgres", CACHE_BACKEND: "memory", MEDIA_STORAGE_DRIVER: "s3", QUEUE_ENABLED: "false", LOG_LEVEL: "warn" }),
+      cache: false,
+    });
+    expect(result.checks.find((c) => c.name === "known_variable_values")?.status).toBe("ok");
+    expect(result.ok).toBe(true);
+  });
+
+  test("unknown backend value fails fast (typo would otherwise silently fall back)", () => {
+    expect(() => validateStartupEnvironment({ env: envWith({ RATE_LIMIT_BACKEND: "redis" }), cache: false })).toThrow(StartupValidationError);
+    try {
+      validateStartupEnvironment({ env: envWith({ RATE_LIMIT_BACKEND: "redis" }), cache: false });
+    } catch (e) {
+      const err = e as StartupValidationError;
+      const check = err.result.checks.find((c) => c.name === "known_variable_values");
+      expect(check?.status).toBe("fail");
+      expect(check?.detail).toContain("RATE_LIMIT_BACKEND");
+    }
+  });
+
+  test("unset variables keep their runtime defaults and pass", () => {
+    const result = validateStartupEnvironment({ env: envWith({}), cache: false });
+    expect(result.checks.find((c) => c.name === "known_variable_values")?.status).toBe("ok");
+  });
+});

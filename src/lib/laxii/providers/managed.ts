@@ -25,6 +25,7 @@ import {
   type LaxiiImageRequest,
   type LaxiiProviderInfo,
 } from "../types";
+import { log } from "@/lib/logger";
 
 const TIMEOUT_MS = 240_000;
 
@@ -142,7 +143,7 @@ async function callManaged(body: {
       // does not expect) must surface as honest PROVIDER failures with the
       // standard safe message — never as raw TypeErrors.
       if (e instanceof LaxiiProviderError) throw e;
-      console.error("[laxii] managed SDK call failed:", e instanceof Error ? e.message : e);
+      log.error("laxii.provider.managed_failed", { message: String(e instanceof Error ? e.message : e).slice(0, 300) });
       throw new LaxiiProviderError(
         "The image engine could not complete the request. Please try again.",
         "provider"

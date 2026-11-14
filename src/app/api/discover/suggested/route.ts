@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth";
-import { ok, handler } from "@/lib/api-helpers";
+import { getClientKey, handler, ok, rateLimitShared } from "@/lib/api-helpers";
 import { publicProfileBaseFilter } from "@/lib/visibility";
 import { toPublicPerson } from "@/lib/serialize";
 
@@ -24,6 +24,9 @@ const MAX_LIMIT = 24;
 const POOL = 240; // candidate cap before scoring — keeps the query bounded
 
 export const GET = handler(async (req: NextRequest) => {
+  // Generous public-read budget (M22): 300 req/min/IP — abuse throttle, not a UX limit.
+  const limited = await rateLimitShared("read:discover:suggested:" + getClientKey(req), 300, 60_000);
+  if (limited) return limited;
   const url = new URL(req.url);
   const limit = Math.min(MAX_LIMIT, Math.max(1, Number(url.searchParams.get("limit")) || DEFAULT_LIMIT));
   const rawCursor = Number(url.searchParams.get("cursor")) || 0;

@@ -109,6 +109,14 @@ model User {
   directMessages       Message[]
   searchHistory        SearchQuery[]
   notificationSettings NotificationSetting[]
+  // ---------- Portfolio studio + AI design chat (M22 restoration, additive) ----------
+  // Restored 2026-11-14 after the models were lost in the 2026-11-11 lineage
+  // reconstruction (see docs/ops/MILESTONE_EXECUTION_PROTOCOL.md §7 CB-2).
+  // Field definitions were reconstructed from the surviving route/lib/view
+  // code that references them — every field is evidenced by an actual query
+  // or consumed response shape.
+  portfolio           Portfolio?
+  designChatMessages  DesignChatMessage[]
 }
 
 model Session {
@@ -1629,4 +1637,65 @@ model RiisheUserPreference {
   updatedAt DateTime @updatedAt
 
   @@unique([userId, key])
+}
+
+// ============================================================================
+// Portfolio studio (M22 restoration — models lost in the 2026-11-11 lineage
+// reconstruction, rebuilt 2026-11-14 from the surviving code that references
+// them: src/app/api/portfolio/*, src/app/api/site/[slug], src/lib/
+// portfolio-server.ts, src/lib/portfolio-schema.ts). One portfolio per user;
+// the public site is resolved by `slug` (/api/site/<slug>). `draft` and
+// `published` hold the full JSON site config (src/lib/portfolio-schema.ts,
+// capped at 200 000 bytes by MAX_CONFIG_BYTES) — `published` is the frozen
+// copy promoted by /api/portfolio/publish and cleared by unpublish.
+// ============================================================================
+model Portfolio {
+  id          String    @id @default(cuid())
+  userId      String    @unique
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  slug        String    @unique // public address — 3-24 chars, lowercase/digits/hyphens (RESERVED_SLUGS guarded)
+  templateId  String    @default("editorial")
+  draft       String // current JSON config (source of truth for the studio)
+  published   String? // frozen JSON config while published; null = unpublished
+  publishedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  revisions PortfolioRevision[]
+
+  @@index([updatedAt])
+}
+
+// Publish-time snapshot of Portfolio.draft ("Published <timestamp>" labels;
+// retention keeps the newest 20 — see /api/portfolio/publish). Restores are
+// always scoped by portfolioId, so foreign revision ids 404.
+model PortfolioRevision {
+  id          String    @id @default(cuid())
+  portfolioId String
+  portfolio   Portfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  data        String // JSON config snapshot (validateConfig round-trips it)
+  label       String?
+  createdAt   DateTime  @default(now())
+
+  @@index([portfolioId, createdAt])
+}
+
+// Site-studio design chat transcript (M22 restoration). One flat stream of
+// USER/ASSISTANT rows grouped by a client-generated `conversationId` string
+// (deliberately NOT a relation — ownership is enforced by the
+// userId+conversationId pair on every query; there is no conversation table).
+// `metaJson` carries assistant payload extras ({jobId, steps, mode} |
+// {steps, clarifying} | {error}) and is only set on ASSISTANT rows.
+// Persisted separately from RIISHE's AiConversation on purpose.
+model DesignChatMessage {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversationId String
+  role           String // "USER" | "ASSISTANT"
+  content        String // user text <=2000 chars; assistant text <=8000 chars
+  metaJson       String?
+  createdAt      DateTime @default(now())
+
+  @@index([userId, conversationId, createdAt])
 }

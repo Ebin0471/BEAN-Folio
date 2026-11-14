@@ -33,6 +33,7 @@ import { storeGeneratedMedia } from "./service";
 import { runBannerPipeline, type BannerPipelineStageUpdate } from "./banner-pipeline";
 import type { DesignBrief } from "./design-brief";
 import type { QualityReport } from "./quality";
+import { log } from "@/lib/logger";
 
 /** A fully-resolved generation request, prepared by the API route. */
 export interface LaxiiJobSpec {
@@ -251,7 +252,7 @@ async function processGenerationJob(spec: LaxiiJobSpec, messageId: string): Prom
         });
         if (!dupe) stored.push({ mediaId, width, height });
       } catch (e) {
-        console.error(`[laxii] output post-processing failure (${messageId}):`, e);
+        log.error("laxii.job.postprocess_failed", { messageId, message: String(e instanceof Error ? e.message : e).slice(0, 300) });
         warnings.push(
           `One of ${result.images.length} outputs could not be saved — the remaining outputs were kept.`
         );
@@ -291,7 +292,7 @@ async function processGenerationJob(spec: LaxiiJobSpec, messageId: string): Prom
         // if SOME were attached, keep the partial success visible.
         const attached = await db.laxiiImageVersion.count({ where: { messageId } });
         if (attached === 0) throw e;
-        console.error(`[laxii] partial version persistence (${messageId}):`, e);
+        log.error("laxii.job.version_persist_failed", { messageId, message: String(e instanceof Error ? e.message : e).slice(0, 300) });
         warnings.push("Some outputs could not be attached to the thread — the saved ones are shown.");
       }
     }
@@ -312,7 +313,7 @@ async function processGenerationJob(spec: LaxiiJobSpec, messageId: string): Prom
           mediaId: stored[0]?.mediaId,
         });
       } catch (e) {
-        console.error(`[laxii] brief task linkage failure (${messageId}):`, e);
+        log.error("laxii.job.brief_link_failed", { messageId, message: String(e instanceof Error ? e.message : e).slice(0, 300) });
       }
     }
 
@@ -365,7 +366,7 @@ async function processGenerationJob(spec: LaxiiJobSpec, messageId: string): Prom
         },
       });
     } catch (e) {
-      console.error(`[laxii] usage metering failure (${messageId}):`, e);
+      log.error("laxii.job.usage_meter_failed", { messageId, message: String(e instanceof Error ? e.message : e).slice(0, 300) });
     }
 
     try {
@@ -385,14 +386,14 @@ async function processGenerationJob(spec: LaxiiJobSpec, messageId: string): Prom
         });
       }
     } catch (e) {
-      console.error(`[laxii] conversation bookkeeping failure (${messageId}):`, e);
+      log.error("laxii.job.bookkeeping_failed", { messageId, message: String(e instanceof Error ? e.message : e).slice(0, 300) });
     }
   } catch (e) {
     const message = safeGenerationError(e);
     if (e instanceof LaxiiProviderError || e instanceof LaxiiCapabilityError) {
-      console.error(`[laxii] generation failure (${messageId}):`, e.message);
+      log.error("laxii.job.generation_failed", { messageId, message: String(e instanceof Error ? e.message : e).slice(0, 300) });
     } else {
-      console.error(`[laxii] unexpected failure (${messageId}):`, e);
+      log.error("laxii.job.unexpected_failure", { messageId, message: String(e instanceof Error ? e.message : e).slice(0, 300) });
     }
     await db.laxiiMessage
       .update({
