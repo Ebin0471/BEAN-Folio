@@ -20,6 +20,10 @@ export const PROJECT_FILE_LIMITS = {
   maxFiles: 300,
   /** Per-file cap for text (utf8) rows. */
   maxTextBytes: 262_144, // 256KB
+  /** Per-file cap for vendored animation libraries (assets/vendor/**, utf8).
+   * three.min.js (r134) alone is ~616KB — the compiler emits these rows and
+   * they stay under the per-project total cap. */
+  maxVendorTextBytes: 4_194_304, // 4MB
   /** Per-file cap for binary rows (decoded size). */
   maxBase64Bytes: 4_194_304, // 4MB decoded
   /** Total project size cap (decoded bytes across all rows). */
@@ -27,6 +31,11 @@ export const PROJECT_FILE_LIMITS = {
   maxPathDepth: 8,
   maxPathLength: 200,
 } as const;
+
+/** Vendored animation library rows get the elevated per-file cap. */
+export function isVendorAssetPath(path: string): boolean {
+  return path.startsWith("assets/vendor/");
+}
 
 export class ProjectFileError extends Error {
   readonly status: number;
@@ -92,7 +101,12 @@ export function assertProjectLimits(
   if (incoming.encoding !== "utf8" && incoming.encoding !== "base64") {
     throw new ProjectFileError('encoding must be "utf8" or "base64"', 400, "invalid_encoding");
   }
-  const perFileCap = incoming.encoding === "base64" ? PROJECT_FILE_LIMITS.maxBase64Bytes : PROJECT_FILE_LIMITS.maxTextBytes;
+  const perFileCap =
+    incoming.encoding === "base64"
+      ? PROJECT_FILE_LIMITS.maxBase64Bytes
+      : isVendorAssetPath(incoming.path)
+        ? PROJECT_FILE_LIMITS.maxVendorTextBytes
+        : PROJECT_FILE_LIMITS.maxTextBytes;
   const incomingSize = projectContentSizeBytes(incoming.content, incoming.encoding);
   if (incomingSize > perFileCap) {
     throw new ProjectFileError(

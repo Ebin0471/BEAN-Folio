@@ -167,7 +167,7 @@ async function runModelStep(
  */
 export function applyPatchConfig(config: SiteConfig, patch: DesignPatch): SiteConfig {
   const themeInput = { ...config.theme } as Record<string, unknown>;
-  const motionInput = { ...config.motion };
+  const motionInput = { ...config.motion } as Record<string, unknown>;
   if (patch.theme) {
     const { headingFont, bodyFont, accentFont, codeFont, glass, ...tokens } = patch.theme;
     Object.assign(themeInput, tokens);
@@ -196,7 +196,23 @@ export function applyPatchConfig(config: SiteConfig, patch: DesignPatch): SiteCo
       }
     }
   }
-  if (patch.motion) Object.assign(motionInput, patch.motion);
+  if (patch.motion) {
+    const { gsap, ...motionTokens } = patch.motion;
+    Object.assign(motionInput, motionTokens);
+    if (gsap === null) {
+      delete motionInput.gsap;
+    } else if (gsap !== undefined) {
+      // GSAP block deep-merges scalars and REPLACES the animation list when
+      // the patch carries one — a deterministic, auditable contract.
+      const base = (motionInput.gsap && typeof motionInput.gsap === "object" && !Array.isArray(motionInput.gsap)
+        ? (motionInput.gsap as Record<string, unknown>)
+        : {}) as Record<string, unknown>;
+      const merged: Record<string, unknown> = { ...base, ...gsap };
+      if (gsap.animations === undefined) delete merged.animations;
+      if (Object.keys(merged).length === 0) delete motionInput.gsap;
+      else motionInput.gsap = merged;
+    }
+  }
 
   try {
     const candidate: SiteConfig = {
@@ -205,6 +221,11 @@ export function applyPatchConfig(config: SiteConfig, patch: DesignPatch): SiteCo
       tagline: patch.tagline ?? config.tagline,
       theme: deriveTheme(themeInput as Parameters<typeof deriveTheme>[0]),
       motion: normalizeMotion({ ...motionInput }),
+      ...(patch.backgroundEffects !== undefined
+        ? { backgroundEffects: patch.backgroundEffects === null ? undefined : patch.backgroundEffects }
+        : config.backgroundEffects !== undefined
+          ? { backgroundEffects: config.backgroundEffects }
+          : {}),
       pages: config.pages,
     };
     const normalized = normalizeConfig(candidate);

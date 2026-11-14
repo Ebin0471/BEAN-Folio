@@ -35,6 +35,8 @@ import { z } from "zod";
 import type { GiftzProjectFile, GiftzSite, User } from "@prisma/client";
 import { aiComplete, AI_DEEP_TIMEOUT_MS, parseJsonFromText, recordAiUsage } from "@/lib/ai";
 import { normalizeConfig, type SiteConfig } from "@/lib/site-config";
+import { GSAP_MOTION_PRESET_IDS, VANTA_EFFECT_IDS } from "@/lib/giftz/motion-engine";
+import { componentSelectionRules } from "@/lib/giftz/component-intelligence";
 import { siteConfigMediaError } from "@/lib/site-media-guard";
 import { log } from "@/lib/logger";
 import {
@@ -117,8 +119,8 @@ export interface ProjectRouting {
 const CLASSIFY_SYSTEM = [
   "You are the request router of GIFTZ, the website-building agent of BEAN Folio.",
   "Classify the user's request for a GENERATED STATIC WEBSITE PROJECT (real HTML/CSS/JS/JSON files) that also has a visual content model (SiteConfig).",
-  'Intent "files" covers: creating new standalone pages or components as real files, custom scripts, forms, route/navigation logic that needs code, build error fixes, and direct file operations (create/rename/delete files).',
-  'Intent "config" covers: colors, fonts, text content, layout, sections, imagery, metadata, design/style changes — anything the visual content model expresses.',
+  'Intent "files" covers: creating new standalone pages or components as real files, custom scripts, custom animation code beyond the motion preset system, forms, route/navigation logic that needs code, build error fixes, and direct file operations (create/rename/delete files).',
+  'Intent "config" covers: colors, fonts, text content, layout, sections, imagery, metadata, design/style changes, and animation/background requests that the motion engine presets express (GSAP animations via motion.gsap, Vanta backgrounds via backgroundEffects) — anything the visual content model expresses.',
   "When the request mixes both, pick the intent that covers the BULK of the work; pure questions or tiny content edits are always \"config\".",
   'Reply with ONLY the JSON object: { "intent": "config"|"files", "reason": string (<=200 chars) } — no prose, no code fences.',
 ].join(" ");
@@ -264,6 +266,22 @@ const PLAN_SYSTEM = [
   "You never invent capabilities the context does not show and never target binary or secret files.",
 ].join(" ");
 
+const MOTION_RULES = `Motion/animation rules (GSAP motion engine + Vanta backgrounds):
+- PREFERRED: implement animations through the preset system — modify site.config.json:
+  * motion.gsap = { enabled: true, respectReducedMotion: true, animations: [{ id (kebab-case), preset, target, trigger, options, responsive, reducedMotion, enabled }] }
+  * preset ids: ${GSAP_MOTION_PRESET_IDS.join(", ")}
+  * backgroundEffects = { enabled, engine: "vanta", effect, target: { kind: "page"|"hero"|"section", sectionId? }, settings, responsive, accessibility, fallback }
+  * vanta effect ids: ${VANTA_EFFECT_IDS.join(", ")}
+  The deterministic compiler then generates assets/motion.js (an audited interpreter), bundles local vendor files (assets/vendor/*.js) and wires <script> tags automatically. NEVER write <script src> tags for gsap/three/vanta yourself.
+- Custom animation JS is allowed ONLY when the presets cannot express the request: create ONE self-contained file (e.g. assets/custom-motion.js), load it by editing the generated HTML files to add <script src="./assets/custom-motion.js" defer></script> before </head>.
+- Custom animation JS MUST: reference the window.gsap/ScrollTrigger globals (already bundled when motion.gsap is enabled), never use eval/new Function, never reference CDNs, scope DOM selections to its own section, guard against duplicate initialization, include a prefers-reduced-motion guard, and clean up (gsap.context()/revert/kill) — the build validator checks all of these.
+${componentSelectionRules()}`;
+
+/** Paths the file-level agent may never plan against (compiler-owned). */
+function isCompilerOwnedPath(path: string): boolean {
+  return path === "assets/motion.js" || path.startsWith("assets/vendor/");
+}
+
 const PLAN_SCHEMA_DOC = `{
   "summary": string (<=600 chars — what you will change and why),
   "files": [{ "path": workspace-relative, "action": "create"|"modify"|"delete",
@@ -273,9 +291,11 @@ const PLAN_SCHEMA_DOC = `{
 const PLAN_RULES = `Rules:
 - Reply with ONLY the JSON object (no prose, no code fences).
 - "modify"/"delete" must reference files that exist in the project tree; "create" must reference files that do NOT exist.
-- "delete" must NEVER target site.config.json (the content-model bridge) or package.json.
+- "delete" must NEVER target site.config.json (the content-model bridge), package.json, or assets/motion.js (the generated motion runtime).
 - Never target binary files (they are opaque to you) and never invent paths outside the project.
 - NEVER plan to CREATE binary files (images: .jpg/.png/.gif/.webp/.ico/.avif, fonts, audio/video, pdf) — you cannot produce binary content. For imagery use inline SVG, CSS gradients/patterns, or reference image files that ALREADY exist in the tree.
+- Never create or modify assets/vendor/* files — they are generated from pinned packages by the compiler.
+${MOTION_RULES}
 - Keep the plan MINIMAL and focused on the request; do not restructure unrelated files.
 - When the last build reported errors, the plan must fix exactly those errors.`;
 
@@ -323,7 +343,7 @@ function planUserPrompt(input: {
 }
 
 /** Validate a parsed plan against the schema AND the actual tree. */
-function validatePlanOutput(parsed: unknown, existingPaths: Set<string>): { plan?: FilePlan; issues: string[] } {
+export function validatePlanOutput(parsed: unknown, existingPaths: Set<string>): { plan?: FilePlan; issues: string[] } {
   const schemaCheck = filePlanSchema.safeParse(parsed);
   if (!schemaCheck.success) {
     const issues = schemaCheck.error.issues
@@ -347,6 +367,12 @@ function validatePlanOutput(parsed: unknown, existingPaths: Set<string>): { plan
     }
     if (seen.has(path)) issues.push(`"${path}" is declared more than once — merge the duplicates`);
     seen.add(path);
+    if (isCompilerOwnedPath(path)) {
+      issues.push(
+        `"${path}" is compiler-owned (generated from pinned packages on every config save) — animations belong in site.config.json (motion.gsap / backgroundEffects) or your own custom script file`
+      );
+      continue;
+    }
     if (step.action === "create" && isBinaryPath(path)) {
       issues.push(`"${path}" is a binary file — you cannot create binary content; use inline SVG, CSS gradients, or an existing image file`);
     }
@@ -1216,6 +1242,10 @@ export async function applyFileProposal(user: User, site: GiftzSite, messageId: 
       path = constrainProjectPath(change.path);
     } catch (e) {
       skipped.push(`${String(change.path)}: ${e instanceof Error ? e.message : "unsafe path"}`);
+      continue;
+    }
+    if (isCompilerOwnedPath(path)) {
+      skipped.push(`${path}: compiler-owned generated file — animation assets are produced by the deterministic compiler (save the site config)`);
       continue;
     }
     if (change.action === "removed") {

@@ -13,6 +13,8 @@ import { SECTION_TYPES, HERO_VARIANTS, TEMPLATE_IDS, designPresets } from "@/lib
 import { SITE_FONTS } from "@/lib/site-fonts";
 import { PALETTES } from "@/lib/site-palettes";
 import { motionPresetsByScope, MOTION_EASING_IDS } from "@/lib/site-motion";
+import { GSAP_MOTION_PRESET_IDS, VANTA_EFFECT_IDS } from "@/lib/giftz/motion-engine";
+import { componentCapabilityDoc } from "@/lib/giftz/component-intelligence";
 import { STEP_TOOLS, UNSUPPORTED_CAPABILITIES } from "@/lib/ai-design/tools";
 import type { SiteDigest } from "@/lib/ai-design/digest";
 import type { DesignPlan } from "@/lib/ai-design/plan";
@@ -50,6 +52,11 @@ export function schemaDoc(): string {
 - glass (only when asked): { enabled (boolean), preset ("frosted"|"smoked"|"crystal"|"aurora"|"soft"|"dark"|"custom"), targets { nav, cards, buttons }, blur (0-40), opacity (0-90), tint (hex), borderOpacity (0-100), borderWidth (0-4), highlight (0-100), shadow (0-100), gradient (boolean) }.
 - motion: { enabled (boolean), preset (reveal presets: ${motionPresetsByScope("reveal").map((p) => p.id).join(", ")}), duration (150-1200 ms), stagger (0-240 ms), delay (0-600 ms), easing ("${MOTION_EASING_IDS.join('" | "')}"), intensity (0-100), hoverEffects (boolean), scrollReveal (boolean), once (boolean), background (${motionPresetsByScope("background").map((p) => p.id).join(", ")}), microInteractions (${motionPresetsByScope("hover").map((p) => p.id).join(", ")}), scrollProgress (boolean — a thin reading-progress bar fixed to the top) }.
   Keep motion restrained: "fadeUp", "subtle-rise" or "stagger" with duration <=700 and intensity <=70 are the sane default — unless the creative direction below explicitly calls for a more cinematic motion language.
+- motion.gsap (GSAP Motion Engine — only when the user asks for richer animations): { enabled (boolean), respectReducedMotion (boolean), animations: [{ id (kebab-case), preset, target: { kind: "section", sectionId, element: container|heading|text|cards|images|buttons|nav|svg|stats|children } | { kind: "selector", selector }, trigger: { type: load|scroll|interaction, start?, end?, once }, options (per-preset, validated), responsive: { mobile: full|reduced|off }, reducedMotion: static|simplified, enabled }] }.
+  preset ids: ${GSAP_MOTION_PRESET_IDS.join(", ")}.
+  Use 3-8 well-chosen animations; durations 100-6000ms; target sectionIds copied EXACTLY from the digest. The runtime, vendor files and cleanup are generated automatically — never reference CDNs or gsap imports yourself.
+- backgroundEffects (Vanta WebGL background — only when the user asks for an animated/interactive background): { enabled (boolean), engine: "vanta", effect (${VANTA_EFFECT_IDS.join(" | ")}), target: { kind: page|hero|section, sectionId? }, settings (per-effect keys, hex colors like "#1a1a2e"), responsive: { mobile: full|reduced|off }, accessibility: { respectReducedMotion (boolean) }, fallback: { kind: color|gradient, value } }.
+  Heavy effects (BIRDS, CLOUDS, CLOUDS2, GLOBE) degrade on mobile — prefer reduced there; always keep foreground content readable.
 - Curated design presets (full token sets): ${designPresets().map((p) => `${p.id} (${p.label})`).join(", ")}.`;
 }
 
@@ -139,6 +146,8 @@ The creative direction above is BINDING: palette, typography, layout and motion 
 ${toolsDoc()}
 
 ${schemaDoc()}
+
+${componentCapabilityDoc()}
 
 Profession grounding: when the portfolio context below contains a "Profession guidance" block, treat its content types and suggested section order as informed starting points for section.add/section.reorder/content.write plans — respect them unless the user's request points elsewhere. The user's real profile data and uploaded materials stay authoritative over every suggestion, and no step may fabricate credentials, clients, publications, metrics, testimonials or projects.
 

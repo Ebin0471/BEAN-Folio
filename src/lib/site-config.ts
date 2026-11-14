@@ -28,6 +28,14 @@
 import { z } from "zod";
 
 import { MOTION_PRESET_IDS, MOTION_EASING_IDS, getMotionPreset } from "@/lib/site-motion";
+import {
+  gsapMotionBlockSchema,
+  backgroundEffectsSchema,
+  validateGsapMotionBlock,
+  validateBackgroundEffects,
+  type BackgroundEffects,
+  type GsapMotionBlock,
+} from "@/lib/giftz/motion-engine";
 import { resolveFont, fontStack } from "@/lib/site-fonts";
 // v4 profession-template families (see src/lib/site-templates/professions/).
 // Factories are called at read time (never at module init) so the circular
@@ -622,6 +630,12 @@ export const motionSchema = z.object({
   microInteractions: z.string().max(40).default("hover-lift"),
   /** Thin reading-progress indicator fixed to the top of the page. */
   scrollProgress: z.boolean().default(false),
+  /**
+   * GIFTZ GSAP motion block (M15) — additive, optional. Validated against the
+   * motion-engine preset registry in normalizeConfig (section ids known
+   * there); unknown presets/animations are dropped, never executed.
+   */
+  gsap: gsapMotionBlockSchema.optional(),
 });
 export type SiteMotion = z.infer<typeof motionSchema>;
 
@@ -984,6 +998,11 @@ const configShape = z.object({
   logoPreset: z.enum(["bean-folio"]).nullish(),
   theme: themeSchema,
   motion: motionSchema.optional(),
+  /**
+   * GIFTZ Vanta background engine (M16) — additive, optional. Validated
+   * against the motion-engine effect registry in normalizeConfig.
+   */
+  backgroundEffects: backgroundEffectsSchema.optional(),
   /** Legacy v1 single-page sections. Migrated into `pages` on read. */
   sections: z.array(siteSectionSchema).min(1).max(12).optional(),
   pages: z.array(sitePageSchema).min(1).max(8).optional(),
@@ -1013,6 +1032,8 @@ export interface SiteConfig {
   logoPreset?: "bean-folio" | null;
   theme: SiteTheme;
   motion: SiteMotion;
+  /** Vanta animated background (optional — absent = no background engine). */
+  backgroundEffects?: BackgroundEffects;
   pages: SitePage[];
 }
 
@@ -2335,6 +2356,30 @@ export function normalizeConfig(input: unknown): SiteConfig | null {
       ? raw.pages
       : [{ id: "home", name: "Home", visible: true, sections: raw.sections ?? [] }];
 
+  const motion = normalizeMotion(raw.motion);
+  const healedPages = healLegacyCategorySlugs(pages);
+  const sectionIds = new Set(healedPages.flatMap((page) => page.sections.map((s) => s.id)));
+
+  // GIFTZ motion engine (M15): registry-validate the gsap block with real
+  // section ids; invalid animations are dropped, the block stays inspectable.
+  let gsap: GsapMotionBlock | undefined = motion.gsap ?? undefined;
+  if (gsap?.enabled) {
+    const validation = validateGsapMotionBlock(gsap, sectionIds);
+    gsap = { ...gsap, animations: validation.value?.animations ?? [] };
+    if (!validation.ok && gsap.animations.length === 0) {
+      gsap = { ...gsap, enabled: false };
+    }
+  }
+
+  // GIFTZ background engine (M16): registry-validate the Vanta block;
+  // an invalid effect/settings combination normalizes to disabled.
+  let backgroundEffects: BackgroundEffects | undefined = raw.backgroundEffects ?? undefined;
+  if (backgroundEffects?.enabled) {
+    const validation = validateBackgroundEffects(backgroundEffects, sectionIds);
+    backgroundEffects =
+      validation.ok && validation.value ? validation.value : { ...backgroundEffects, enabled: false };
+  }
+
   return {
     version: 2,
     template: raw.template,
@@ -2344,8 +2389,9 @@ export function normalizeConfig(input: unknown): SiteConfig | null {
     logoMediaId: raw.logoMediaId ?? null,
     logoPreset: raw.logoPreset ?? null,
     theme: deriveTheme(raw.theme),
-    motion: normalizeMotion(raw.motion),
-    pages: healLegacyCategorySlugs(pages),
+    motion: gsap !== undefined ? { ...motion, gsap } : motion,
+    backgroundEffects,
+    pages: healedPages,
   };
 }
 

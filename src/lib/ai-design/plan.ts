@@ -22,6 +22,7 @@ import { resolveConstraintTarget } from "@/lib/ai-design/constraints";
 import { PALETTES } from "@/lib/site-palettes";
 import { GLASS_PRESET_IDS, designPresets, templatePresets } from "@/lib/site-config";
 import { motionPresetsByScope } from "@/lib/site-motion";
+import { gsapMotionBlockSchema, backgroundEffectsSchema } from "@/lib/giftz/motion-engine";
 
 // ---------------------------------------------------------------- patch schema
 // Deterministic token patches — every field optional, merged onto the working
@@ -93,6 +94,9 @@ export const motionPatchSchema = z
     microInteractions: z.string().max(40).optional(),
     // Thin reading-progress indicator — a real motionSchema token (boolean).
     scrollProgress: z.boolean().optional(),
+    // GIFTZ GSAP Motion Engine (M15) — validated against the motion-engine
+    // preset registry by normalizeConfig; null disables the engine.
+    gsap: gsapMotionBlockSchema.nullable().optional(),
   })
   .strict();
 
@@ -135,6 +139,9 @@ export const designPatchSchema = z
     tagline: z.string().max(160).optional(),
     theme: themePatchSchema.extend({ glass: glassPatchSchema.nullable().optional() }).optional(),
     motion: motionPatchSchema.optional(),
+    // GIFTZ Vanta background engine (M16) — full-block replace semantics;
+    // null disables the background engine.
+    backgroundEffects: backgroundEffectsSchema.nullable().optional(),
   })
   .strict();
 

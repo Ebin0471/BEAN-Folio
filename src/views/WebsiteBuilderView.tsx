@@ -87,6 +87,7 @@ import { Switch } from "@/components/ui/switch";
 import { EmptyState } from "@/components/bean/EmptyState";
 import { BuildWorkspace } from "@/components/bean/site/giftz/BuildWorkspace";
 import { CodeWorkspace } from "@/components/bean/site/giftz/CodeWorkspace";
+import { MotionWorkspace } from "@/components/bean/site/giftz/MotionWorkspace";
 import { GiftzVersionDialog } from "@/components/bean/site/giftz/GiftzVersionDialog";
 import { SiteRenderer } from "@/components/bean/site/SiteRenderer";
 import { ChatPanel, type StudioProposal } from "@/components/bean/site/studio/ChatPanel";
@@ -703,6 +704,7 @@ const STUDIO_MODES = [
 const GIFTZ_CANVAS_TABS = [
   { key: "preview", label: "Preview", hint: "Rendered preview of the generated website" },
   { key: "code", label: "Code", hint: "Project file tree and code editor" },
+  { key: "motion", label: "Motion", hint: "GSAP animations and Vanta background configuration" },
   { key: "build", label: "Build", hint: "Builds, deployments, domains and activity" },
 ] as const;
 
@@ -845,6 +847,8 @@ export default function WebsiteBuilderView() {
   const [activeGiftzSessionId, setActiveGiftzSessionId] = useState<string | null>(null);
   /** Version-history dialog (GIFTZ More menu). */
   const [giftzVersionsOpen, setGiftzVersionsOpen] = useState(false);
+  /** Motion workspace save state (Motion tab → PUT site → S1 resync). */
+  const [motionSaving, setMotionSaving] = useState(false);
   /** Pre-publish build gate (§8): running/failed state shown INSIDE the publish review dialog. */
   const [giftzPublishBuild, setGiftzPublishBuild] = useState<{
     running: boolean;
@@ -897,6 +901,37 @@ export default function WebsiteBuilderView() {
     setGiftzSite(detail);
     return detail;
   }, []);
+
+  /**
+   * Motion workspace save (Motion tab): PUT the candidate config through the
+   * existing site save contract — the route re-validates via normalizeConfig
+   * (registry validation drops unknown presets/effects) and then runs the
+   * deterministic S1 resync so assets/motion.js + local vendor files are
+   * regenerated. Nothing is applied unless the schema passes.
+   */
+  const saveMotionConfig = useCallback(
+    async (candidate: SiteConfig) => {
+      if (!giftzSite) throw new Error("No saved generated website is open.");
+      setMotionSaving(true);
+      try {
+        const saved = await api<{ saved: boolean; config: SiteConfig | null; fileSync?: { ok: boolean; error?: string } }>(
+          `/api/giftz/sites/${encodeURIComponent(giftzSite.id)}`,
+          { method: "PUT", json: { config: candidate } }
+        );
+        if (!saved.saved || !saved.config) {
+          throw new Error("The motion configuration did not pass the site schema — nothing was written.");
+        }
+        if (saved.fileSync && saved.fileSync.ok === false) {
+          throw new Error(saved.fileSync.error ?? "The configuration saved but the project file resync failed — check the Build tab.");
+        }
+        await refreshGiftzSiteDetail(giftzSite.id);
+        setGiftzFilesRefresh((n) => n + 1);
+      } finally {
+        setMotionSaving(false);
+      }
+    },
+    [giftzSite, refreshGiftzSiteDetail]
+  );
 
   /** Open one of the user's generated sites in the GIFTZ workspace. */
   const openGiftzSite = useCallback(
@@ -2896,6 +2931,22 @@ export default function WebsiteBuilderView() {
                     <p className="max-w-sm text-xs leading-relaxed text-muted-foreground">
                       The Code workspace edits a SAVED generated website's project files — generate and save a website in
                       Chat first.
+                    </p>
+                  </div>
+                )
+              ) : giftzCanvasTab === "motion" ? (
+                giftzSite ? (
+                  <MotionWorkspace
+                    siteId={giftzSite.id}
+                    config={giftzSite.config}
+                    saving={motionSaving}
+                    onSave={saveMotionConfig}
+                    refreshToken={giftzFilesRefresh}
+                  />
+                ) : (
+                  <div className="flex min-h-0 flex-1 items-center justify-center p-6 text-center">
+                    <p className="max-w-sm text-xs leading-relaxed text-muted-foreground">
+                      Motion configuration belongs to a SAVED generated website — generate and save one in Chat first.
                     </p>
                   </div>
                 )

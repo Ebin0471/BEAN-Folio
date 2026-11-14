@@ -27,7 +27,13 @@
 
 import { db } from "@/lib/db";
 import type { GiftzBuild, GiftzSite } from "@prisma/client";
-import { normalizeConfig } from "@/lib/site-config";
+import { normalizeConfig, type SiteConfig } from "@/lib/site-config";
+import {
+  GSAP_PLUGIN_CATALOG,
+  MOTION_RUNTIME_PATH,
+  compileMotionProgram,
+  vendorFileSpecs,
+} from "@/lib/giftz/motion-engine";
 import { log } from "@/lib/logger";
 import { recordGiftzActivity } from "./project-activity";
 import { PROJECT_FILE_LIMITS, isBinaryPath, mimeForPath } from "./project-files";
@@ -155,6 +161,145 @@ export function resolveLocalRef(ref: string, fromPath: string): string | null {
   return out.join("/");
 }
 
+// ------------------------------------------------------------------ motion checks (M15 §9 + M16 §11)
+
+const CDN_SCRIPT_RE = /https?:\/\/[^\s"'()]*\.(?:js|mjs)|https?:\/\/(?:cdn\.|unpkg\.com|cdnjs\.cloudflare\.com|cdn\.jsdelivr\.com)/i;
+
+/**
+ * Static animation checks over the effective tree. Static analysis cannot
+ * prove runtime behavior — the diagnostics below are real but bounded; visual
+ * + browser verification (Motion tab preview, published URL) remains the
+ * source of truth for how animations actually play.
+ */
+export function motionBuildChecks(config: SiteConfig, tree: Map<string, EffectiveFile>): BuildDiagnostic[] {
+  const diagnostics: BuildDiagnostic[] = [];
+  const sectionIds = new Set(config.pages.flatMap((page) => page.sections.map((s) => s.id)));
+
+  const { program, issues } = compileMotionProgram(config);
+  for (const issue of issues) {
+    diagnostics.push({ path: "site.config.json", severity: "error", message: `motion config: ${issue.path}: ${issue.message}` });
+  }
+
+  if (program) {
+    // Vendor files the generated HTML references must exist in the tree.
+    for (const spec of vendorFileSpecs(program)) {
+      if (!tree.has(spec.path)) {
+        diagnostics.push({
+          path: spec.path,
+          severity: "error",
+          message: `missing motion vendor file "${spec.path}" — re-save the site config so the compiler re-emits the animation assets`,
+        });
+      }
+    }
+    if (program.gsapEnabled && !tree.has(MOTION_RUNTIME_PATH)) {
+      diagnostics.push({
+        path: MOTION_RUNTIME_PATH,
+        severity: "error",
+        message: `missing generated motion runtime "${MOTION_RUNTIME_PATH}" — re-save the site config so the compiler re-emits it`,
+      });
+    }
+    if (program.gsapEnabled) {
+      const gsapRefs = Array.from(tree.values()).filter(
+        (f) => f.path.endsWith(".html") && f.encoding === "utf8" && f.content.includes(`assets/vendor/${GSAP_PLUGIN_CATALOG.core.fileName}`)
+      ).length;
+      if (gsapRefs === 0) {
+        diagnostics.push({
+          path: "(motion)",
+          severity: "warning",
+          message: "GSAP is enabled in the config but no page references the vendor scripts — re-save the site config to regenerate the HTML",
+        });
+      }
+    }
+    const enabledAnimations = program.animations.length;
+    if (enabledAnimations > 12) {
+      diagnostics.push({
+        path: "site.config.json",
+        severity: "warning",
+        message: `${enabledAnimations} active GSAP animations — above ~12 this hurts scroll performance on low-power devices`,
+      });
+    }
+    if (program.vanta) {
+      const targetPresent = Array.from(tree.values()).some(
+        (f) => f.path.endsWith(".html") && f.encoding === "utf8" && f.content.includes(`data-gz-section=`)
+      );
+      if (!targetPresent) {
+        diagnostics.push({
+          path: "(motion)",
+          severity: "warning",
+          message: "background effect target may not exist in the generated HTML — re-save the site config to regenerate markup",
+        });
+      }
+    }
+  }
+
+  // User/AI-authored animation scripts — provenance-preserving checks.
+  for (const file of tree.values()) {
+    if (file.encoding !== "utf8" || !/\.(js|mjs)$/.test(file.path)) continue;
+    if (file.path === MOTION_RUNTIME_PATH || file.path.startsWith("assets/vendor/")) continue;
+    const usesGsap = /\bgsap\b/.test(file.content) || /ScrollTrigger/.test(file.content);
+    const usesVanta = /\bVANTA\b/.test(file.content);
+    if (!usesGsap && !usesVanta) continue;
+    if (/\beval\s*\(|new Function\s*\(/.test(file.content)) {
+      diagnostics.push({
+        path: file.path,
+        severity: "error",
+        message: "animation script uses eval/new Function — unsafe dynamic evaluation is rejected in generated projects",
+      });
+    }
+    if (CDN_SCRIPT_RE.test(file.content)) {
+      diagnostics.push({
+        path: file.path,
+        severity: "error",
+        message: "animation script references a CDN — generated sites are self-contained (local assets/vendor files only; the serving CSP blocks runtime fetches)",
+      });
+    }
+    if (usesGsap) {
+      if (!tree.has(`assets/vendor/${GSAP_PLUGIN_CATALOG.core.fileName}`)) {
+        diagnostics.push({
+          path: file.path,
+          severity: "error",
+          message: `script uses GSAP but assets/vendor/${GSAP_PLUGIN_CATALOG.core.fileName} is missing — enable motion.gsap in site.config.json so the compiler bundles the library, or remove the dependency`,
+        });
+      }
+      if (!/prefers-reduced-motion/.test(file.content)) {
+        diagnostics.push({
+          path: file.path,
+          severity: "warning",
+          message: "animation script has no prefers-reduced-motion guard — visitors who reduce motion will still see movement",
+        });
+      }
+      if (!/(gsap\.context|\.revert\(|killTweensOf|ScrollTrigger\.kill)/.test(file.content)) {
+        diagnostics.push({
+          path: file.path,
+          severity: "warning",
+          message: "animation script has no cleanup pattern (gsap.context()/revert/kill) — animations may leak across navigations",
+        });
+      }
+    }
+    if (usesVanta && !tree.has("assets/vendor/three.min.js")) {
+      diagnostics.push({
+        path: file.path,
+        severity: "error",
+        message: "script uses VANTA but assets/vendor/three.min.js is missing — enable backgroundEffects in site.config.json so the compiler bundles three.js + the effect",
+      });
+    }
+  }
+
+  // Remote <script src> tags — offline honesty + self-contained serving.
+  for (const file of tree.values()) {
+    if (!file.path.endsWith(".html") || file.encoding !== "utf8") continue;
+    for (const match of file.content.matchAll(/<script[^>]+src=["'](https?:\/\/[^"']+)["']/gi)) {
+      diagnostics.push({
+        path: file.path,
+        severity: "warning",
+        message: `external script reference "${match[1]}" — prefer bundled local assets (assets/vendor/*.js); remote scripts are blocked in offline exports and break self-containment`,
+      });
+    }
+  }
+
+  return diagnostics;
+}
+
 // ------------------------------------------------------------------ build
 
 export async function runProjectBuild(
@@ -217,8 +362,13 @@ export async function runProjectBuild(
     }
 
     // --- check 3: syntax level (JSON.parse / balanced delimiters)
+    // assets/vendor/** is EXCLUDED: rows are byte-for-byte copies of pinned
+    // npm dist files, and minified bundles contain regex literals the naive
+    // delimiter scanner cannot parse (it is a lint-grade heuristic, not a
+    // parser). Vendor integrity comes from the package pin, not this scan.
     const syntaxFiles = Array.from(tree.values()).filter((f) => {
       if (f.encoding !== "utf8") return false;
+      if (f.path.startsWith("assets/vendor/")) return false;
       return /\.(json|js|mjs|css)$/.test(f.path);
     });
     if (syntaxFiles.length > 0) checksRun += 1;
@@ -240,6 +390,7 @@ export async function runProjectBuild(
     }
 
     // --- check 4: site.config.json parses + matches the SiteConfig schema
+    let configFromTree: SiteConfig | null = null;
     const configFile = tree.get("site.config.json");
     if (configFile) {
       checksRun += 1;
@@ -255,6 +406,7 @@ export async function runProjectBuild(
       }
       if (parsed !== null) {
         const normalized = normalizeConfig(parsed);
+        configFromTree = normalized;
         if (!normalized) {
           checks.push({
             path: "site.config.json",
@@ -323,6 +475,17 @@ export async function runProjectBuild(
           message: "empty binary file — will render as a broken image; replace with an SVG, a CSS gradient, or a real asset",
         });
       }
+    }
+
+    // --- check 8: GIFTZ motion engine (GSAP + Vanta) — config validation,
+    // vendor presence, cleanup/reduced-motion patterns, CDN + eval rejection.
+    // Uses the tree's own site.config.json (check 4 parse) when present, so a
+    // proposal overlay is validated exactly as it would be applied.
+    const motionConfig = configFromTree ?? normalizeConfig(site.config);
+    if (motionConfig) {
+      const motionChecks = motionBuildChecks(motionConfig, tree);
+      checks.push(...motionChecks);
+      if (motionChecks.length > 0) checksRun += 1;
     }
 
     // --- result + artifact

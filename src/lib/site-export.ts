@@ -53,7 +53,16 @@ import {
 } from "@/lib/site-motion";
 import { googleFontsHref, fontStack } from "@/lib/site-fonts";
 import { categoryLabel } from "@/lib/categories";
+import { deflateSync } from "node:zlib";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import {
+  MOTION_RUNTIME_PATH,
+  buildMotionRuntime,
+  compileMotionProgram,
+  motionScriptTags,
+  vendorSpecsIncludingTexture,
+} from "@/lib/giftz/motion-engine";
 
 // ------------------------------------------------------------------ types
 
@@ -679,6 +688,8 @@ interface Ctx {
   projects: ExportProject[];
   collections: ExportCollection[];
   splitText: (text: string, m: SiteMotion) => string;
+  /** Motion engine active — section anchors (data-gz-section) are emitted only then. */
+  gzTargets: boolean;
 }
 
 function splitTextHtml(text: string, m: SiteMotion): string {
@@ -792,6 +803,15 @@ async function projectCardHtml(ctx: Ctx, p: ExportProject, large: boolean): Prom
 }
 
 async function sectionHtml(ctx: Ctx, section: SiteSection): Promise<string> {
+  const html = await sectionHtmlInner(ctx, section);
+  // Stable, engine-scoped animation target for the GIFTZ motion runtime
+  // (`[data-gz-section="<id>"]` selectors in motion.gsap targets). Emitted
+  // only when the motion engine is active — non-animated output is unchanged.
+  if (!ctx.gzTargets) return html;
+  return html.replace("<section", `<section data-gz-section="${esc(section.id)}"`);
+}
+
+async function sectionHtmlInner(ctx: Ctx, section: SiteSection): Promise<string> {
   const { theme, profile, projects, collections } = ctx;
   const m = ctx.motionFor(section);
   const head = sectionHeadingHtml(ctx, section, m);
@@ -1262,7 +1282,7 @@ async function buildPageHtml(
   ctx: Ctx,
   plan: PageFilePlan,
   plans: PageFilePlan[],
-  opts: { title: string; description: string; fontsHref: string | null; watermark: boolean; contentVarStyle: string; bgLayer: string; stylesPath: string; siteJsPath: string; logoHtml: string }
+  opts: { title: string; description: string; fontsHref: string | null; watermark: boolean; contentVarStyle: string; bgLayer: string; stylesPath: string; siteJsPath: string; logoHtml: string; motionScriptTags?: string[] }
 ): Promise<string> {
   const { theme } = ctx;
   const visibleSections = plan.page.sections.filter((s) => s && typeof s === "object" && s.visible !== false);
@@ -1303,6 +1323,7 @@ async function buildPageHtml(
 ${opts.fontsHref ? `<link rel="preconnect" href="https://fonts.googleapis.com">\n<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n<link rel="stylesheet" href="${esc(opts.fontsHref)}">` : ""}
 <link rel="stylesheet" href="${esc(opts.stylesPath)}">
 <script src="${esc(opts.siteJsPath)}" defer></script>
+${(opts.motionScriptTags ?? []).join("\n")}
 <noscript><style>.bean-site .bs-reveal,.bean-site .bs-reveal .bs-sh,.bean-site .bs-reveal .bs-w{opacity:1 !important;transform:none !important;filter:none !important;clip-path:none !important;transition:none !important}</style></noscript>
 </head>
 <body>
@@ -1349,7 +1370,7 @@ function exportDate(iso: string | null | undefined): string | null {
 async function buildProjectDetailHtml(
   ctx: Ctx,
   project: ExportProject,
-  opts: { title: string; description: string; fontsHref: string | null; watermark: boolean; contentVarStyle: string; bgLayer: string; stylesPath: string; siteJsPath: string; logoHtml: string }
+  opts: { title: string; description: string; fontsHref: string | null; watermark: boolean; contentVarStyle: string; bgLayer: string; stylesPath: string; siteJsPath: string; logoHtml: string; motionScriptTags?: string[] }
 ): Promise<string> {
   const { theme } = ctx;
   const published = exportDate(project.publishedAt);
@@ -1417,6 +1438,7 @@ async function buildProjectDetailHtml(
 ${opts.fontsHref ? `<link rel="preconnect" href="https://fonts.googleapis.com">\n<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n<link rel="stylesheet" href="${esc(opts.fontsHref)}">` : ""}
 <link rel="stylesheet" href="${esc(opts.stylesPath)}">
 <script src="${esc(opts.siteJsPath)}" defer></script>
+${(opts.motionScriptTags ?? []).join("\n")}
 <noscript><style>.bean-site .bs-reveal,.bean-site .bs-reveal .bs-sh,.bean-site .bs-reveal .bs-w{opacity:1 !important;transform:none !important;filter:none !important;clip-path:none !important;transition:none !important}</style></noscript>
 </head>
 <body>
@@ -1530,6 +1552,14 @@ interface ManifestShape {
   creator: { name: string; username: string | null };
   files: { path: string; bytes: number; role: string }[];
   fonts: { source: string; note: string };
+  motion: {
+    engine: string | null;
+    animations: number;
+    plugins: string[];
+    background: string | null;
+    reducedMotionRespected: boolean;
+    note: string;
+  } | null;
   externalResources: string[];
   unsupportedFeatures: string[];
   exportNotes: string[];
@@ -1543,6 +1573,12 @@ export async function buildSiteExport(input: SiteExportInput): Promise<SiteExpor
   const theme = deriveTheme(config.theme);
   const motion = config.motion;
   const assets = new AssetMapper(loadMedia);
+  // GIFTZ motion engine (M15) + background engine (M16): compile the
+  // validated config into a runtime program. Invalid entries surface as
+  // warnings — they never abort the export.
+  const { program: motionProgram, issues: motionIssues } = compileMotionProgram(config);
+  const motionWarnings = motionIssues.map((i) => `Motion config: ${i.path}: ${i.message}`);
+  const motionTags = motionScriptTags(motionProgram);
   // external: true — same reason as buildStylesheet: the export has no
   // next/font variables, so bundled families use real names in every stack.
   const stacks = themeFontStacks(theme, { external: true });
@@ -1557,6 +1593,7 @@ export async function buildSiteExport(input: SiteExportInput): Promise<SiteExpor
     projects,
     collections,
     splitText: splitTextHtml,
+    gzTargets: motionProgram !== null,
   };
 
   // ---- fonts (Google Fonts stylesheet for exactly the families/weights used)
@@ -1631,6 +1668,7 @@ export async function buildSiteExport(input: SiteExportInput): Promise<SiteExpor
       stylesPath: "./assets/styles.css",
       siteJsPath: "./assets/site.js",
       logoHtml,
+      motionScriptTags: motionTags,
     });
     files.push({ path: `${plan.file}.html`, data: Buffer.from(html, "utf8") });
   }
@@ -1653,6 +1691,7 @@ export async function buildSiteExport(input: SiteExportInput): Promise<SiteExpor
       stylesPath: "./assets/styles.css",
       siteJsPath: "./assets/site.js",
       logoHtml,
+      motionScriptTags: motionTags,
     });
     files.push({ path: `project-${p.id}.html`, data: Buffer.from(html, "utf8") });
   }
@@ -1660,6 +1699,22 @@ export async function buildSiteExport(input: SiteExportInput): Promise<SiteExpor
   // ---- styles + script
   files.push({ path: "assets/styles.css", data: Buffer.from(buildStylesheet(theme, motion, config), "utf8") });
   files.push({ path: "assets/site.js", data: Buffer.from(buildSiteJs(motion), "utf8") });
+
+  // ---- motion engine: self-contained local vendor files + generated runtime
+  if (motionProgram) {
+    for (const spec of vendorSpecsIncludingTexture(motionProgram)) {
+      if (spec.pkgPath === "(generated)") {
+        files.push({ path: spec.path, data: Buffer.from(noiseTexturePngBase64(), "base64") });
+        continue;
+      }
+      try {
+        files.push({ path: spec.path, data: readVendorDistFile(spec.pkgPath) });
+      } catch {
+        motionWarnings.push(`Vendor file "${spec.pkgPath}" could not be read — the motion runtime will leave content fully visible (static fallback).`);
+      }
+    }
+    files.push({ path: MOTION_RUNTIME_PATH, data: Buffer.from(buildMotionRuntime(motionProgram), "utf8") });
+  }
 
   // ---- media assets
   for (const f of assets.files) files.push({ path: f.path, data: f.data });
@@ -1680,7 +1735,11 @@ export async function buildSiteExport(input: SiteExportInput): Promise<SiteExpor
           ? "Generated stylesheet (theme, layout, motion)"
           : p === "assets/site.js"
             ? "Generated behavior (scroll reveals, parallax)"
-            : p.startsWith("assets/images/")
+            : p === MOTION_RUNTIME_PATH
+              ? "Generated motion runtime (audited GSAP/Vanta interpreter + program)"
+              : p.startsWith("assets/vendor/")
+                ? "Local vendored animation library (pinned npm package — no CDN)"
+                : p.startsWith("assets/images/")
               ? "Media asset (relative path)"
               : p === "README.md"
                 ? "Export documentation"
@@ -1703,6 +1762,16 @@ export async function buildSiteExport(input: SiteExportInput): Promise<SiteExpor
       source: fontsHref ? "Google Fonts CDN (OFL-licensed)" : "system fallbacks only",
       note: "Font families match the saved configuration; system fallback stacks are included in the CSS.",
     },
+    motion: motionProgram
+      ? {
+          engine: motionProgram.gsapEnabled ? "gsap" : null,
+          animations: motionProgram.animations.length,
+          plugins: motionProgram.plugins,
+          background: motionProgram.vanta ? motionProgram.vanta.effect : null,
+          reducedMotionRespected: motionProgram.respectReducedMotion,
+          note: "Animation libraries are bundled locally under assets/vendor/ — no CDN, no network at runtime.",
+        }
+      : null,
     externalResources: [...assets.externalUrls, ...(fontsHref ? ["https://fonts.googleapis.com (stylesheet)"] : [])],
     unsupportedFeatures: [
       "Inquiry/contact form → replaced with mailto: links (no backend in a static site)",
@@ -1717,5 +1786,60 @@ export async function buildSiteExport(input: SiteExportInput): Promise<SiteExpor
   };
   files.push({ path: "manifest.json", data: Buffer.from(JSON.stringify(manifest, null, 2), "utf8") });
 
-  return { files, warnings: assets.warnings };
+  return { files, warnings: [...assets.warnings, ...motionWarnings] };
+}
+
+// ------------------------------------------------------------------ motion vendor helpers (server-only)
+
+/** Server-only deterministic read of a pinned npm dist file. */
+function readVendorDistFile(pkgPath: string): Buffer {
+  return readFileSync(join(process.cwd(), "node_modules", ...pkgPath.split("/")));
+}
+
+/** Deterministic, dependency-free 256x256 grayscale noise PNG (Vanta CLOUDS2). */
+function noiseTexturePngBase64(): string {
+  const size = 256;
+  const raw = Buffer.alloc((size + 1) * size);
+  let seed = 0x9e3779b9;
+  const rand = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return (seed >>> 16) / 65535;
+  };
+  for (let y = 0; y < size; y++) {
+    const rowStart = y * (size + 1);
+    raw[rowStart] = 0; // filter: none
+    for (let x = 0; x < size; x++) {
+      raw[rowStart + 1 + x] = Math.floor(rand() * 255);
+    }
+  }
+  const idat = deflateSync(raw, { level: 6 });
+  const crcTable: number[] = [];
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    crcTable[n] = c >>> 0;
+  }
+  const chunk = (type: string, data: Buffer): Buffer => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
+    let crc = 0xffffffff;
+    for (const byte of body) crc = crcTable[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+    crc = (crc ^ 0xffffffff) >>> 0;
+    const crcBuf = Buffer.alloc(4);
+    crcBuf.writeUInt32BE(crc);
+    return Buffer.concat([len, body, crcBuf]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(size, 0);
+  ihdr.writeUInt32BE(size, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 0; // color type: grayscale
+  const png = Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk("IHDR", ihdr),
+    chunk("IDAT", idat),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
+  return png.toString("base64");
 }

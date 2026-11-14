@@ -36,6 +36,7 @@ import { recordGiftzActivity } from "./project-activity";
 import { snapshotProjectVersion } from "./project-versions";
 import {
   PROJECT_FILE_LIMITS,
+  isVendorAssetPath,
   listProjectFiles,
   writeProjectFile,
   deleteProjectFile,
@@ -148,6 +149,11 @@ function stripCommentsAndStrings(text) {
 const OPENER = { "(": ")", "[": "]", "{": "}" };
 
 function checkBalanced(file, text) {
+  // Vendored animation libraries (assets/vendor/*) are byte-for-byte copies
+  // of pinned npm dist files — minified bundles contain regex literals this
+  // simple scanner cannot parse, so they are skipped (integrity comes from
+  // the package pin, not this heuristic).
+  if (file.indexOf("assets/vendor/") === 0) return;
   const clean = stripCommentsAndStrings(text);
   const stack = [];
   for (let i = 0; i < clean.length; i++) {
@@ -468,7 +474,11 @@ export async function compileGiftzProjectFiles(input: {
       const binary = isBinaryBuffer(f.data);
       const encoding: "utf8" | "base64" = binary ? "base64" : "utf8";
       const size = f.data.byteLength;
-      const cap = binary ? PROJECT_FILE_LIMITS.maxBase64Bytes : PROJECT_FILE_LIMITS.maxTextBytes;
+      const cap = binary
+        ? PROJECT_FILE_LIMITS.maxBase64Bytes
+        : isVendorAssetPath(f.path)
+          ? PROJECT_FILE_LIMITS.maxVendorTextBytes
+          : PROJECT_FILE_LIMITS.maxTextBytes;
       if (size > cap) {
         warnings.push(`Skipped "${f.path}" — ${size} bytes exceeds the ${cap}-byte per-file cap.`);
         continue;
