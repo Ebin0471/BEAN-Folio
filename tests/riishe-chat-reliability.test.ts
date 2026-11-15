@@ -1,5 +1,6 @@
 /// <reference types="bun-types" />
 import { describe, expect, test, afterAll, beforeAll, mock } from "bun:test";
+import { ownerDispatchRecord } from "./helpers/owner-dispatch-mock";
 import { readFileSync } from "node:fs";
 import { NextRequest } from "next/server";
 
@@ -48,7 +49,18 @@ type AiCompleteMock = (() => Promise<{ text: string }>) | null;
 type AiStreamMock = (() => Promise<unknown>) | null;
 const aiState: { complete: AiCompleteMock; stream: AiStreamMock } = { complete: null, stream: null };
 
-mock.module("@/lib/ai", () => ({
+// bun module mocks persist for the whole test process: the FIRST import of
+// "@/lib/ai" while a mock is registered freezes the factory result into the
+// module record for every later importer, and no afterAll re-registration
+// can reliably undo that. So the record's frozen value is a DISPATCH PROXY
+// around the REAL ai module: while this file's tests run (owner flag) calls
+// route to the deterministic fake; every other file in the process gets the
+// real AI gateway regardless of load order.
+declare global {
+  var __riisheChatOwnsAi: boolean | undefined;
+}
+const realAiModule = await import("@/lib/ai");
+const aiFake = {
   AiProviderError: MockAiProviderError,
   AI_DAILY_LIMIT: 30,
   AI_BURST_LIMIT: 6,
@@ -74,7 +86,16 @@ mock.module("@/lib/ai", () => ({
       return null;
     }
   },
-}));
+};
+const dispatchAi = ownerDispatchRecord(
+  () => globalThis.__riisheChatOwnsAi === true,
+  realAiModule,
+  aiFake
+);
+mock.module("@/lib/ai", () => dispatchAi);
+beforeAll(() => {
+  globalThis.__riisheChatOwnsAi = true;
+});
 
 import { db } from "@/lib/db";
 import { POST as registerRoute } from "@/app/api/auth/register/route";
@@ -82,6 +103,7 @@ import { POST as chatRoute } from "@/app/api/ai/chat/route";
 import { POST as chatStreamRoute } from "@/app/api/ai/chat-stream/route";
 
 afterAll(async () => {
+  globalThis.__riisheChatOwnsAi = false;
   mock.module("next/headers", () => realNextHeaders);
   await db.user.delete({ where: { email: "riishe-reliability@example.com" } }).catch(() => undefined);
 });

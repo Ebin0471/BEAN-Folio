@@ -32,16 +32,26 @@
  * Run: bun test tests/giftz-project-platform.test.ts
  */
 
-import { afterAll, describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test";
+import { ownerDispatchRecord } from "./helpers/owner-dispatch-mock";
 import type { GiftzBuild, GiftzProjectVersion, GiftzSite } from "@prisma/client";
 import type { BuildDiagnostics } from "@/lib/giftz/project-build";
 import { defaultConfig, normalizeConfig, type SiteConfig } from "@/lib/site-config";
 
 // ------------------------------------------------------------------ mocks
-// bun module mocks persist for the whole test process: capture the REAL db
-// module BEFORE overriding and restore it in afterAll so later test files in
-// the same process keep working (same convention as tests/giftz-api.test.ts).
+// bun module mocks persist for the whole test process: the FIRST import of
+// a mocked module while a mock is registered freezes the factory result
+// into the module record for every later importer, and no afterAll
+// re-registration can reliably undo that. So each mocked record's frozen
+// value is a DISPATCH PROXY around the REAL module: while this file's tests
+// run (owner flag) calls route to the in-memory fakes; every other file in
+// the process — regardless of load order — gets the real PrismaClient and
+// the real AI gateway.
+declare global {
+  var __giftzProjectPlatformOwnsMocks: boolean | undefined;
+}
 const realDbModule = await import("@/lib/db");
+const realAiModule = await import("@/lib/ai");
 
 const SITE_ID = "site-g4-unit";
 const USER_ID = "user-g4-unit";
@@ -150,7 +160,17 @@ function createFakeDb() {
 }
 
 const fakeDb = createFakeDb();
-mock.module("@/lib/db", () => ({ db: fakeDb.db }));
+const dispatchDb = new Proxy(realDbModule.db, {
+  get(target, prop) {
+    if (globalThis.__giftzProjectPlatformOwnsMocks) {
+      return (fakeDb.db as Record<string | symbol, unknown>)[prop];
+    }
+    // Read from the CAPTURED target — the namespace property is patched in
+    // place by mock.module; re-reading it would recurse into this proxy.
+    return Reflect.get(target, prop);
+  },
+});
+mock.module("@/lib/db", () => ({ db: dispatchDb }));
 
 // @/lib/ai is mocked wholesale (same pattern as
 // tests/riishe-chat-reliability.test.ts): unit tests must not load the real
@@ -166,7 +186,7 @@ type AiCompleteFn = (
 
 const aiState: { complete: AiCompleteFn | null } = { complete: null };
 
-mock.module("@/lib/ai", () => ({
+const aiFake = {
   AiProviderError: class MockAiProviderError extends Error {},
   AI_DAILY_LIMIT: 30,
   AI_BURST_LIMIT: 6,
@@ -199,11 +219,21 @@ mock.module("@/lib/ai", () => ({
       return null;
     }
   },
-}));
+};
+const dispatchAi = ownerDispatchRecord(
+  () => globalThis.__giftzProjectPlatformOwnsMocks === true,
+  realAiModule,
+  aiFake
+);
+mock.module("@/lib/ai", () => dispatchAi);
+
+beforeAll(() => {
+  globalThis.__giftzProjectPlatformOwnsMocks = true;
+});
 
 afterAll(() => {
+  globalThis.__giftzProjectPlatformOwnsMocks = false;
   aiState.complete = null;
-  mock.module("@/lib/db", () => ({ ...realDbModule }));
 });
 
 // Modules under test — imported AFTER the mocks are armed.

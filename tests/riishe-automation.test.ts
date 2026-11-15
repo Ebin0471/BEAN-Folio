@@ -26,6 +26,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll, mock } from "bun:test";
+import { ownerDispatchRecord } from "./helpers/owner-dispatch-mock";
 import { randomUUID, createHash } from "node:crypto";
 import { NextRequest } from "next/server";
 
@@ -58,7 +59,18 @@ function sseChunkStream(text: string): ReadableStream<Uint8Array> {
   });
 }
 
-mock.module("@/lib/intelligence/gateway", () => ({
+// bun module mocks persist for the whole test process: the FIRST import of
+// the mocked module while a mock is registered freezes the factory result
+// into the module record for every later importer, and no afterAll
+// re-registration can reliably undo that. So the record's frozen value is a
+// DISPATCH PROXY around the REAL gateway module: while this file's tests
+// run (owner flag) calls route to the deterministic fake; every other file
+// in the process gets the real gateway regardless of load order.
+declare global {
+  var __riisheAutomationOwnsGateway: boolean | undefined;
+}
+const realGatewayModule = await import("@/lib/intelligence/gateway");
+const gatewayFake = {
   GatewayError: MockGatewayError,
   gatewayComplete: async (params: { messages?: Array<{ content?: string }> }) => {
     const last = params.messages?.[params.messages.length - 1]?.content ?? "";
@@ -67,11 +79,21 @@ mock.module("@/lib/intelligence/gateway", () => ({
   },
   gatewayStream: async () => ({ stream: sseChunkStream("streamed reply (test)") }),
   gatewayVision: async () => ({ text: "vision (test)", provider: "test", model: "test", durationMs: 1 }),
-}));
+};
+const dispatchGateway = ownerDispatchRecord(
+  () => globalThis.__riisheAutomationOwnsGateway === true,
+  realGatewayModule,
+  gatewayFake
+);
+mock.module("@/lib/intelligence/gateway", () => dispatchGateway);
+beforeAll(() => {
+  globalThis.__riisheAutomationOwnsGateway = true;
+});
 
 // ---------------------------------------------------------------- imports (after mocks)
 
 import { db } from "@/lib/db";
+import { syncTaxonomyToDb } from "@/lib/professions/service";
 import { POST as chatRoute } from "@/app/api/ai/chat/route";
 import { POST as chatStreamRoute } from "@/app/api/ai/chat-stream/route";
 import { POST as registerRoute } from "@/app/api/auth/register/route";
@@ -154,6 +176,11 @@ async function createQAUser(tag: string, opts: { username?: string; visibility?:
 }
 
 beforeAll(async () => {
+  // Fresh deploys seed the profession taxonomy on first read (listFlat's
+  // bootstrap). The QA fixtures link users to REAL profession slugs, so
+  // make sure the taxonomy exists — via the app's own idempotent seed
+  // (upsert-only, never deletes rows, safe to run repeatedly).
+  await syncTaxonomyToDb().catch(() => undefined);
   const designer = await db.profession.findUnique({ where: { slug: "ui-designer" } });
   const filmmaker = await db.profession.findUnique({ where: { slug: "video-editor" } });
   designerProfessionId = designer?.id ?? (await db.profession.create({ data: { slug: `qa-design-${RUN}`, label: "QA Design", group: "QA" } })).id;
@@ -190,6 +217,7 @@ afterAll(async () => {
   await db.profession.deleteMany({ where: { id: { in: [designerProfessionId, filmmakerProfessionId] }, slug: { startsWith: "qa-" } } });
   // Restore the real next/headers for any later file in the same bun process.
   mock.module("next/headers", () => realNextHeaders);
+  globalThis.__riisheAutomationOwnsGateway = false;
   jar.clear();
 });
 
