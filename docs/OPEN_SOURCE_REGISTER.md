@@ -17,17 +17,15 @@
 | @aws-sdk/client-s3 + s3-request-presigner + @smithy/* | S3-compatible storage driver + presigned PUT | Apache-2.0 | ✅ keep |
 | z-ai-web-dev-sdk ^0.0.18 | managed AI gateway transport (text/vision/images) | bundled managed service | ✅ keep (server-side only) |
 | recharts ^2.15.4 | Insights charts | MIT | ✅ keep |
-| react-markdown ^10.1 | AI/markdown rendering | MIT | ✅ keep |
 | react-syntax-highlighter ^15.6 | code display | MIT | ✅ keep |
 | framer-motion ^12.23 | studio motion | MIT | ✅ keep |
 | sharp ^0.34 | image processing | ISC + libjpeg/png (commercial OK) | ✅ keep |
 | docx ^9.15, pdfkit ^0.20, mammoth ^1.13, pdf-parse ^2.4 | resume export/parse pipeline | Apache-2.0/MIT | ✅ keep |
 | jszip ^3.10 | site export ZIP | MIT/GPLv3 dual — MIT path used | ✅ keep |
 | @dnd-kit/core/sortable/utilities | drag-and-drop (legacy portfolio + future editors) | MIT | ✅ keep |
-| date-fns ^4.1, uuid ^11.1 | utilities | MIT | ✅ keep |
-| next-auth ^4.24.11 | **UNUSED — zero imports (custom auth)** | MIT | ⚠️ remove candidate |
-| @tanstack/react-query ^5.82, @tanstack/react-table ^8.21, react-hook-form ^7.60, @hookform/resolvers ^5.1 | **UNUSED in app code** | MIT | ⚠️ remove-or-adopt decision at M1 (profile editor could adopt RHF) |
-| @mdxeditor/editor ^3.39 | **UNUSED** | MIT | ⚠️ remove candidate |
+| date-fns ^4.1 | date utilities | MIT | ✅ keep |
+| ~~next-auth ^4.24.11~~ | **REMOVED (M0.5 §10)** — zero imports across source/tests/scripts/configs/lockfile (custom auth); double-verified then dropped | MIT | ❌ removed |
+| ~~@tanstack/react-query ^5.82, @tanstack/react-table ^8.21, @hookform/resolvers ^5.1, uuid ^11.1, @reactuses/core ^6.0.5, @mdxeditor/editor ^3.39, react-markdown ^10.1~~ | **REMOVED (M0.5 §10)** — zero references double-verified (source, tests, scripts, configs, lockfile); no documented forward plan | MIT | ❌ removed (react-hook-form itself KEPT for the M1 profile-editor adoption decision) |
 | react-resizable-panels ^3.0.3 | studio panels | MIT | ✅ keep |
 
 ## 2. Researched candidates for M1–M14 (live GitHub facts, 2026-11-13)

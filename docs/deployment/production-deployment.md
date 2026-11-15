@@ -46,7 +46,7 @@ browser ──HTTPS──▶ reverse proxy (TLS termination, e.g. Caddy/nginx)
      (M22 verified it: integrity ok, 0 FK violations, 15/15 query-shape
      smoke tests).
 3. Verify: `bun run scripts/check-postgres-schema-readiness.ts` must **exit 0**
-   (expected inventory: 40 tables incl. `AgentTask`, `GiftzRepository`,
+   (expected inventory: the parity-verified 85-model schema incl. `AgentTask`, `GiftzRepository`,
    `AgentArtifact`, `RateLimitBucket`, their indexes and FKs).
 4. `DATABASE_URL="postgresql://user:pass@host:5432/beanfolio?sslmode=require"`.
    Never hand-type the URL — copy it from the provider dashboard (see

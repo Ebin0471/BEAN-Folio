@@ -67,16 +67,19 @@ scripts/ops/bean-sync.sh commit -m "feat(scope): what + why" -- <approved paths.
 git ls-remote origin main            # MUST equal local HEAD (independent verification)
 ```
 
-Before pushing, sanity-check the branch you are about to push:
+Before pushing, sanity-check the tree you are about to publish — the bean-sync
+workflow already runs the secret scan and the runtime-data scan on the staged
+snapshot; the tracked-tree scan below is the pre-publish eyeball check:
 
 ```bash
-git ls-tree -r --name-only deploy | grep -E '^(db/|\.env$|uploads/mvm|tool-results/|pg-migration/|upload/)'   # → must print NOTHING
-git ls-tree -r --name-only deploy | grep -c '^uploads/seed-'        # → demo fixtures ARE included (expected)
+scripts/ci/guard-runtime-data.sh            # tracked tree: fails on ANY runtime-data path
+scripts/ci/guard-runtime-data.sh --staged   # what the next commit would add
 ```
 
-If you prefer to push `main` itself instead, you MUST first untrack runtime data there and squash
-history (earlier commits contain the database): `git rm -r --cached db uploads tool-results upload`
-→ commit → rebuild history into a single orphan commit. The `deploy` branch already IS that state.
+Publishing is MAIN-ONLY and fast-forward-only: `scripts/ops/bean-sync.sh` is
+the only documented publishing path. There is no squash-and-push bypass and
+no alternative branch publish — runtime data never reaches GitHub
+(DEVELOPMENT_SAFETY §8).
 
 **Step B — Create the production database and media bucket**
 
@@ -465,15 +468,15 @@ multi-instance deployment.
 - PostgreSQL: automated daily backups + PITR (managed provider feature).
 - S3: versioning or cross-region replication for the media bucket.
 - **A backup is not a backup until a restore has been rehearsed:** quarterly, restore a snapshot
-  into a scratch environment, run `prisma migrate deploy`, boot the standalone server against
+  into a scratch environment, apply the reviewed additive SQL artifacts, boot the standalone server against
   it, verify `GET /api/health` plus a login and a project read. Document the measured RTO/RPO.
 
 ### 3.8 Rollback strategy
 
 - Keep the previous standalone build artifact per release (`builds/<git-sha>/server.js`); a
   rollback is a symlink/pointer flip + restart, no rebuild.
-- DB rollbacks: only forward-only `prisma migrate deploy`; ship additive, backwards-compatible
-  migrations (expand → deploy → contract) so app N-1 keeps working.
+- DB rollbacks: schema changes are reviewed, additive SQL artifacts applied deliberately
+  (never blanket `migrate deploy`, never destructive); rollbacks restore the backup, not reverse migrations.
 - Static/client assets: the standalone build is self-contained; keep the prior artifact serving
   until rollback completes.
 
@@ -497,7 +500,7 @@ Security (see `docs/security.md` §8)
 
 Data & content
 
-- [ ] `prisma migrate deploy` baseline created; `db:push` disabled in prod envs
+- [ ] Schema baseline applied from the reviewed additive SQL artifacts; `db:push` disabled in prod envs
 - [ ] Backup + **rehearsed restore** completed (§3.7)
 - [ ] Demo fixture data (any `isDemo` accounts) absent from production DB
 - [ ] `uploads/` migration to S3 completed (or single-instance constraint accepted and monitored)
