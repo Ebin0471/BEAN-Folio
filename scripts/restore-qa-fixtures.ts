@@ -10,6 +10,7 @@
  */
 import { db } from "../src/lib/db";
 import { hashPassword } from "../src/lib/auth";
+import { assertSeedSafety } from "./lib/seed-guard";
 
 const qaAccounts: Array<{ email: string; name: string }> = [
   { email: "trace-tester@beanfolio.test", name: "Trace Tester" },
@@ -25,6 +26,9 @@ const qaAccounts: Array<{ email: string; name: string }> = [
 ];
 
 async function main() {
+  // M0.5 Stage D — QA fixture accounts are clearly-identified test data;
+  // refuse to seed them into a production context.
+  assertSeedSafety({ script: "scripts/restore-qa-fixtures.ts" });
   const passwordHash = await hashPassword("qa-fixture-password");
   for (const account of qaAccounts) {
     const existing = await db.user.findUnique({ where: { email: account.email }, select: { id: true } });

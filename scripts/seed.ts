@@ -14,6 +14,7 @@ import { promisify } from "util";
 import { copyFileSync, mkdirSync, existsSync, statSync } from "fs";
 import path from "path";
 import { PrismaClient } from "@prisma/client";
+import { assertSeedSafety } from "./lib/seed-guard";
 
 const db = new PrismaClient();
 const scrypt = promisify(_scrypt) as (p: string, s: string, k: number) => Promise<Buffer>;
@@ -457,6 +458,10 @@ async function clear() {
 }
 
 async function main() {
+  // M0.5 Stage D — refuse demo/QA seeding on production contexts, and gate
+  // the destructive --clear path behind an explicit confirmation env var.
+  assertSeedSafety({ script: "scripts/seed.ts", destructive: process.argv.includes("--clear") });
+
   if (process.argv.includes("--clear")) await clear();
 
   const existing = await db.user.count({ where: { isDemo: true } });

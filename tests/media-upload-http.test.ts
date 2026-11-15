@@ -39,7 +39,27 @@ import { createSession, hashPassword } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { deleteObject } from "@/lib/storage";
 
+// Environment gate (M0.5 Stage C): this suite drives REAL HTTP requests and
+// is honestly env-gated — without a healthy dev server it reports every test
+// as VISIBLY SKIPPED (never a silent pass, never a fail) so CI without a
+// server stays green while local ./ensure-dev.sh environments keep the full
+// boundary coverage.
+
 const BASE = process.env.BASE_URL ?? "http://localhost:3000";
+// Module-level environment gate (M0.5 Stage C, reconstructed): the readiness
+// probe runs BEFORE test registration so every test can be declared with
+// test.skipIf — without a healthy dev server the suite reports 9 VISIBLE
+// skips (never a silent pass, never a fail).
+const serverUp = await fetch(`${BASE}/api/ready`)
+  .then((r) => r.json() as Promise<{ ok?: boolean }>)
+  .then((j) => Boolean(j?.ok))
+  .catch(() => false);
+if (!serverUp) {
+  console.warn(
+    `[media-upload-http] ENV-GATED SKIP: dev server not healthy at ${BASE} — run ./ensure-dev.sh first. ` +
+      `All HTTP boundary tests are skipped (visible), not failed.`,
+  );
+}
 const QA_EMAIL = "qa-upload-http@beanfolio.test";
 const TEST_IP = "198.51.100.90";
 
@@ -91,12 +111,7 @@ async function removeMedia(id: string) {
 }
 
 beforeAll(async () => {
-  const ready = await fetch(`${BASE}/api/ready`)
-    .then((r) => r.json() as Promise<{ ok?: boolean }>)
-    .catch(() => null);
-  if (!ready?.ok) {
-    throw new Error(`dev server not healthy at ${BASE} — run ./ensure-dev.sh first`);
-  }
+  if (!serverUp) return;
   const existing = await db.user.findUnique({ where: { email: QA_EMAIL } });
   const user =
     existing ??
@@ -122,7 +137,7 @@ afterAll(async () => {
 });
 
 describe("POST /api/media/upload — live HTTP boundary (the 405 pin)", () => {
-  test("anonymous POST is 401, NOT 405 — the historical regression", async () => {
+  test.skipIf(!serverUp)("anonymous POST is 401, NOT 405 — the historical regression", async () => {
     const res = await postUpload(pngFile(), false);
     expect(res.status).toBe(401);
     expect(res.status).not.toBe(405);
@@ -130,13 +145,13 @@ describe("POST /api/media/upload — live HTTP boundary (the 405 pin)", () => {
     expect(body.error).toBe("Authentication required");
   });
 
-  test("OPTIONS advertises POST on the dedicated route", async () => {
+  test.skipIf(!serverUp)("OPTIONS advertises POST on the dedicated route", async () => {
     const res = await fetch(`${BASE}/api/media/upload`, { method: "OPTIONS" });
     expect(res.status).toBe(204);
     expect((res.headers.get("allow") ?? "").toUpperCase()).toContain("POST");
   });
 
-  test("PUT on the dedicated route → 405 (correct unsupported-method behavior)", async () => {
+  test.skipIf(!serverUp)("PUT on the dedicated route → 405 (correct unsupported-method behavior)", async () => {
     const res = await fetch(`${BASE}/api/media/upload`, { method: "PUT", headers: { cookie } });
     expect(res.status).toBe(405);
     // Next.js 16 answers 405 without an `Allow` header on the method-mismatch
@@ -144,14 +159,14 @@ describe("POST /api/media/upload — live HTTP boundary (the 405 pin)", () => {
     // stable cross-version contract here.
   });
 
-  test("authenticated POST without a `file` part → 400", async () => {
+  test.skipIf(!serverUp)("authenticated POST without a `file` part → 400", async () => {
     const res = await postUpload(null);
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error?: string };
     expect(body.error).toMatch(/Missing file|multipart/);
   });
 
-  test("valid PNG → 200 contract, row persisted READY, raw bytes byte-for-byte", async () => {
+  test.skipIf(!serverUp)("valid PNG → 200 contract, row persisted READY, raw bytes byte-for-byte", async () => {
     const res = await postUpload(pngFile());
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -183,12 +198,12 @@ describe("POST /api/media/upload — live HTTP boundary (the 405 pin)", () => {
     expect(Buffer.from(bytes).equals(PNG_BYTES)).toBe(true);
   });
 
-  test("unattached raw bytes are owner-only (403 anonymous) until referenced", async () => {
+  test.skipIf(!serverUp)("unattached raw bytes are owner-only (403 anonymous) until referenced", async () => {
     const res = await fetch(`${BASE}/api/media/${uploadedId}/raw`);
     expect(res.status).toBe(403);
   });
 
-  test("garbage upload → 400 (UploadError), nothing stored", async () => {
+  test.skipIf(!serverUp)("garbage upload → 400 (UploadError), nothing stored", async () => {
     const res = await postUpload(garbageFile());
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error?: string };
@@ -197,7 +212,7 @@ describe("POST /api/media/upload — live HTTP boundary (the 405 pin)", () => {
     expect(rows.length).toBe(0);
   });
 
-  test("AVATAR flow — upload → link → survives refresh → publicly readable → reverted", async () => {
+  test.skipIf(!serverUp)("AVATAR flow — upload → link → survives refresh → publicly readable → reverted", async () => {
     const up = await postUpload(pngFile("avatar.png"));
     expect(up.status).toBe(200);
     const { media } = (await up.json()) as { media: { id: string; url: string } };
@@ -228,7 +243,7 @@ describe("POST /api/media/upload — live HTTP boundary (the 405 pin)", () => {
     await removeMedia(media.id);
   });
 
-  test("COVER flow — upload → link → survives refresh → publicly readable → reverted", async () => {
+  test.skipIf(!serverUp)("COVER flow — upload → link → survives refresh → publicly readable → reverted", async () => {
     const up = await postUpload(pngFile("cover.png"));
     expect(up.status).toBe(200);
     const { media } = (await up.json()) as { media: { id: string; url: string } };
