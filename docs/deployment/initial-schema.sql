@@ -1,7 +1,7 @@
--- ⚠️ HISTORICAL ARTIFACT (pre-LAXII, 31-table era — DO NOT APPLY to the current 36-model schema).
+-- ⚠️ HISTORICAL ARTIFACT (pre-LAXII, 31-table era — DO NOT APPLY to the current parity-verified 85-model schema).
 -- This file predates the LAXII AI-studio tables (LaxiiConversation, LaxiiMessage,
 -- LaxiiImageVersion, LaxiiUsage, LaxiiResume). Applying it leaves those tables missing and the
--- readiness probe (scripts/check-postgres-schema-readiness.ts, expects 36 tables) will fail.
+-- readiness probe (scripts/check-postgres-schema-readiness.ts, expects the parity-verified 85-model schema) will fail.
 -- Regenerate fresh DDL instead: bunx prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.postgres.prisma --script
 -- CreateSchema
 CREATE SCHEMA IF NOT EXISTS "public";
