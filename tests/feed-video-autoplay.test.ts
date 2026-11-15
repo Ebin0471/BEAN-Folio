@@ -18,6 +18,7 @@
 
 import { describe, expect, test, afterAll, beforeAll, mock } from "bun:test";
 import { NextRequest } from "next/server";
+import { putObject, deleteObject } from "@/lib/storage";
 
 // --- armed auth pattern (same as social-network.test.ts) -------------------
 
@@ -284,6 +285,11 @@ describe("post media delivery ladder", () => {
   let draftPost: Awaited<ReturnType<typeof makePost>>;
 
   beforeAll(async () => {
+    // The fixture blob lives under the (gitignored) uploads/ storage root, so
+    // sandbox restores can wipe it — write it through the storage layer
+    // instead of depending on pre-existing disk state. 38 bytes to match the
+    // MediaAsset.size the rows below declare.
+    await putObject(FIXTURE_BLOB, Buffer.from("v".repeat(38), "utf8"), "application/octet-stream");
     author = await makeUser("vlda");
     viewer = await makeUser("vldv");
     demo = await makeUser("vldd", { demo: true });
@@ -364,5 +370,6 @@ describe("post media delivery ladder", () => {
     for (const id of cleanupPosts) await db.post.deleteMany({ where: { id } });
     for (const id of cleanupAssets) await db.mediaAsset.deleteMany({ where: { id } });
     for (const id of cleanupUsers) await db.user.deleteMany({ where: { id } });
+    await deleteObject(FIXTURE_BLOB).catch(() => undefined);
   });
 });

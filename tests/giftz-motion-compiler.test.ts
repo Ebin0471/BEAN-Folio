@@ -170,10 +170,39 @@ function siteConfig() {
   return agencyMotionFixture();
 }
 
+// bun module mocks persist for the whole test process: the FIRST import of
+// "@/lib/db" while a mock is registered freezes the factory result into the
+// module record for every later importer, and no afterAll re-registration
+// can reliably undo that. So the record's frozen value is a DISPATCH PROXY
+// around the REAL PrismaClient: while this file's tests run (owner flag)
+// calls route to the in-memory fake; every other file in the process —
+// regardless of load order — gets the real client.
+declare global {
+  var __giftzMotionOwnsDb: boolean | undefined;
+}
+const realDbModule = await import("@/lib/db");
 const fakeDb = createFakeDb();
-mock.module("@/lib/db", () => ({ db: fakeDb.db }));
+const dispatchDb = new Proxy(realDbModule.db, {
+  get(target, prop) {
+    if (globalThis.__giftzMotionOwnsDb) {
+      return (fakeDb.db as Record<string | symbol, unknown>)[prop];
+    }
+    // IMPORTANT: read from the CAPTURED target — the namespace property
+    // (realDbModule.db) is patched in place by mock.module and re-reading it
+    // here would recurse into this very proxy.
+    return Reflect.get(target, prop);
+  },
+});
+mock.module("@/lib/db", () => ({ db: dispatchDb }));
+beforeAll(() => {
+  globalThis.__giftzMotionOwnsDb = true;
+});
+afterAll(() => {
+  globalThis.__giftzMotionOwnsDb = false;
+});
 
-/** Loaded lazily AFTER mock.module so the real db module never loads. */
+/** Loaded lazily AFTER the dispatch mock is registered; while this file's
+ * tests run the dispatch proxy routes its db calls to the in-memory fake. */
 let syncGeneratedFiles: typeof syncGeneratedFilesFn;
 beforeAll(async () => {
   ({ syncGeneratedFiles } = await import("@/lib/giftz/project-compiler"));
