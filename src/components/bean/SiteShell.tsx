@@ -60,6 +60,14 @@ import PublicProfileView from "@/views/PublicProfileView";
 import PublishedSiteView from "@/views/PublishedSiteView";
 import SiteGiftzSiteView from "@/views/SiteGiftzSiteView";
 import SiteProjectDetailView from "@/views/SiteProjectDetailView";
+// M0.5 Stage F — the Portfolio Studio reconnection: the /site/<x> family now
+// discriminates portfolio-first (when a published portfolio answers at the
+// address it IS the address), and the portfolio's own case-study + sub-page
+// + embed surfaces render here.
+import PortfolioFirstSiteView, {
+  PortfolioCaseStudyRoute,
+} from "@/components/bean/portfolio/PortfolioFirstSiteView";
+import PortfolioSiteView from "@/views/PortfolioSiteView";
 import IntelligenceView from "@/views/IntelligenceView";
 import ConnectView from "@/views/ConnectView";
 import InsightsView from "@/views/InsightsView";
@@ -580,7 +588,19 @@ function Router() {
         // its own address. Fully independent of the profile above: the two
         // routes never render each other's experience (see lib/site-url).
         //
-        // /site/<username>                  → the website homepage
+        // M0.5 Stage F (portfolio reconnection): the Portfolio Studio's
+        // published portfolio ALSO answers inside this address family, at the
+        // user's portfolio slug (which DEFAULTS to their username):
+        //   /site/<username>                → portfolio if one answers, else the
+        //                                     exact pre-M0.5 PublishedSiteView
+        //   /site/<username>/work/<id>      → the portfolio case study
+        //                                     (chrome-suppressed standalone)
+        //   /site/<username>/<pageSlug>     → portfolio sub-page, else the exact
+        //                                     pre-M0.5 not-found
+        // The discriminator is PortfolioFirstSiteView: it probes
+        // GET /api/site/<slug> (which 404s BEFORE the insights write — a
+        // fallback probe pollutes nothing) and falls back honestly.
+        //
         // /site/<username>/projects/<id>    → the WEBSITE-NATIVE project detail
         //   page: same site design system, platform chrome suppressed, NEVER a
         //   redirect into the platform's /p/<id> experience. Only this exact
@@ -604,8 +624,44 @@ function Router() {
             <NotFound />
           );
         }
-        if (c) return <NotFound />;
-        return <PublishedSiteView username={decodeURIComponent(b)} />;
+        if (c === "work") {
+          return d ? (
+            <PortfolioCaseStudyRoute slug={decodeURIComponent(b)} projectId={decodeURIComponent(d)} />
+          ) : (
+            <NotFound />
+          );
+        }
+        if (c) {
+          // One extra segment: a portfolio sub-page when a published portfolio
+          // answers here, else the exact pre-M0.5 platform not-found.
+          return <PortfolioFirstSiteView slug={decodeURIComponent(b)} pageSlug={decodeURIComponent(c)} fallback="notfound" />;
+        }
+        return <PortfolioFirstSiteView slug={decodeURIComponent(b)} fallback="website" />;
+      case "embed":
+        // M0.5 Stage F — embeddable, chrome-free portfolio surfaces (used by
+        // the Portfolio Studio's live preview iframe and external embeds):
+        //   #/embed/draft/<slug>[/<page>] → the owner's DRAFT preview
+        //     (self-only — authorization enforced by the API's draft=1
+        //     contract; RequireAuth covers the logged-out iframe case)
+        //   #/embed/site/<slug>[/<page>]  → the PUBLISHED portfolio site,
+        //     chrome-free; the API's public visibility ladder applies
+        if (b === "draft") {
+          return c ? (
+            <RequireAuth label="Portfolio preview">
+              <PortfolioSiteView slug={decodeURIComponent(c)} bare preferDraft pageSlug={d ? decodeURIComponent(d) : undefined} />
+            </RequireAuth>
+          ) : (
+            <NotFound />
+          );
+        }
+        if (b === "site") {
+          return c ? (
+            <PortfolioSiteView slug={decodeURIComponent(c)} bare pageSlug={d ? decodeURIComponent(d) : undefined} />
+          ) : (
+            <NotFound />
+          );
+        }
+        return <NotFound />;
       case "intelligence":
         return <RequireAuth label="RIISHE"><IntelligenceView /></RequireAuth>;
       case "laxii":
@@ -697,14 +753,18 @@ function Shell() {
   // The site view (re)asserts pending/yes itself when it mounts or resolves —
   // child effects run before this parent effect, so its signal always wins on
   // a live site route. The profile route (/u/<username>) is a normal shelled
-  // page: chrome is never suppressed there.
+  // page: chrome is never suppressed there. Embed routes (#/embed/...) are
+  // chrome-free by definition (M0.5 Stage F) — they suppress their own shell.
+  const embedRoute = segments[0] === "embed" && (segments[1] === "draft" || segments[1] === "site");
   useEffect(() => {
-    if (!(segments[0] === "site" && Boolean(segments[1]))) setStandaloneSite("no");
+    if (!(segments[0] === "site" && Boolean(segments[1])) && !embedRoute) setStandaloneSite("no");
   }, [segKey]);
 
   // Only /site/<username> routes can ever be standalone websites; the
   // standalone store decides whether the website there is published.
-  const standaloneSite = segments[0] === "site" && Boolean(segments[1]) && standalone !== "no";
+  // Embed routes are chrome-free unconditionally (M0.5 Stage F).
+  const standaloneSite =
+    (segments[0] === "site" && Boolean(segments[1]) && standalone !== "no") || embedRoute;
 
   return (
     <ThemeProvider defaultTheme="dark" enableSystem={false} attribute="class" disableTransitionOnChange>

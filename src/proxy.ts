@@ -43,15 +43,18 @@ import { NextRequest, NextResponse } from "next/server";
  */
 
 const PUBLIC_PATH_SLUG_RE =
-  /^(?:\/u\/[^/]+|\/p\/[^/]+|\/site\/[^/]+(?:\/projects\/[^/]+|\/g\/[^/]+)?|\/post\/[^/]+)$/;
+  /^(?:\/u\/[^/]+|\/p\/[^/]+|\/site\/[^/]+(?:\/projects\/[^/]+|\/work\/[^/]+|\/g\/[^/]+|\/[^/]+)?|\/post\/[^/]+)$/;
 
 /**
  * Boot route for a public path-form URL. The route IS the requested pathname
  * (segments preserved exactly as requested — percent-encoded where the client
  * sent them encoded; the client decodes per segment). Covers `/u/<username>`,
  * `/p/<id>`, `/site/<username>`, the standalone website's own project detail
- * pages `/site/<username>/projects/<id>` and the GIFTZ generated sites
- * `/site/<username>/g/<siteId>`.
+ * pages `/site/<username>/projects/<id>`, the GIFTZ generated sites
+ * `/site/<username>/g/<siteId>`, and the M0.5-reconnected portfolio shapes
+ * `/site/<username>/work/<projectId>` and `/site/<username>/<pageSlug>` —
+ * all bounded single-extra-segment shapes (enumerable, never an open
+ * wildcard; deeper or malformed shapes stay rejected).
  */
 export function bootRouteFromPathname(pathname: string): string | null {
   return PUBLIC_PATH_SLUG_RE.test(pathname) ? pathname : null;

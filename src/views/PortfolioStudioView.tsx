@@ -3141,7 +3141,12 @@ function AiDesignerDialog({
     setError(null);
     setErrorCode(null);
     try {
-      const res = await api<AiProposal>("/api/ai/design", {
+      // M0.5 Stage F — the portfolio AI designer's OWN contract
+      // (POST /api/ai/portfolio/design: {prompt,pageId,selection} →
+      // {summary,rationale,config}, server-side draft loading, schema-validated
+      // proposals). The legacy /api/ai/design endpoint belongs to the Website
+      // Studio and is untouched.
+      const res = await api<AiProposal>("/api/ai/portfolio/design", {
         method: "POST",
         json: {
           prompt: text,
