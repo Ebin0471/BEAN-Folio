@@ -603,7 +603,7 @@ export default function StudioView() {
           ))}
         </div>
         <nav aria-label="Studio quick links" className="flex flex-wrap items-center gap-1.5 text-xs">
-          <Button variant="ghost" size="sm" className="h-8 gap-1.5 text-muted-foreground" onClick={() => navigate("/giftz")}>
+          <Button variant="ghost" size="sm" className="h-8 gap-1.5 text-muted-foreground" onClick={() => navigate("/studio/portfolio")}>
             <LayoutGrid className="size-3.5" aria-hidden /> Portfolio Builder
           </Button>
           <Button variant="ghost" size="sm" className="h-8 gap-1.5 text-muted-foreground" onClick={() => navigate("/insights")}>

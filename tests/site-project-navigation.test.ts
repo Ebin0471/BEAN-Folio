@@ -76,7 +76,13 @@ describe("proxy boot route for /site/<username>/projects/<projectId>", () => {
 
   test("anything outside the public shapes is rejected", () => {
     expect(bootRouteFromPathname("/site/ebin/projects/proj1/extra")).toBeNull();
-    expect(bootRouteFromPathname("/site/ebin/anything-else")).toBeNull();
+    // M0.5 Stage F (portfolio reconnection): SINGLE sub-paths under /site/<u>
+    // now boot by design — /site/<u>/<pageSlug> is a portfolio sub-page when a
+    // published portfolio answers, else the exact pre-M0.5 not-found (and
+    // /site/<u>/work/<id> is the case study). The bounded single-extra-segment
+    // shape is enumerable by intent; DEEPER shapes stay rejected.
+    expect(bootRouteFromPathname("/site/ebin/anything-else")).toBe("/site/ebin/anything-else");
+    expect(bootRouteFromPathname("/site/ebin/work/proj1")).toBe("/site/ebin/work/proj1");
     expect(bootRouteFromPathname("/site/ebin/projects/")).toBeNull();
     expect(bootRouteFromPathname("/site/")).toBeNull();
     expect(bootRouteFromPathname("/u/ada/extra")).toBeNull();

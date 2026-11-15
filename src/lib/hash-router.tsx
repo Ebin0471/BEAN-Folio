@@ -36,11 +36,14 @@ export function parseHash(hash: string): string {
 /**
  * Public routes that may boot directly from the URL PATH (see proxy.ts).
  * `/site/<username>/projects/<projectId>` — the standalone website's own
- * project detail page — and `/site/<username>/g/<siteId>` — a PUBLISHED GIFTZ
+ * project detail page —, `/site/<username>/work/<projectId>` — the M0.5
+ * portfolio case study —, `/site/<username>/<pageSlug>` — a portfolio
+ * sub-page — and `/site/<username>/g/<siteId>` — a PUBLISHED GIFTZ
  * generated site — are deeper public shapes than the other routes but still
  * bounded and enumerable (never an open wildcard).
  */
-const PUBLIC_BOOT_RE = /^(?:\/u\/[^/]+|\/p\/[^/]+|\/post\/[^/]+|\/site\/[^/]+(?:\/projects\/[^/]+|\/g\/[^/]+)?)$/;
+const PUBLIC_BOOT_RE =
+  /^(?:\/u\/[^/]+|\/p\/[^/]+|\/post\/[^/]+|\/site\/[^/]+(?:\/projects\/[^/]+|\/work\/[^/]+|\/g\/[^/]+|\/[^/]+)?)$/;
 
 /**
  * The active route. A URL fragment always wins (in-app navigation runs on the
@@ -150,7 +153,7 @@ export function takeReturnTo(fallback = "/"): string {
  * public pages must never hijack navigation into an auth or setup flow.
  * Discover (empty path), project pages, profiles and static pages are public.
  */
-const PUBLIC_ROOT_SEGMENTS = new Set(["explore", "p", "u", "site", "privacy", "terms", "auth", "onboarding"]);
+const PUBLIC_ROOT_SEGMENTS = new Set(["explore", "p", "u", "site", "embed", "privacy", "terms", "auth", "onboarding"]);
 
 export function isPublicRoute(segments: string[]): boolean {
   if (segments.length === 0) return true; // Discover feed

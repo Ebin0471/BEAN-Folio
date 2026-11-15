@@ -23,7 +23,7 @@ import { SEO_DEFAULTS } from "@/lib/seo-defaults";
  */
 export const dynamic = "force-dynamic";
 
-const BOOT_ROUTE_RE = /^\/(u|p|site|post)\/[^/]+$/;
+const BOOT_ROUTE_RE = /^\/(u|p|post)\/[^/]+$|^\/site\/[^/]+(?:\/[^/]+)?$/;
 
 /**
  * Server-side SEO/social metadata for public portfolio paths (P3).
