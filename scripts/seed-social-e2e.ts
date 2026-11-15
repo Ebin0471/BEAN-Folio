@@ -13,6 +13,7 @@ import { promisify } from "util";
 import { copyFileSync, mkdirSync, existsSync, statSync, writeFileSync, readdirSync } from "fs";
 import path from "path";
 import { PrismaClient } from "@prisma/client";
+import { assertSeedSafety } from "./lib/seed-guard";
 
 const db = new PrismaClient();
 const scrypt = promisify(_scrypt) as (p: string, s: string, k: number) => Promise<Buffer>;
@@ -68,6 +69,9 @@ async function makeVideoAsset(ownerId: string): Promise<string> {
 }
 
 async function main() {
+  // M0.5 Stage D — this seeder writes REAL-flagged (isDemo: false) accounts,
+  // the highest-risk fixture path; refuse a production context outright.
+  assertSeedSafety({ script: "scripts/seed-social-e2e.ts" });
   const PASSWORD = "socialtest1";
   const existing = await db.user.findFirst({ where: { username: "alice" } });
   if (existing) {

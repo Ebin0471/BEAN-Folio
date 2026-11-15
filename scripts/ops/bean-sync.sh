@@ -29,12 +29,22 @@ cd "$(dirname "$0")/../.."
 
 VAULT=".git/bean-auth"
 TOKEN_FILE="$VAULT/token"
-BRANCH="$(git branch --show-current)"
+# M0.5 hardening (§7): publishing is MAIN-ONLY — never the checked-out branch.
+BRANCH="main"
 RED=$'\033[31m'; GRN=$'\033[32m'; YLW=$'\033[33m'; RST=$'\033[0m'
 
 fail()  { echo "${RED}SYNC ABORTED:${RST} $1" >&2; exit 1; }
 note()  { echo "${YLW}»${RST} $1"; }
 ok()    { echo "${GRN}✓${RST} $1"; }
+
+# M0.5 §7: the script previously pushed whatever branch was checked out —
+# running it from `deploy` (or any preservation/safety branch) would have
+# published that branch. Publishing always goes through main.
+CURRENT_BRANCH="$(git branch --show-current)"
+if [ "$CURRENT_BRANCH" != "main" ]; then
+  fail "MAIN-ONLY publishing: bean-sync runs on main only (currently on '$CURRENT_BRANCH'). Checkout main and re-run. Local-only preservation branches must never be pushed."
+fi
+ok "branch gate: on main (MAIN-ONLY publishing)"
 
 precheck_auth() {
   if [ ! -s "$TOKEN_FILE" ]; then
