@@ -45,6 +45,7 @@ yarn-error.log*
 # NEVER be pushed to any remote (see DEVELOPMENT_SAFETY.md §8).
 /db/*.db
 /db/*.db-journal
+/db/backups/
 /uploads/
 /backups/
 /data/laxii-tmp/

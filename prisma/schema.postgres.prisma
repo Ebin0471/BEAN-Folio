@@ -148,6 +148,10 @@ model User {
   // or consumed response shape.
   portfolio           Portfolio?
   designChatMessages  DesignChatMessage[]
+  // ---------- Opportunity Exchange (O1, additive) ----------
+  employerOrganizationsCreated EmployerOrganization[] @relation("employerOrgCreator")
+  employerMemberships          EmployerMembership[]   @relation("employerMemberships")
+  employerVerificationReviews  EmployerVerification[] @relation("employerVerifications")
 }
 
 model Session {
@@ -1729,4 +1733,82 @@ model DesignChatMessage {
   createdAt      DateTime @default(now())
 
   @@index([userId, conversationId, createdAt])
+}
+
+// ---------- Opportunity Exchange (O1 — employer identity) ----------
+// Employer organizations, memberships and verification: the additive O1 slice
+// of the Opportunity Exchange program (docs/ops/O0_OPPORTUNITY_EXCHANGE_AUDIT.md
+// §10.1, owner-approved 2026-11-16). No candidate-side entity exists yet (O2+).
+// Status/role columns are UPPERCASE String "enums" validated with zod at the
+// API boundary (SQLite has no native enums — house convention). Deletes never
+// destroy hiring history: org deletion is not exposed in v1, and User-linked
+// rows use SetNull/Cascade per the O0 audit's integrity rules.
+
+/// An employer organization on BEAN Folio. The tenant root for every OX
+/// employer resource — each employer query binds organizationId (O0 §5).
+model EmployerOrganization {
+  id                 String    @id @default(cuid())
+  legalName          String
+  displayName        String
+  slug               String    @unique
+  website            String?
+  industry           String?
+  companySize        String? // STARTUP_1_10 | SMB_11_50 | MID_51_200 | LARGE_201_1000 | ENTERPRISE_1000_PLUS
+  description        String?
+  headquarters       String?
+  verificationStatus String    @default("UNVERIFIED") // UNVERIFIED | PENDING | VERIFIED | REJECTED | SUSPENDED
+  verificationMethod String? // how the org became VERIFIED (set at approval, e.g. MANUAL_REVIEW)
+  verifiedAt         DateTime?
+  createdByUserId    String?
+  createdBy          User?     @relation("employerOrgCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  memberships   EmployerMembership[]
+  verifications EmployerVerification[]
+
+  @@index([verificationStatus])
+}
+
+/// One user's membership in one employer organization. Unique per (org, user)
+/// — duplicate memberships are impossible by constraint; re-inviting a
+/// REMOVED member reactivates the same row (status → INVITED), never a
+/// second row (O1 owner directive: prevent duplicate organization
+/// memberships).
+model EmployerMembership {
+  id              String    @id @default(cuid())
+  organizationId  String
+  userId          String
+  role            String    @default("VIEWER") // OWNER | ADMIN | RECRUITER | HIRING_MANAGER | VIEWER
+  status          String    @default("ACTIVE") // ACTIVE | INVITED | SUSPENDED | REMOVED
+  invitedByUserId String? // inviting member's user id (display provenance; deliberately no FK — loose-ref house style)
+  joinedAt        DateTime? // set when an INVITED member accepts
+  createdAt       DateTime  @default(now())
+
+  organization EmployerOrganization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User                 @relation("employerMemberships", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+}
+
+/// One verification review of one organization. `evidenceReference` holds a
+/// SECURE REFERENCE ONLY (an external case/receipt identifier resolved by the
+/// review tooling) — raw identity documents are never stored in this table or
+/// anywhere in the Opportunity Exchange (O0 §5, owner directive O1 §3).
+model EmployerVerification {
+  id                String    @id @default(cuid())
+  organizationId    String
+  method            String    @default("MANUAL_REVIEW") // v1 pilot: MANUAL_REVIEW (O0 §11 D5)
+  status            String    @default("PENDING") // PENDING | VERIFIED | REJECTED
+  evidenceReference String? // secure external reference — never document contents
+  reviewerUserId    String?
+  reviewedAt        DateTime?
+  rejectionReason   String?
+  createdAt         DateTime  @default(now())
+
+  organization EmployerOrganization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  reviewer     User?                @relation("employerVerifications", fields: [reviewerUserId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, status])
 }

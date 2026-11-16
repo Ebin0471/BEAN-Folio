@@ -19,7 +19,11 @@ migration-agnostically (`docs/ops/RUNBOOK-QUEUE.md`).
 | `prisma/schema.prisma` | SQLite (`db/custom.db`) | sandbox/dev, `db:push` | `prisma db push` (additive only — the `db:push` script carries no `--accept-data-loss` and must never regain it) |
 | `prisma/schema.postgres.prisma` | PostgreSQL | the **Vercel build** (`vercel-build` runs `prisma generate --schema prisma/schema.postgres.prisma`) and any managed-PG deployment | reviewed DDL via `prisma migrate diff` (this doc) |
 
-Both files currently describe the **same 45-model data model**. The Vercel build generates its
+Both files currently describe the **same 88-model data model** (85 models
+after the M22 Phase 2 restoration, plus the three O1 Opportunity Exchange
+employer-identity tables — `EmployerOrganization`, `EmployerMembership`,
+`EmployerVerification` — added 2026-11-16; the pre-O1 count of 45 stated here
+had drifted stale and was corrected in the O1 docs pass). The Vercel build generates its
 client from the postgres mirror, so any drift means production references models its client does
 not have — the exact failure that once stranded `AgentArtifact` / `SiteStudioSession` /
 `SiteStudioMessage` out of the mirror (see `docs/architecture-review/BOTTLENECK_REPORT.md` B-2).
