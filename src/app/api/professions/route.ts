@@ -16,8 +16,11 @@ export const dynamic = "force-dynamic";
  *
  * Tree mode (?tree=1):
  *   { families: [{ slug, label, description, order,
- *       professions: [{ slug, label, description, aliases, order,
+ *       professions: [{ slug, label, id, description, aliases, order,
  *                      specialisms: [{ slug, label }] }] }] }
+ *   — `id` is additive (O2): consumers that reference professions by row id
+ *   (the O2 candidate profile's preferredProfessionIds) read it here. The
+ *   default flat shape is unchanged (byte-compatible legacy contract).
  */
 export const GET = handler(async (req: NextRequest) => {
   const tree = new URL(req.url).searchParams.get("tree");

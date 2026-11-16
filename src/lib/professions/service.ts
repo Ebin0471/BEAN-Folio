@@ -304,6 +304,11 @@ export async function listTree(): Promise<{ families: TreeFamily[] }> {
       .map((p) => ({
         slug: p.slug,
         label: p.label,
+        // Additive (O2): the stable row id. The legacy flat list stays
+        // byte-compatible; the tree view may grow fields. Consumers that
+        // reference professions by id (e.g. the O2 candidate profile's
+        // preferredProfessionIds, which stores Profession.id) read it here.
+        id: p.id,
         description: p.description,
         aliases: parseAliases(p.aliases),
         order: p.order,

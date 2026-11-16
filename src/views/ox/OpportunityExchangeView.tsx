@@ -2,19 +2,21 @@
 
 /**
  * Opportunity Exchange — the landing/dashboard for the dedicated
- * #/opportunities destination (O1).
+ * #/opportunities destination (O1+O2).
  *
  * O1 scope: the employer-identity workspace (organizations, verification,
- * teams). Candidate-facing capabilities (opportunity profiles, discovery,
- * invitations, hiring rooms) are subsequent milestones — the landing shows
- * an honest, disabled-by-design preview instead of dead links.
+ * teams). O2 adds the candidate opportunity-profile workspace below it:
+ * career preferences, salary disclosure policy, visibility states and the
+ * three independent purpose-scoped consent controls. Discovery, matching,
+ * invitations and hiring rooms remain future milestones — nothing here
+ * implements them.
  */
 
-import { Briefcase, Hourglass, ShieldCheck } from "lucide-react";
+import { Briefcase } from "lucide-react";
 
-import { Card, CardContent } from "@/components/ui/card";
 import { SectionHeader } from "@/components/bean/SectionHeader";
 
+import OxCandidateProfileView from "./OxCandidateProfileView";
 import OxEmployerSetupView from "./OxEmployerSetupView";
 
 export default function OpportunityExchangeView() {
@@ -44,41 +46,18 @@ export default function OpportunityExchangeView() {
         <OxEmployerSetupView />
       </div>
 
-      <section aria-labelledby="ox-candidate-heading" className="mt-10">
+      <section aria-labelledby="ox-candidate-workspace-heading" className="mt-10">
         <SectionHeader
           title="For professionals"
-          description="Your opportunity passport, preferences and consent controls arrive in the next milestone."
+          description="Your opportunity passport: preferences, salary privacy and purpose-scoped consent — all in your control."
           as="h2"
         />
-        <h2 id="ox-candidate-heading" className="sr-only">
+        <h2 id="ox-candidate-workspace-heading" className="sr-only">
           For professionals
         </h2>
-        <Card className="mt-4 border-dashed">
-          <CardContent className="flex flex-col gap-3 p-6">
-            <div className="flex items-center gap-3 text-sm">
-              <span className="grid size-9 place-items-center rounded-full bg-accent text-muted-foreground">
-                <Hourglass className="size-4" aria-hidden />
-              </span>
-              <div>
-                <p className="font-medium">Candidate workspaces — coming in O2</p>
-                <p className="text-muted-foreground">
-                  Opportunity profiles, career preferences, salary privacy and purpose-scoped visibility consent.
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-3 text-sm">
-              <span className="grid size-9 place-items-center rounded-full bg-accent text-muted-foreground">
-                <ShieldCheck className="size-4" aria-hidden />
-              </span>
-              <div>
-                <p className="font-medium">Consent-first by design</p>
-                <p className="text-muted-foreground">
-                  Nothing about you becomes discoverable until you explicitly opt in — and revoking is instant.
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        <div className="mt-4">
+          <OxCandidateProfileView />
+        </div>
       </section>
     </div>
   );
