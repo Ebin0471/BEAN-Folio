@@ -115,7 +115,7 @@ export const PUT = handler(async (req: NextRequest) => {
       compensationPeriod: draft.compensationPeriod,
     };
     const violation = validateMergedProfileState(scalars);
-    if (violation) return { error: violation as string, row: null as null, created: false };
+    if (violation) return { ok: false as const, error: violation };
 
     // Loose profession refs — existence validated at the boundary.
     let professionIds: string[] = [];
@@ -129,7 +129,7 @@ export const PUT = handler(async (req: NextRequest) => {
       const unique = [...new Set(professionIds)];
       const found = await tx.profession.count({ where: { id: { in: unique } } });
       if (found !== unique.length) {
-        return { error: "PREFERRED_PROFESSION_NOT_FOUND" as string, row: null as null, created: false };
+        return { ok: false as const, error: "PREFERRED_PROFESSION_NOT_FOUND" };
       }
     }
 
@@ -162,10 +162,10 @@ export const PUT = handler(async (req: NextRequest) => {
       tx
     );
 
-    return { error: null as string | null, row, created: !existing };
+    return { ok: true as const, row, created: !existing };
   });
 
-  if (result.error) return err("Profile violates integrity constraints", 400, result.error);
+  if (!result.ok) return err("Profile violates integrity constraints", 400, result.error);
 
   return ok({ profile: serializeCandidateProfileForOwner(result.row) }, result.created ? 201 : 200);
 });
