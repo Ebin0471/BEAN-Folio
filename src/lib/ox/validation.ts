@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /**
- * Opportunity Exchange (O1) — shared zod validation.
+ * Opportunity Exchange (O1+O2) — shared zod validation.
  *
  * Every OX route validates its inputs through this module so role/status
  * vocabularies and field limits have exactly one source of truth (O0 audit
@@ -110,6 +110,138 @@ export const verificationDecisionSchema = z
   .refine((v) => v.decision !== "REJECT" || (v.rejectionReason !== undefined && v.rejectionReason.length > 0), {
     message: "A rejection reason is required",
   });
+
+// ---------- Candidate opportunity profile (O2) ----------
+
+/**
+ * O2 vocabularies — the single source of truth for the candidate state
+ * machines (schema column comments mirror THESE, not vice versa).
+ * `getCurrentConsent` and the visibility state machine in `src/lib/ox/consent.ts`
+ * consume these constants; routes consume the zod schemas.
+ */
+export const OX_VISIBILITY_STATUSES = ["HIDDEN", "ACTIVE", "PAUSED", "INVITE_ONLY"] as const;
+export const OX_EMPLOYMENT_TYPES = ["FULL_TIME", "PART_TIME", "CONTRACT", "FREELANCE", "INTERNSHIP"] as const;
+export const OX_WORK_MODES = ["ONSITE", "HYBRID", "REMOTE"] as const;
+export const OX_COMPENSATION_VISIBILITIES = ["HIDDEN", "VERIFIED_EMPLOYERS", "AFTER_INVITE", "RANGE_ONLY"] as const;
+export const OX_COMPENSATION_PERIODS = ["YEAR", "MONTH", "HOUR"] as const;
+export const OX_CONSENT_SCOPES = ["DISCOVERY", "PROFILE_ANALYTICS", "AI_PROCESSING"] as const;
+export const OX_CONSENT_STATUSES = ["GRANTED", "REVOKED"] as const;
+/** Server-owned provenance vocabulary. O2 accepts ONLY the candidate UI; the
+ * value is never read from client input (consent.ts stamps it). */
+export const OX_CONSENT_SOURCES = ["CANDIDATE_UI"] as const;
+export const OX_CONSENT_SOURCE_CANDIDATE_UI = "CANDIDATE_UI";
+
+/** Hard ceiling for salary bounds in minor units (paise): ₹10 crore. Never
+ * floats — O0 §11 D4. */
+export const OX_SALARY_MAX_PAISE = 10_000_000_000;
+
+export type OXVisibilityStatus = (typeof OX_VISIBILITY_STATUSES)[number];
+export type OXConsentScope = (typeof OX_CONSENT_SCOPES)[number];
+export type OXConsentStatus = (typeof OX_CONSENT_STATUSES)[number];
+export type OXCompensationVisibility = (typeof OX_COMPENSATION_VISIBILITIES)[number];
+export type OXCompensationPeriod = (typeof OX_COMPENSATION_PERIODS)[number];
+
+/**
+ * Partial update of the authenticated candidate's own opportunity profile.
+ * Field-local constraints only (types, formats, bounds, array caps) plus
+ * intra-payload pairwise checks; MERGED-state integrity (e.g. a salary bound
+ * requires currency+period across payload AND stored row) is enforced by
+ * `validateMergedProfileState` after the caller merges payload over the
+ * stored row — payload-local zod refinements alone cannot see stored fields.
+ * `null` clears an optional field; omitted = unchanged.
+ */
+export const updateCandidateProfileSchema = z
+  .object({
+    employmentTypes: z.array(z.enum(OX_EMPLOYMENT_TYPES)).max(5).nullish(),
+    workModes: z.array(z.enum(OX_WORK_MODES)).max(3).nullish(),
+    preferredLocations: z.array(z.string().trim().min(1).max(80)).max(10).nullish(),
+    preferredProfessionIds: z.array(z.string().trim().min(1).max(64)).max(20).nullish(),
+    experienceMinYears: z.number().int().min(0).max(50).nullish(),
+    experienceMaxYears: z.number().int().min(0).max(50).nullish(),
+    availableFrom: z.string().datetime({ offset: true }).nullish(),
+    noticePeriodDays: z.number().int().min(0).max(365).nullish(),
+    compensationVisibility: z.enum(OX_COMPENSATION_VISIBILITIES).optional(), // never cleared — always a known state
+    salaryMinPaise: z.number().int().min(0).max(OX_SALARY_MAX_PAISE).nullish(),
+    salaryMaxPaise: z.number().int().min(0).max(OX_SALARY_MAX_PAISE).nullish(),
+    salaryCurrency: z.string().regex(/^[A-Z]{3}$/, "ISO 4217 currency code required").nullish(),
+    compensationPeriod: z.enum(OX_COMPENSATION_PERIODS).nullish(),
+  })
+  .strict()
+  .refine((v) => Object.values(v).some((x) => x !== undefined), {
+    message: "Nothing to update",
+  })
+  .refine(
+    (v) =>
+      v.experienceMinYears === undefined ||
+      v.experienceMinYears === null ||
+      v.experienceMaxYears === undefined ||
+      v.experienceMaxYears === null ||
+      v.experienceMinYears <= v.experienceMaxYears,
+    { message: "experienceMinYears must be ≤ experienceMaxYears" }
+  )
+  .refine(
+    (v) =>
+      v.salaryMinPaise === undefined ||
+      v.salaryMinPaise === null ||
+      v.salaryMaxPaise === undefined ||
+      v.salaryMaxPaise === null ||
+      v.salaryMinPaise <= v.salaryMaxPaise,
+    { message: "salaryMinPaise must be ≤ salaryMaxPaise" }
+  );
+
+export type UpdateCandidateProfileInput = z.infer<typeof updateCandidateProfileSchema>;
+
+/** Grant one consent purpose. Source and version are server-owned — never
+ * accepted from the client (O0 §6.1). */
+export const grantConsentSchema = z.object({ scope: z.enum(OX_CONSENT_SCOPES) }).strict();
+
+export type GrantConsentInput = z.infer<typeof grantConsentSchema>;
+
+/** Change the authenticated candidate's own visibility state. ACTIVE is
+ * additionally consent-gated in `src/lib/ox/consent.ts` (server-side check,
+ * O0 §6.3). */
+export const changeVisibilitySchema = z.object({ status: z.enum(OX_VISIBILITY_STATUSES) }).strict();
+
+export type ChangeVisibilityInput = z.infer<typeof changeVisibilitySchema>;
+
+/**
+ * Post-merge integrity for the profile scalars that carry cross-field rules.
+ * Called with the payload merged over the stored row, BEFORE any write:
+ *   - experience/salary min ≤ max
+ *   - a salary bound requires BOTH currency and period (O0 §11 D4)
+ *   - currency/period without any bound is rejected (no orphan disclosure
+ *     metadata — data stays meaningful)
+ * Returns null when valid, otherwise a stable machine-readable reason.
+ */
+export type MergedProfileScalars = {
+  experienceMinYears: number | null;
+  experienceMaxYears: number | null;
+  salaryMinPaise: number | null;
+  salaryMaxPaise: number | null;
+  salaryCurrency: string | null;
+  compensationPeriod: string | null;
+};
+
+export function validateMergedProfileState(m: MergedProfileScalars): string | null {
+  if (
+    m.experienceMinYears !== null &&
+    m.experienceMaxYears !== null &&
+    m.experienceMinYears > m.experienceMaxYears
+  ) {
+    return "EXPERIENCE_MIN_ABOVE_MAX";
+  }
+  if (m.salaryMinPaise !== null && m.salaryMaxPaise !== null && m.salaryMinPaise > m.salaryMaxPaise) {
+    return "SALARY_MIN_ABOVE_MAX";
+  }
+  const hasBound = m.salaryMinPaise !== null || m.salaryMaxPaise !== null;
+  if (hasBound && (m.salaryCurrency === null || m.compensationPeriod === null)) {
+    return "SALARY_BOUND_REQUIRES_CURRENCY_AND_PERIOD";
+  }
+  if (!hasBound && (m.salaryCurrency !== null || m.compensationPeriod !== null)) {
+    return "SALARY_CURRENCY_PERIOD_REQUIRE_A_BOUND";
+  }
+  return null;
+}
 
 // ---------- Ownership transfer ----------
 

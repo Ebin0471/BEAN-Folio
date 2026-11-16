@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 
 /**
- * Opportunity Exchange (O1) — the ONE audit writer for OX actions.
+ * Opportunity Exchange (O1+O2) — the ONE audit writer for OX actions.
  *
  * Consolidates the platform's near-duplicated audit helpers into a single
  * OX entry point (O0 audit §1: "do not add a third near-copy"). Same shape
@@ -14,8 +14,12 @@ import { db } from "@/lib/db";
  *   ox.verification.submitted | ox.verification.approved | ox.verification.rejected
  *   ox.org.suspended | ox.org.reinstated
  *   ox.ownership.transferred
+ *   ox.profile.created | ox.profile.updated          (O2)
+ *   ox.visibility.changed                            (O2)
+ *   ox.consent.granted | ox.consent.revoked          (O2; O0 §6.4)
  *
  * Target types: EMPLOYER_ORGANIZATION | EMPLOYER_MEMBERSHIP | EMPLOYER_VERIFICATION
+ *               | CANDIDATE_OPPORTUNITY_PROFILE | CANDIDATE_VISIBILITY_CONSENT (O2)
  */
 export const OX_AUDIT_ACTIONS = {
   orgCreated: "ox.org.created",
@@ -30,12 +34,19 @@ export const OX_AUDIT_ACTIONS = {
   orgSuspended: "ox.org.suspended",
   orgReinstated: "ox.org.reinstated",
   ownershipTransferred: "ox.ownership.transferred",
+  profileCreated: "ox.profile.created",
+  profileUpdated: "ox.profile.updated",
+  visibilityChanged: "ox.visibility.changed",
+  consentGranted: "ox.consent.granted",
+  consentRevoked: "ox.consent.revoked",
 } as const;
 
 export const OX_TARGET = {
   organization: "EMPLOYER_ORGANIZATION",
   membership: "EMPLOYER_MEMBERSHIP",
   verification: "EMPLOYER_VERIFICATION",
+  candidateProfile: "CANDIDATE_OPPORTUNITY_PROFILE",
+  candidateConsent: "CANDIDATE_VISIBILITY_CONSENT",
 } as const;
 
 /** Either the global Prisma client or an interactive-transaction client. */
