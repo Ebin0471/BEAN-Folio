@@ -139,9 +139,13 @@ export async function grantConsent(
 }
 
 export type RevokeConsentResult = {
-  /** false = no current grant existed (already revoked / never granted /
-   * expired) — nothing was written. */
+  /** false = no current grant existed — nothing was written. */
   revoked: boolean;
+  /** When `revoked` is false, WHY nothing was revocable: NO_ROW (never
+   * granted), REVOKED (latest lifecycle already revoked), EXPIRED (grant
+   * lapsed). "REVOKED_NOW" on success. Routes surface this truthfully
+   * instead of fabricating success. */
+  reason: "NO_ROW" | "REVOKED" | "EXPIRED" | "REVOKED_NOW";
   row: CandidateVisibilityConsent | null;
   /** true when the DISCOVERY revocation also hid the profile in this
    * transaction (O0 §6.4 b). */
@@ -168,7 +172,7 @@ export async function revokeConsent(
     const current = await getCurrentConsent(params.userId, params.scope, tx);
     if (!current.hasCurrentConsent) {
       // NO_ROW / REVOKED / EXPIRED — nothing revocable; write nothing.
-      return { revoked: false, row: current.row, hidProfile: false };
+      return { revoked: false, reason: current.reason, row: current.row, hidProfile: false };
     }
     const row = await tx.candidateVisibilityConsent.update({
       where: { id: current.row.id },
@@ -203,7 +207,7 @@ export async function revokeConsent(
       { scope: params.scope, consentVersion: row.consentVersion, hidProfile },
       tx
     );
-    return { revoked: true, row, hidProfile };
+    return { revoked: true, reason: "REVOKED_NOW", row, hidProfile };
   };
   const result = client ? await run(client) : await db.$transaction(run);
   if (result.revoked) {
