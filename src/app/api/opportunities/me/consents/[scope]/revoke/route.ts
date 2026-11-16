@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { getSessionUser } from "@/lib/auth";
-import { err, ERR, handler, rateLimitShared, sameOriginOk } from "@/lib/api-helpers";
+import { ok, err, ERR, handler, rateLimitShared, sameOriginOk } from "@/lib/api-helpers";
 import { serializeConsent } from "@/lib/ox/dto";
 import { OX_CONSENT_SCOPES, type OXConsentScope } from "@/lib/ox/validation";
 import { revokeConsent } from "@/lib/ox/consent";

@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { getSessionUser } from "@/lib/auth";
-import { err, ERR, handler, parseBody, rateLimitShared, sameOriginOk } from "@/lib/api-helpers";
+import { ok, err, ERR, handler, parseBody, rateLimitShared, sameOriginOk } from "@/lib/api-helpers";
 import { serializeCandidateProfileForOwner } from "@/lib/ox/dto";
 import { changeVisibilitySchema } from "@/lib/ox/validation";
 import { changeProfileVisibility } from "@/lib/ox/consent";
