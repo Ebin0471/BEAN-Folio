@@ -121,6 +121,9 @@ model User {
   employerOrganizationsCreated EmployerOrganization[] @relation("employerOrgCreator")
   employerMemberships          EmployerMembership[]   @relation("employerMemberships")
   employerVerificationReviews  EmployerVerification[] @relation("employerVerifications")
+  // ---------- Opportunity Exchange (O2, additive) ----------
+  candidateOpportunityProfile CandidateOpportunityProfile?  @relation("candidateOpportunityProfile")
+  candidateVisibilityConsents CandidateVisibilityConsent[]  @relation("candidateVisibilityConsents")
 }
 
 model Session {
@@ -1780,4 +1783,74 @@ model EmployerVerification {
   reviewer     User?                @relation("employerVerifications", fields: [reviewerUserId], references: [id], onDelete: SetNull)
 
   @@index([organizationId, status])
+}
+
+/// One candidate opportunity profile per User — the candidate-side surface of
+/// the Opportunity Exchange (O2). Creating a profile NEVER makes a candidate
+/// discoverable: `visibilityStatus` defaults to HIDDEN, and `ACTIVE` requires
+/// a current, purpose-scoped DISCOVERY consent grant enforced server-side on
+/// every future read (O0 §6).
+model CandidateOpportunityProfile {
+  id                     String    @id @default(cuid())
+  userId                 String    @unique
+  user                   User      @relation("candidateOpportunityProfile", fields: [userId], references: [id], onDelete: Cascade)
+
+  // Visibility state machine (O0 §6.3). ACTIVE is the only consent-gated
+  // state; PAUSED freezes existing matches; INVITE_ONLY restricts extended
+  // info to approved organizations (enforced from O4 onward).
+  visibilityStatus       String    @default("HIDDEN") // HIDDEN | ACTIVE | PAUSED | INVITE_ONLY
+
+  // Preferences — JSON string arrays (SQLite house convention, `User.tools`
+  // precedent); app-layer filtering is the documented v1 SQLite-scale
+  // tradeoff (O0 §3). Vocabularies are zod-enforced at the boundary (src/lib/ox).
+  employmentTypes        String? // JSON string[]: FULL_TIME | PART_TIME | CONTRACT | FREELANCE | INTERNSHIP
+  workModes              String? // JSON string[]: ONSITE | HYBRID | REMOTE
+  preferredLocations     String? // JSON string[] of free-text location labels (max 10 x 80 chars)
+  preferredProfessionIds String? // JSON string[] of Profession.id — loose ref, existence-validated at the boundary
+
+  experienceMinYears     Int? // 0-50, min <= max (zod-refined)
+  experienceMaxYears     Int?
+  availableFrom          DateTime?
+  noticePeriodDays       Int? // 0-365
+
+  // Salary privacy (O0 §11 D4): Int minor units (paise) + ISO 4217 currency +
+  // explicit period. Defaults to HIDDEN and is serialized only per the
+  // candidate's disclosure policy for the exact requesting context. Never
+  // floating-point.
+  compensationVisibility String  @default("HIDDEN") // HIDDEN | VERIFIED_EMPLOYERS | AFTER_INVITE | RANGE_ONLY
+  salaryMinPaise         Int? // 0 <= min <= max <= 10000000000
+  salaryMaxPaise         Int?
+  salaryCurrency         String? // ISO 4217 (^[A-Z]{3}$) — required when either salary bound is set
+  compensationPeriod     String? // YEAR | MONTH | HOUR — required when either salary bound is set
+
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  @@index([visibilityStatus])
+}
+
+/// Purpose-scoped consent ledger (O2; O0 §6.1). Purposes are separate rows —
+/// never one global boolean. Append-lifecycle history: one row per grant;
+/// revocation updates that row in place (status REVOKED + revokedAt) and a
+/// re-grant creates a NEW row, so no prior consent state is ever overwritten.
+/// Current consent = the latest row per (user, scope); it is valid only while
+/// status is GRANTED and (expiresAt is null or in the future). No row at all
+/// also means no consent.
+model CandidateVisibilityConsent {
+  id             String    @id @default(cuid())
+  userId         String
+  user           User      @relation("candidateVisibilityConsents", fields: [userId], references: [id], onDelete: Cascade)
+  scope          String // DISCOVERY | PROFILE_ANALYTICS | AI_PROCESSING — independent purposes
+  status         String // GRANTED | REVOKED — one row per grant lifecycle
+  consentVersion String // server-owned vocabulary version recorded at grant time
+  source         String // server-owned provenance (e.g. CANDIDATE_UI)
+  grantedAt      DateTime  @default(now())
+  revokedAt      DateTime?
+  expiresAt      DateTime? // optional; an expired grant is not a current consent
+
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([userId, scope, createdAt]) // current-consent lookup: latest row per (user, scope)
+  @@index([userId, status])
 }
