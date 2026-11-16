@@ -203,9 +203,17 @@ publishes.
 
 - Published via `scripts/ops/bean-sync.sh` (MAIN-ONLY, plain fast-forward,
   secret + runtime-data scans enforced, remote-SHA verification built in).
-- Independently verified: `git ls-remote origin main` —
-  **PENDING-PUSH** (this section is finalized immediately after the verified
-  push; see the addendum appended below).
+- Push executed: `4f8798c..db5e385  main -> main` — plain push, no force,
+  no history rewrite.
+- **Published tip: `db5e3856e75bac5276084c35878c9a771e1c0672`**
+- bean-sync verification: "remote SHA verified: db5e3856e75bac5276084c35878c9a771e1c0672 (branch main)".
+- Independent verification: `git ls-remote origin main` →
+  `db5e3856e75bac5276084c35878c9a771e1c0672  refs/heads/main` — **matches
+  local main exactly**.
+- Published lineage (oldest→newest): `b7fc00b` (schema) → `380e9ce` (backend)
+  → `00cefea` (UI) → `f874490` (tests) → `db5e385` (this report). The
+  owner-approved feature branch `feat/ox-o1-employer-identity` points at the
+  same verified tip (merge path = identity fast-forward).
 
 ## 11. Handoff to O2
 
