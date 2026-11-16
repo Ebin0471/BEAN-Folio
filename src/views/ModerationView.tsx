@@ -27,6 +27,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import { EmptyState } from "@/components/bean/EmptyState";
 import { Spinner } from "@/components/bean/Spinner";
+import OxAdminVerificationPanel from "@/views/ox/OxAdminVerificationPanel";
 import { api, formatDate } from "@/lib/client";
 import { navigate } from "@/lib/hash-router";
 import { useSession } from "@/lib/session";
@@ -461,6 +462,11 @@ export default function ModerationView() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Opportunity Exchange (O1): the manual employer-verification pilot
+          lives in the same Trust & Safety workspace — the community reports
+          queue above is untouched. Admin-only, enforced server-side too. */}
+      {isAdmin && <OxAdminVerificationPanel />}
     </div>
   );
 }

@@ -7,11 +7,13 @@ import {
   Bell,
   Bookmark,
   Bot,
+  Briefcase,
   Compass,
   FolderHeart,
   LayoutGrid,
   Lock,
   LogOut,
+  MoreHorizontal,
   Search,
   Settings,
   Sparkles,
@@ -23,6 +25,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
@@ -77,6 +80,7 @@ import StaticView from "@/views/StaticView";
 import ModerationView from "@/views/ModerationView";
 import WebsiteBuilderView from "@/views/WebsiteBuilderView";
 import LaxiiView from "@/views/LaxiiView";
+import OpportunityExchangeView from "@/views/ox/OpportunityExchangeView";
 
 // ---------------------------------------------------------------- nav config
 
@@ -84,6 +88,9 @@ const NAV = [
   { href: "/", label: "Discover", icon: Compass },
   { href: "/explore", label: "Explore", icon: Search },
   { href: "/studio", label: "Studio", icon: SquarePen },
+  // Opportunity Exchange (O1) — a separate, first-class product pillar: never
+  // nested inside Discover, Explore, Folio or Connect. Own route, own icon.
+  { href: "/opportunities", label: "Opportunities", icon: Briefcase },
   { href: "/intelligence", label: "RIISHE", icon: Bot },
   { href: "/laxii", label: "LAXII", icon: Sparkles },
   { href: "/giftz", label: "GIFTZ", icon: TerminalSquare },
@@ -98,6 +105,37 @@ const MOBILE_NAV: { href: string; label: string; icon: React.ComponentType<{ cla
   { href: "/laxii", label: "LAXII", icon: Sparkles, primary: true },
   { href: "/giftz", label: "GIFTZ", icon: TerminalSquare },
   { href: "/connect", label: "Connect", icon: Users },
+];
+
+// Mobile overflow ("More") destinations — the O1 owner directive forbids
+// squeezing eight destinations into unusable tap targets, so the bottom bar
+// keeps the established seven one-tap destinations and adds ONE "More" entry
+// whose sheet lists the remaining top-level destinations. Opportunity
+// Exchange leads that list with its own icon and description: it is a
+// top-level pillar reached through the overflow, not nested inside any
+// existing destination. Every entry keeps its own icon + route.
+const MOBILE_MORE_ROOTS = new Set(["opportunities", "folio", "collections", "insights", "settings", "moderation"]);
+const MOBILE_MORE_ITEMS: {
+  href: string;
+  label: string;
+  description?: string;
+  icon: React.ComponentType<{ className?: string }>;
+  emphasize?: boolean;
+  adminOnly?: boolean;
+}[] = [
+  {
+    href: "/opportunities",
+    label: "Opportunity Exchange",
+    description: "Employer organizations, verification, hiring",
+    icon: Briefcase,
+    emphasize: true,
+  },
+  { href: "/folio", label: "My Folio", icon: LayoutGrid },
+  { href: "/studio", label: "Create Studio", icon: SquarePen },
+  { href: "/collections", label: "Saves & collections", icon: FolderHeart },
+  { href: "/insights", label: "Insights", icon: BarChart3 },
+  { href: "/settings", label: "Trust & settings", icon: Settings },
+  { href: "/moderation", label: "Moderation review", icon: ShieldCheck, adminOnly: true },
 ];
 
 // ---------------------------------------------------------------- helpers
@@ -282,17 +320,25 @@ function Header() {
 
 function MobileNav() {
   const { segments } = useHashRouteSafe();
+  const { user } = useSession();
+  const [moreOpen, setMoreOpen] = useState(false);
   const active = (href: string) => {
     const target = href === "/" ? [] : href.slice(1).split("/");
     return href === "/" ? segments.length === 0 : segments[0] === target[0];
   };
+  // The "More" entry lights up when the current route lives in the overflow
+  // sheet (Opportunity Exchange, Folio, Insights, Trust & settings, …).
+  const moreActiveRoot = segments.length > 0 ? segments[0] : "";
+  const moreActive = MOBILE_MORE_ROOTS.has(moreActiveRoot);
+  const moreItems = MOBILE_MORE_ITEMS.filter((item) => !item.adminOnly || user?.role === "ADMIN");
+  const closeMore = () => setMoreOpen(false);
   return (
     <nav
       aria-label="Primary mobile"
       className="glass-surface fixed inset-x-0 bottom-0 z-40 border-t border-border/70 md:hidden"
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
     >
-      <div className="grid grid-cols-7">
+      <div className="grid grid-cols-8">
         {MOBILE_NAV.map((item) => (
           <a
             key={item.href}
@@ -309,7 +355,59 @@ function MobileNav() {
             {item.label}
           </a>
         ))}
+        <button
+          type="button"
+          onClick={() => setMoreOpen(true)}
+          aria-haspopup="dialog"
+          className={cn(
+            "flex flex-col items-center gap-1 py-2.5 text-[10px] transition-colors",
+            moreActive ? "text-primary" : "text-muted-foreground"
+          )}
+        >
+          <span className="grid size-9 place-items-center rounded-full">
+            <MoreHorizontal className="size-4" aria-hidden />
+          </span>
+          More
+        </button>
       </div>
+      <Sheet open={moreOpen} onOpenChange={setMoreOpen}>
+        <SheetContent side="bottom" className="rounded-t-2xl px-4 pb-10 pt-4" aria-describedby={undefined}>
+          <SheetHeader className="sr-only">
+            <SheetTitle>More destinations</SheetTitle>
+          </SheetHeader>
+          <nav aria-label="More destinations" className="flex flex-col gap-1">
+            {moreItems.map((item) => (
+              <a
+                key={item.href}
+                href={`#${item.href}`}
+                onClick={closeMore}
+                className={cn(
+                  "flex min-h-[56px] items-center gap-3 rounded-lg px-3 py-2 transition-colors hover:bg-accent",
+                  item.emphasize ? "font-medium text-primary" : "text-foreground"
+                )}
+              >
+                <span
+                  className={cn(
+                    "grid size-9 shrink-0 place-items-center rounded-full",
+                    item.emphasize ? "bg-gold-soft text-primary" : "bg-accent text-muted-foreground"
+                  )}
+                >
+                  <item.icon className="size-4" aria-hidden />
+                </span>
+                <span className="flex min-w-0 flex-col">
+                  <span className="text-sm">{item.label}</span>
+                  {item.description && (
+                    <span className="truncate text-xs text-muted-foreground">{item.description}</span>
+                  )}
+                </span>
+                {moreActiveRoot === item.href.slice(1) && (
+                  <span className="ml-auto text-xs font-medium text-primary">Current</span>
+                )}
+              </a>
+            ))}
+          </nav>
+        </SheetContent>
+      </Sheet>
     </nav>
   );
 }
@@ -352,6 +450,7 @@ const PRIVATE_ROUTE_LABELS: Record<string, string> = {
   onboarding: "Set up your folio",
   folio: "My Folio",
   studio: "Studio",
+  opportunities: "Opportunity Exchange",
   intelligence: "RIISHE",
   laxii: "LAXII", // M20 audit fix: was missing — tab showed "Page not found"
   giftz: "GIFTZ",
@@ -662,6 +761,11 @@ function Router() {
           );
         }
         return <NotFound />;
+      case "opportunities":
+        // Opportunity Exchange (O1) — the employer-identity workspace: a
+        // first-class pillar, auth-gated like every private workspace route.
+        // Candidate surfaces, discovery and hiring rooms arrive in O2+.
+        return <RequireAuth label="Opportunity Exchange"><OpportunityExchangeView /></RequireAuth>;
       case "intelligence":
         return <RequireAuth label="RIISHE"><IntelligenceView /></RequireAuth>;
       case "laxii":
