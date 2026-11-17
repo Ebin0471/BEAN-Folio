@@ -227,3 +227,27 @@ warning) · `docs/deployment.md` §3.3/§3.7/§3.8 (production DB, backups, roll
 `docs/database.md` §6 (engine-conversion matrix) · `docs/ops/RUNBOOK.md` (deploy + incident
 recovery) · `docs/ops/RUNBOOK-QUEUE.md` (queue internals, DLQ replay) ·
 `scripts/backup-db.ts` / `scripts/restore-db.ts` (implementation headers)
+
+## 8. O2.1 registration — salary BigInt widening (PENDING production application)
+
+Defect O2-ACC-01 remediation: `CandidateOpportunityProfile.salaryMinPaise` /
+`salaryMaxPaise` widened `Int? → BigInt?` in both schemas (parity gate OK,
+90 models). The SQLite variant was applied only to the isolated QA database
+(2026-11-17, verified backups + restore drill). The PostgreSQL variant is
+**NOT applied** and is a **deployment prerequisite** for the O2.1 application
+build — the app boots and passes `/api/ready` against an unmigrated database,
+but over-Int32 salary writes fail with raw out-of-range errors, and neither
+`/api/ready` nor the §2 Step 6 readiness probe can detect the column-type
+mismatch (existence-only checks).
+
+| Artifact | Path |
+| --- | --- |
+| SQLite migration SQL (exact, Prisma-generated) | `docs/deployment/o2.1-salary-bigint-sqlite-migration.sql` |
+| PostgreSQL widening DDL (exact, Prisma-generated) | `docs/deployment/o2.1-salary-bigint-postgres-migration.sql` |
+| Registration: execution order, backups, verification queries, rollback | `docs/ops/O2_1_MIGRATION_REGISTRATION.md` |
+
+Unlike the additive flow in §2, this change is a column-type widening
+(`ALTER COLUMN … SET DATA TYPE BIGINT`) — destructive-adjacent per the §2
+Step 4 review rule; apply through the §4 approval checklist, including the
+registration doc's mandatory `information_schema` column-type gate before
+deploying the new build.

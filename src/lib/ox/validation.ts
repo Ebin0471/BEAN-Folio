@@ -132,8 +132,39 @@ export const OX_CONSENT_SOURCES = ["CANDIDATE_UI"] as const;
 export const OX_CONSENT_SOURCE_CANDIDATE_UI = "CANDIDATE_UI";
 
 /** Hard ceiling for salary bounds in minor units (paise): ₹10 crore. Never
- * floats — O0 §11 D4. */
+ * floats — O0 §11 D4. Stored as Prisma BigInt since O2.1 (defect O2-ACC-01):
+ * this ceiling exceeds the 32-bit Int range (2,147,483,647), so Int columns
+ * silently corrupted rows for otherwise-valid payloads. */
 export const OX_SALARY_MAX_PAISE = 10_000_000_000;
+
+/**
+ * O2.1 (defect O2-ACC-01) — the single checked boundary between API JSON
+ * numbers and BigInt storage. The approved salary domain (integer
+ * 0..OX_SALARY_MAX_PAISE) sits far below Number.MAX_SAFE_INTEGER, so any
+ * approved value converts exactly in both directions — but ONLY after the
+ * guards below pass. Neither direction ever rounds, truncates or clamps:
+ * a value outside the approved domain fails loudly (HTTP 500 via the route
+ * handler) rather than being coerced or silently withheld.
+ */
+
+/** Validated API number → native BigInt for Prisma writes (checked). */
+export function salaryPaiseToStorage(value: number | null): bigint | null {
+  if (value === null) return null;
+  if (!Number.isSafeInteger(value) || value < 0 || value > OX_SALARY_MAX_PAISE) {
+    throw new Error("SALARY_PAISE_OUT_OF_APPROVED_BOUNDS");
+  }
+  return BigInt(value);
+}
+
+/** Stored BigInt → API JSON number — exact, checked in both directions. */
+export function salaryPaiseFromStorage(value: bigint | null): number | null {
+  if (value === null) return null;
+  const asNumber = Number(value);
+  if (!Number.isSafeInteger(asNumber) || asNumber < 0 || asNumber > OX_SALARY_MAX_PAISE) {
+    throw new Error("SALARY_PAISE_OUT_OF_APPROVED_BOUNDS");
+  }
+  return asNumber;
+}
 
 export type OXVisibilityStatus = (typeof OX_VISIBILITY_STATUSES)[number];
 export type OXConsentScope = (typeof OX_CONSENT_SCOPES)[number];
@@ -161,8 +192,24 @@ export const updateCandidateProfileSchema = z
     availableFrom: z.string().datetime({ offset: true }).nullish(),
     noticePeriodDays: z.number().int().min(0).max(365).nullish(),
     compensationVisibility: z.enum(OX_COMPENSATION_VISIBILITIES).optional(), // never cleared — always a known state
-    salaryMinPaise: z.number().int().min(0).max(OX_SALARY_MAX_PAISE).nullish(),
-    salaryMaxPaise: z.number().int().min(0).max(OX_SALARY_MAX_PAISE).nullish(),
+    // Integer, non-negative, within the approved ceiling, and (explicitly)
+    // a safe JavaScript integer — the preconditions the checked BigInt
+    // conversion (salaryPaiseToStorage) relies on. The ceiling is far below
+    // Number.MAX_SAFE_INTEGER, so approved values are always exact.
+    salaryMinPaise: z
+      .number()
+      .int()
+      .min(0)
+      .max(OX_SALARY_MAX_PAISE)
+      .refine(Number.isSafeInteger, "Salary value must be a safe JavaScript integer")
+      .nullish(),
+    salaryMaxPaise: z
+      .number()
+      .int()
+      .min(0)
+      .max(OX_SALARY_MAX_PAISE)
+      .refine(Number.isSafeInteger, "Salary value must be a safe JavaScript integer")
+      .nullish(),
     salaryCurrency: z.string().regex(/^[A-Z]{3}$/, "ISO 4217 currency code required").nullish(),
     compensationPeriod: z.enum(OX_COMPENSATION_PERIODS).nullish(),
   })
@@ -206,7 +253,8 @@ export type ChangeVisibilityInput = z.infer<typeof changeVisibilitySchema>;
 
 /**
  * Post-merge integrity for the profile scalars that carry cross-field rules.
- * Called with the payload merged over the stored row, BEFORE any write:
+ * Called with the payload merged over the stored row (salary values already
+ * converted back to numbers through the checked boundary), BEFORE any write:
  *   - experience/salary min ≤ max
  *   - a salary bound requires BOTH currency and period (O0 §11 D4)
  *   - currency/period without any bound is rejected (no orphan disclosure

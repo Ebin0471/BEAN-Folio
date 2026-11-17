@@ -7,6 +7,8 @@ import { auditOX, OX_AUDIT_ACTIONS, OX_TARGET } from "@/lib/ox/audit";
 import {
   updateCandidateProfileSchema,
   validateMergedProfileState,
+  salaryPaiseToStorage,
+  salaryPaiseFromStorage,
   type UpdateCandidateProfileInput,
   type MergedProfileScalars,
 } from "@/lib/ox/validation";
@@ -31,8 +33,11 @@ export const dynamic = "force-dynamic";
  * integrity (min≤max, bound⇔currency+period) is enforced AFTER merging the
  * payload over the stored row — payload-local zod alone cannot see stored
  * fields — and preferredProfessionIds are existence-validated at the
- * boundary (schema contract). Salary is stored as Int paise + ISO 4217 +
- * explicit period, never floats (O0 §11 D4). Every write is audited
+ * boundary (schema contract). Salary is stored as BigInt paise (O2.1) +
+ * ISO 4217 + explicit period, never floats (O0 §11 D4): validated API
+ * numbers cross into Prisma and back ONLY through the checked conversion
+ * helpers (salaryPaiseToStorage / salaryPaiseFromStorage) — the JSON
+ * contract stays numeric. Every write is audited
  * (ox.profile.created | ox.profile.updated). The response uses the owner
  * serializer — the candidate's complete self view.
  */
@@ -65,6 +70,12 @@ export const PUT = handler(async (req: NextRequest) => {
       where: { userId: user.id },
     });
 
+    // O2.1: stored salary scalars arrive as BigInt; convert through the
+    // checked boundary so the merged draft operates on approved, exactly
+    // representable API numbers (throws → 500 on an out-of-domain row).
+    const existingSalaryMin = salaryPaiseFromStorage(existing?.salaryMinPaise ?? null);
+    const existingSalaryMax = salaryPaiseFromStorage(existing?.salaryMaxPaise ?? null);
+
     // Merge payload over the stored row: absent = keep, null = clear.
     const draft = {
       employmentTypes: existing?.employmentTypes ?? null,
@@ -76,8 +87,8 @@ export const PUT = handler(async (req: NextRequest) => {
       availableFrom: existing?.availableFrom ?? null,
       noticePeriodDays: existing?.noticePeriodDays ?? null,
       compensationVisibility: existing?.compensationVisibility ?? "HIDDEN",
-      salaryMinPaise: existing?.salaryMinPaise ?? null,
-      salaryMaxPaise: existing?.salaryMaxPaise ?? null,
+      salaryMinPaise: existingSalaryMin,
+      salaryMaxPaise: existingSalaryMax,
       salaryCurrency: existing?.salaryCurrency ?? null,
       compensationPeriod: existing?.compensationPeriod ?? null,
     };
@@ -143,8 +154,10 @@ export const PUT = handler(async (req: NextRequest) => {
       availableFrom: draft.availableFrom,
       noticePeriodDays: draft.noticePeriodDays,
       compensationVisibility: draft.compensationVisibility,
-      salaryMinPaise: draft.salaryMinPaise,
-      salaryMaxPaise: draft.salaryMaxPaise,
+      // O2.1: the ONLY place API numbers cross into Prisma — validated
+      // values convert to native BigInt here (checked, never clamped).
+      salaryMinPaise: salaryPaiseToStorage(draft.salaryMinPaise),
+      salaryMaxPaise: salaryPaiseToStorage(draft.salaryMaxPaise),
       salaryCurrency: draft.salaryCurrency,
       compensationPeriod: draft.compensationPeriod,
     };

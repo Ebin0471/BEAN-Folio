@@ -1,4 +1,5 @@
 import type { CandidateOpportunityProfile, CandidateVisibilityConsent, EmployerMembership, EmployerOrganization, User } from "@prisma/client";
+import { salaryPaiseFromStorage } from "@/lib/ox/validation";
 
 /**
  * Opportunity Exchange (O1+O2) — response serializers.
@@ -15,6 +16,11 @@ import type { CandidateOpportunityProfile, CandidateVisibilityConsent, EmployerM
  *    salary scalars never appear as loose top-level fields, so "absent" is
  *    unambiguous. `compensationVisibility` (the POLICY) is never serialized
  *    to viewers — only its RESULT is.
+ *
+ * O2.1: salary scalars are BigInt at the storage layer; every serialization
+ * point converts through `salaryPaiseFromStorage` (bounds + safe-integer
+ * checked) so the JSON contract stays numeric — BigInt values are never
+ * emitted raw, rounded, truncated or clamped.
  */
 
 export function serializeOrg(org: EmployerOrganization): Record<string, unknown> {
@@ -119,7 +125,9 @@ export type CandidateViewerContext = {
  *   RANGE_ONLY       → the range is disclosable to any requester
  * Returns null (withholding) unless the exact context permits disclosure,
  * and only when the stored row is complete (bounds + currency + period) —
- * a partial salary row is never serialized.
+ * a partial salary row is never serialized. O2.1: the bounds cross from
+ * BigInt storage through `salaryPaiseFromStorage` (bounds + safe-integer
+ * checked, never clamped) so the emitted JSON numbers are exact.
  */
 export function compensationForViewer(
   profile: Pick<
@@ -128,12 +136,6 @@ export function compensationForViewer(
   >,
   ctx: CandidateViewerContext
 ): { currency: string; period: string; minPaise: number; maxPaise: number } | null {
-  const complete =
-    profile.salaryCurrency !== null &&
-    profile.compensationPeriod !== null &&
-    profile.salaryMinPaise !== null &&
-    profile.salaryMaxPaise !== null;
-  if (!complete) return null;
   let permitted = false;
   switch (profile.compensationVisibility) {
     case "VERIFIED_EMPLOYERS":
@@ -151,11 +153,24 @@ export function compensationForViewer(
       break;
   }
   if (!permitted) return null;
+  // O2.1: checked BigInt → JSON-number conversion. An incomplete row (any
+  // null scalar) still withholds (null); an out-of-domain stored value
+  // throws (500) instead of being coerced.
+  const minPaise = salaryPaiseFromStorage(profile.salaryMinPaise);
+  const maxPaise = salaryPaiseFromStorage(profile.salaryMaxPaise);
+  if (
+    profile.salaryCurrency === null ||
+    profile.compensationPeriod === null ||
+    minPaise === null ||
+    maxPaise === null
+  ) {
+    return null;
+  }
   return {
-    currency: profile.salaryCurrency as string,
-    period: profile.compensationPeriod as string,
-    minPaise: profile.salaryMinPaise as number,
-    maxPaise: profile.salaryMaxPaise as number,
+    currency: profile.salaryCurrency,
+    period: profile.compensationPeriod,
+    minPaise,
+    maxPaise,
   };
 }
 
@@ -174,8 +189,9 @@ export function serializeCandidateProfileForOwner(profile: CandidateOpportunityP
     availableFrom: profile.availableFrom ? profile.availableFrom.toISOString() : null,
     noticePeriodDays: profile.noticePeriodDays,
     compensationVisibility: profile.compensationVisibility,
-    salaryMinPaise: profile.salaryMinPaise,
-    salaryMaxPaise: profile.salaryMaxPaise,
+    // O2.1: checked BigInt → JSON-number conversion (exact, approved domain).
+    salaryMinPaise: salaryPaiseFromStorage(profile.salaryMinPaise),
+    salaryMaxPaise: salaryPaiseFromStorage(profile.salaryMaxPaise),
     salaryCurrency: profile.salaryCurrency,
     compensationPeriod: profile.compensationPeriod,
     createdAt: profile.createdAt.toISOString(),
