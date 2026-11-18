@@ -17,6 +17,7 @@ import { Briefcase } from "lucide-react";
 import { SectionHeader } from "@/components/bean/SectionHeader";
 
 import OxCandidateProfileView from "./OxCandidateProfileView";
+import OxEmployerOpportunitiesPanel from "./OxEmployerOpportunitiesPanel";
 import OxEmployerSetupView from "./OxEmployerSetupView";
 
 export default function OpportunityExchangeView() {
@@ -45,6 +46,13 @@ export default function OpportunityExchangeView() {
       <div className="mt-4">
         <OxEmployerSetupView />
       </div>
+
+      <section aria-labelledby="ox-employer-opportunities-heading" className="mt-10">
+        <h2 id="ox-employer-opportunities-heading" className="sr-only">
+          Opportunity listings
+        </h2>
+        <OxEmployerOpportunitiesPanel />
+      </section>
 
       <section aria-labelledby="ox-candidate-workspace-heading" className="mt-10">
         <SectionHeader

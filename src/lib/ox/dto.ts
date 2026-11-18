@@ -241,3 +241,85 @@ export function serializeConsent(row: CandidateVisibilityConsent): Record<string
     updatedAt: row.updatedAt.toISOString(),
   };
 }
+
+// ---------- Employer opportunities (O3) ----------
+
+/** One attached skill chip as stored on an Opportunity (taxonomy metadata
+ * included for display; the skill id remains the relational reference). */
+export type OpportunitySkillRow = {
+  skillId: string;
+  kind: string;
+  skill: { id: string; slug: string; label: string };
+};
+
+export function serializeOpportunitySkill(row: OpportunitySkillRow): Record<string, unknown> {
+  return {
+    skillId: row.skillId,
+    slug: row.skill.slug,
+    label: row.skill.label,
+    kind: row.kind,
+  };
+}
+
+/**
+ * The employer-side (and admin review) view of one opportunity. Owner-scope
+ * serializer: this shape is ONLY returned to the opportunity's own
+ * organization members and to platform admins — it is not a public listing
+ * (public discovery is O4+ and will get its own disclosure-matrix
+ * serializer). Salary crosses from BigInt storage through the checked
+ * O2.1 boundary — JSON numbers stay exact, never rounded or clamped.
+ */
+export function serializeOpportunity(
+  opportunity: {
+    id: string;
+    organizationId: string;
+    createdByUserId: string | null;
+    title: string;
+    description: string;
+    status: string;
+    professionId: string | null;
+    location: string | null;
+    employmentType: string | null;
+    workMode: string | null;
+    positions: number | null;
+    salaryMinPaise: bigint | null;
+    salaryMaxPaise: bigint | null;
+    salaryCurrency: string | null;
+    compensationPeriod: string | null;
+    submittedAt: Date | null;
+    publishedAt: Date | null;
+    publishedByUserId: string | null;
+    closedAt: Date | null;
+    rejectionReason: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+  },
+  skills?: OpportunitySkillRow[]
+): Record<string, unknown> {
+  return {
+    id: opportunity.id,
+    organizationId: opportunity.organizationId,
+    createdByUserId: opportunity.createdByUserId,
+    title: opportunity.title,
+    description: opportunity.description,
+    status: opportunity.status,
+    professionId: opportunity.professionId,
+    location: opportunity.location,
+    employmentType: opportunity.employmentType,
+    workMode: opportunity.workMode,
+    positions: opportunity.positions,
+    // O2.1: checked BigInt → JSON-number conversion (exact, approved domain).
+    salaryMinPaise: salaryPaiseFromStorage(opportunity.salaryMinPaise),
+    salaryMaxPaise: salaryPaiseFromStorage(opportunity.salaryMaxPaise),
+    salaryCurrency: opportunity.salaryCurrency,
+    compensationPeriod: opportunity.compensationPeriod,
+    submittedAt: opportunity.submittedAt ? opportunity.submittedAt.toISOString() : null,
+    publishedAt: opportunity.publishedAt ? opportunity.publishedAt.toISOString() : null,
+    publishedByUserId: opportunity.publishedByUserId,
+    closedAt: opportunity.closedAt ? opportunity.closedAt.toISOString() : null,
+    rejectionReason: opportunity.rejectionReason,
+    createdAt: opportunity.createdAt.toISOString(),
+    updatedAt: opportunity.updatedAt.toISOString(),
+    ...(skills ? { skills: skills.map(serializeOpportunitySkill) } : {}),
+  };
+}

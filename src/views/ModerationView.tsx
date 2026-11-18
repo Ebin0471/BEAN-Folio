@@ -27,6 +27,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import { EmptyState } from "@/components/bean/EmptyState";
 import { Spinner } from "@/components/bean/Spinner";
+import OxAdminOpportunityPanel from "@/views/ox/OxAdminOpportunityPanel";
 import OxAdminVerificationPanel from "@/views/ox/OxAdminVerificationPanel";
 import { api, formatDate } from "@/lib/client";
 import { navigate } from "@/lib/hash-router";
@@ -467,6 +468,10 @@ export default function ModerationView() {
           lives in the same Trust & Safety workspace — the community reports
           queue above is untouched. Admin-only, enforced server-side too. */}
       {isAdmin && <OxAdminVerificationPanel />}
+
+      {/* Opportunity Exchange (O3): the opportunity review queue mounts in
+          the same admin-only workspace, below the verification panel. */}
+      {isAdmin && <OxAdminOpportunityPanel />}
     </div>
   );
 }

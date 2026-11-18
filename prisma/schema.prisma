@@ -124,6 +124,9 @@ model User {
   // ---------- Opportunity Exchange (O2, additive) ----------
   candidateOpportunityProfile CandidateOpportunityProfile?  @relation("candidateOpportunityProfile")
   candidateVisibilityConsents CandidateVisibilityConsent[]  @relation("candidateVisibilityConsents")
+  // ---------- Opportunity Exchange (O3, additive) ----------
+  employerOpportunitiesCreated   Opportunity[] @relation("employerOpportunitiesCreated")
+  employerOpportunitiesPublished Opportunity[] @relation("employerOpportunitiesPublished")
 }
 
 model Session {
@@ -198,8 +201,9 @@ model Skill {
   slug     String @unique
   label    String
 
-  profiles ProfileSkill[]
-  projects ProjectSkill[]
+  profiles         ProfileSkill[]
+  projects         ProjectSkill[]
+  opportunitySkills OpportunitySkill[]
 }
 
 model ProfileSkill {
@@ -1738,6 +1742,7 @@ model EmployerOrganization {
 
   memberships   EmployerMembership[]
   verifications EmployerVerification[]
+  opportunities Opportunity[]
 
   @@index([verificationStatus])
 }
@@ -1858,4 +1863,77 @@ model CandidateVisibilityConsent {
 
   @@index([userId, scope, createdAt]) // current-consent lookup: latest row per (user, scope)
   @@index([userId, status])
+}
+
+/// One employer job opportunity (M-O3, additive). Lifecycle (approved owner
+/// decisions): DRAFT → PENDING_REVIEW → PUBLISHED → PAUSED → FILLED | CLOSED.
+/// Only an ADMIN review decision moves PENDING_REVIEW → PUBLISHED — a submit
+/// never publishes directly. Any content edit of a PUBLISHED or PAUSED row
+/// atomically returns it to PENDING_REVIEW (re-approval required). FILLED and
+/// CLOSED are terminal. Illegal transitions are refused with 409 and ZERO
+/// database writes. Deletion is audited and possible only in DRAFT.
+model Opportunity {
+  id              String   @id @default(cuid())
+  organizationId  String
+  organization    EmployerOrganization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdByUserId String?
+  createdBy       User?    @relation("employerOpportunitiesCreated", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  title       String // 5-120 chars (zod-enforced)
+  description String // 20-8000 chars (zod-enforced)
+  status      String   @default("DRAFT") // DRAFT | PENDING_REVIEW | PUBLISHED | PAUSED | FILLED | CLOSED
+
+  professionId   String? // existing Profession taxonomy — loose ref (O2 precedent), existence-validated at the boundary
+  location       String? // free text, <= 120 chars
+  employmentType String? // FULL_TIME | PART_TIME | CONTRACT | FREELANCE | INTERNSHIP
+  workMode       String? // ONSITE | HYBRID | REMOTE
+  positions      Int? // 1-100 when set
+
+  // Salary — same contract as CandidateOpportunityProfile (O0 §11 D4 + O2.1):
+  // BigInt paise via the single checked boundary (salaryPaiseToStorage /
+  // salaryPaiseFromStorage in src/lib/ox/validation.ts), ISO 4217 currency,
+  // explicit period. A complete salary range (min+max+currency+period) is
+  // REQUIRED before submit and re-checked at admin approval. Never floats,
+  // never clamped. Ceiling: ₹10 crore = 10,000,000,000 paise.
+  salaryMinPaise     BigInt? // 0 <= min <= max <= 10000000000
+  salaryMaxPaise     BigInt?
+  salaryCurrency     String? // ISO 4217 (^[A-Z]{3}$) — required when a bound is set
+  compensationPeriod String? // YEAR | MONTH | HOUR — required when a bound is set
+
+  submittedAt       DateTime? // set at each submit, cleared on admin rejection
+  publishedAt       DateTime? // set at each admin approval
+  publishedByUserId String?   // admin who approved the latest publication
+  publishedBy       User?     @relation("employerOpportunitiesPublished", fields: [publishedByUserId], references: [id], onDelete: SetNull)
+  closedAt          DateTime? // set when the row reaches FILLED or CLOSED
+  rejectionReason   String?   // reason from the latest admin rejection (row returned to DRAFT)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  skills OpportunitySkill[]
+
+  @@index([organizationId, status])
+  @@index([status, updatedAt])
+  @@index([createdByUserId])
+}
+
+/// One REQUIRED or PREFERRED skill attached to one opportunity (M-O3,
+/// additive). References the EXISTING Skill taxonomy — no duplicate skill
+/// identity is introduced (O0 §1). The compound primary key enforces
+/// (opportunityId, skillId) uniqueness; duplicate rows are impossible by
+/// constraint and duplicates inside one payload are refused with 400 before
+/// any write. `kind` is explicit (REQUIRED | PREFERRED); approved caps:
+/// REQUIRED <= 8, PREFERRED <= 12, total <= 20, minimum zero (the approved
+/// decision table allows a listing with no skill chips).
+model OpportunitySkill {
+  opportunityId String
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  skillId       String
+  skill         Skill       @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  kind          String // REQUIRED | PREFERRED (zod-enforced at the boundary)
+
+  createdAt DateTime @default(now())
+
+  @@id([opportunityId, skillId])
+  @@index([skillId])
 }

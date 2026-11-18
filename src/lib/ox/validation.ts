@@ -323,3 +323,199 @@ export function normalizeSlug(candidate: string): string {
   const s = candidate.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48);
   return OX_SLUG_RE.test(s) ? s : slugifyOrgName(s || candidate);
 }
+
+// ---------- Employer opportunities (O3) ----------
+
+/**
+ * O3 lifecycle vocabulary (approved owner decisions). The state machine:
+ *   DRAFT → PENDING_REVIEW → PUBLISHED → PAUSED → FILLED | CLOSED
+ * Only an admin decision moves PENDING_REVIEW → PUBLISHED; an edit of a
+ * PUBLISHED/PAUSED row atomically returns it to PENDING_REVIEW; FILLED and
+ * CLOSED are terminal. Illegal transitions are 409 with ZERO writes.
+ */
+export const OX_OPPORTUNITY_STATUSES = [
+  "DRAFT",
+  "PENDING_REVIEW",
+  "PUBLISHED",
+  "PAUSED",
+  "FILLED",
+  "CLOSED",
+] as const;
+
+export const OX_SKILL_KINDS = ["REQUIRED", "PREFERRED"] as const;
+
+/** Approved M-O3 caps (owner decision table): REQUIRED ≤ 8, PREFERRED ≤ 12,
+ * combined ≤ 20, minimum zero — a listing with no skill chips is valid. */
+export const OX_OPPORTUNITY_MAX_REQUIRED_SKILLS = 8;
+export const OX_OPPORTUNITY_MAX_PREFERRED_SKILLS = 12;
+export const OX_OPPORTUNITY_MAX_TOTAL_SKILLS = 20;
+
+/**
+ * Roles allowed to write opportunity content and drive the employer-side
+ * lifecycle. VIEWER is read-only everywhere (approved decision). The
+ * HIRING_MANAGER custom-assignment feature is deferred (approved decision),
+ * so HIRING_MANAGER is also read-only for opportunities in M-O3.
+ */
+export const OX_OPPORTUNITY_WRITE_ROLES = ["OWNER", "ADMIN", "RECRUITER"] as const;
+
+const opportunitySkillEntrySchema = z
+  .object({
+    // Skill taxonomy reference by slug OR exact label (onboarding precedent,
+    // resolveSkillIds). Existing taxonomy rows ONLY — reuse, never silently
+    // extend, the skill taxonomy (approved decision); unknown references are
+    // a 400, not an upsert.
+    skill: z.string().trim().min(1).max(80),
+    kind: z.enum(OX_SKILL_KINDS),
+  })
+  .strict();
+
+export type OpportunitySkillInput = z.infer<typeof opportunitySkillEntrySchema>;
+
+/**
+ * Payload-level skill rules, checked BEFORE any write (standard 400):
+ * total ≤ 20, REQUIRED ≤ 8, PREFERRED ≤ 12, no duplicate skill reference
+ * (a skill may appear once with one explicit kind — changing kind is an
+ * update of the same (opportunity, skill) pair, never a second row).
+ */
+export function validateOpportunitySkillPayload(skills: readonly OpportunitySkillInput[]): string | null {
+  if (skills.length > OX_OPPORTUNITY_MAX_TOTAL_SKILLS) return "OPPORTUNITY_TOO_MANY_SKILLS_TOTAL";
+  const required = skills.filter((s) => s.kind === "REQUIRED").length;
+  const preferred = skills.length - required;
+  if (required > OX_OPPORTUNITY_MAX_REQUIRED_SKILLS) return "OPPORTUNITY_TOO_MANY_REQUIRED_SKILLS";
+  if (preferred > OX_OPPORTUNITY_MAX_PREFERRED_SKILLS) return "OPPORTUNITY_TOO_MANY_PREFERRED_SKILLS";
+  const seen = new Set<string>();
+  for (const s of skills) {
+    const key = s.skill.toLowerCase();
+    if (seen.has(key)) return "OPPORTUNITY_SKILL_DUPLICATE";
+    seen.add(key);
+  }
+  return null;
+}
+
+const salaryBound = z
+  .number()
+  .int()
+  .min(0)
+  .max(OX_SALARY_MAX_PAISE)
+  .refine(Number.isSafeInteger, "Salary value must be a safe JavaScript integer");
+
+/** Create one opportunity. Always lands in DRAFT — submission and
+ * publication are separate, explicitly authorized steps. The salary range is
+ * OPTIONAL at create (a draft may be incomplete) but completeness is
+ * enforced at submit and re-checked at admin approval. */
+export const createOpportunitySchema = z
+  .object({
+    title: z.string().trim().min(5).max(120),
+    description: z.string().trim().min(20).max(8000),
+    professionId: z.string().trim().min(1).max(64).optional(),
+    location: z.string().trim().max(120).optional().or(z.literal("")),
+    employmentType: z.enum(OX_EMPLOYMENT_TYPES).optional(),
+    workMode: z.enum(OX_WORK_MODES).optional(),
+    positions: z.number().int().min(1).max(100).optional(),
+    salaryMinPaise: salaryBound.optional(),
+    salaryMaxPaise: salaryBound.optional(),
+    salaryCurrency: z.string().regex(/^[A-Z]{3}$/, "ISO 4217 currency code required").optional(),
+    compensationPeriod: z.enum(OX_COMPENSATION_PERIODS).optional(),
+    skills: z.array(opportunitySkillEntrySchema).max(OX_OPPORTUNITY_MAX_TOTAL_SKILLS).optional(),
+  })
+  .strict()
+  .refine(
+    (v) => v.salaryMinPaise === undefined || v.salaryMaxPaise === undefined || v.salaryMinPaise <= v.salaryMaxPaise,
+    { message: "salaryMinPaise must be ≤ salaryMaxPaise" }
+  );
+
+export type CreateOpportunityInput = z.infer<typeof createOpportunitySchema>;
+
+/**
+ * Partial update. `null` clears an optional field; omitted = unchanged.
+ * A `skills` array replaces the ENTIRE skill set atomically (wholesale
+ * replacement, never a silent partial merge); `skills: []` clears all chips;
+ * omitted skills = untouched. Content edits of a PUBLISHED or PAUSED row
+ * return it to PENDING_REVIEW (enforced by the route, not by the schema).
+ */
+export const updateOpportunitySchema = z
+  .object({
+    title: z.string().trim().min(5).max(120).optional(),
+    description: z.string().trim().min(20).max(8000).optional(),
+    professionId: z.string().trim().min(1).max(64).nullish(),
+    location: z.string().trim().max(120).nullish(),
+    employmentType: z.enum(OX_EMPLOYMENT_TYPES).nullish(),
+    workMode: z.enum(OX_WORK_MODES).nullish(),
+    positions: z.number().int().min(1).max(100).nullish(),
+    salaryMinPaise: salaryBound.nullish(),
+    salaryMaxPaise: salaryBound.nullish(),
+    salaryCurrency: z.string().regex(/^[A-Z]{3}$/, "ISO 4217 currency code required").nullish(),
+    compensationPeriod: z.enum(OX_COMPENSATION_PERIODS).nullish(),
+    skills: z.array(opportunitySkillEntrySchema).max(OX_OPPORTUNITY_MAX_TOTAL_SKILLS).nullish(),
+  })
+  .strict()
+  .refine((v) => Object.values(v).some((x) => x !== undefined), {
+    message: "Nothing to update",
+  })
+  .refine(
+    (v) =>
+      v.salaryMinPaise === undefined ||
+      v.salaryMinPaise === null ||
+      v.salaryMaxPaise === undefined ||
+      v.salaryMaxPaise === null ||
+      v.salaryMinPaise <= v.salaryMaxPaise,
+    { message: "salaryMinPaise must be ≤ salaryMaxPaise" }
+  );
+
+export type UpdateOpportunityInput = z.infer<typeof updateOpportunitySchema>;
+
+/** Explicit outcome for the single fill/close endpoint (approved decision). */
+export const opportunityOutcomeSchema = z.object({ outcome: z.enum(["FILLED", "CLOSED"]) }).strict();
+
+export type OpportunityOutcomeInput = z.infer<typeof opportunityOutcomeSchema>;
+
+/** Admin review decision for one submitted opportunity. REJECT requires a
+ * reason (mirrors verificationDecisionSchema). A rejected row returns to
+ * DRAFT so the employer can revise and resubmit. */
+export const opportunityDecisionSchema = z
+  .object({
+    decision: z.enum(["APPROVE", "REJECT"]),
+    rejectionReason: z.string().trim().max(500).optional(),
+  })
+  .strict()
+  .refine((v) => v.decision !== "REJECT" || (v.rejectionReason !== undefined && v.rejectionReason.length > 0), {
+    message: "A rejection reason is required",
+  });
+
+export type OpportunityDecisionInput = z.infer<typeof opportunityDecisionSchema>;
+
+/**
+ * Post-merge salary integrity for an opportunity row — the SAME semantics as
+ * the candidate profile rules, minus the experience fields. Implemented by
+ * delegating to `validateMergedProfileState` so the two flows cannot drift.
+ * Called BEFORE any write with the payload merged over the stored row.
+ */
+export type MergedOpportunityScalars = {
+  salaryMinPaise: number | null;
+  salaryMaxPaise: number | null;
+  salaryCurrency: string | null;
+  compensationPeriod: string | null;
+};
+
+export function validateMergedOpportunityState(m: MergedOpportunityScalars): string | null {
+  return validateMergedProfileState({
+    experienceMinYears: null,
+    experienceMaxYears: null,
+    ...m,
+  });
+}
+
+/**
+ * A salary range is complete when all four fields are present and in-domain
+ * (the checked boundary enforces the domain). Required before submit and
+ * re-checked at admin approval (owner decision: salary required to publish).
+ */
+export function opportunitySalaryIsComplete(m: MergedOpportunityScalars): boolean {
+  return (
+    m.salaryMinPaise !== null &&
+    m.salaryMaxPaise !== null &&
+    m.salaryCurrency !== null &&
+    m.compensationPeriod !== null &&
+    validateMergedOpportunityState(m) === null
+  );
+}

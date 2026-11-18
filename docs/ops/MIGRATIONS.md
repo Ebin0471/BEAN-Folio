@@ -251,3 +251,27 @@ Unlike the additive flow in §2, this change is a column-type widening
 Step 4 review rule; apply through the §4 approval checklist, including the
 registration doc's mandatory `information_schema` column-type gate before
 deploying the new build.
+
+## 9. O3 registration — Opportunity & OpportunitySkill models (PENDING production application)
+
+M-O3 employer opportunity management: exactly two additive models added to
+both schemas (parity gate OK, 92 models). Both migration artifacts are exact
+`prisma migrate diff` output; the screen for destructive statements is clean
+(`DROP / DELETE / UPDATE / TRUNCATE / RENAME / ALTER COLUMN` — zero
+matches). The SQLite variant was applied ONLY to this workspace's isolated
+QA database (2026-11-18) behind the fail-closed guard
+`scripts/ops/qa-db-env.sh`, after a verified backup and a restore rehearsal.
+The PostgreSQL variant is **NOT applied** and is a **deployment
+prerequisite** for any M-O3 production build (the new API routes reference
+the new tables; deploying the app without the tables turns every opportunity
+endpoint into a 500).
+
+| Artifact | Path |
+| --- | --- |
+| SQLite migration SQL (exact, Prisma-generated) | `docs/deployment/o3-opportunity-models-additive-sqlite.sql` |
+| PostgreSQL DDL (exact, Prisma-generated) | `docs/deployment/o3-opportunity-models-additive-postgres.sql` |
+| Registration: execution order, backups, verification, rollback | `docs/ops/O3_MIGRATION_REGISTRATION.md` |
+
+This change is purely additive (`CREATE TABLE` × 2 + `CREATE INDEX` × 4)
+and follows the §2 flow; no §4 destructive-approval is required for the DDL
+itself.
