@@ -359,6 +359,23 @@ export function parseExplanation(json: string | null): Record<string, unknown> |
   }
 }
 
+/** Truthful masked state label for an entry whose candidate no longer
+ * validates (single source for the matches and shortlist surfaces). */
+export function maskedStateFor(
+  reason: string
+): "MASKED_CONSENT" | "MASKED_VISIBILITY" | "MASKED_BLOCKED" | "MASKED_UNAVAILABLE" {
+  switch (reason) {
+    case "CONSENT_INVALID":
+      return "MASKED_CONSENT";
+    case "VISIBILITY_NOT_DISCOVERABLE":
+      return "MASKED_VISIBILITY";
+    case "BLOCK_EXISTS":
+      return "MASKED_BLOCKED";
+    default:
+      return "MASKED_UNAVAILABLE";
+  }
+}
+
 export function serializeMatchForEmployer(
   row: StoredTalentMatchRow,
   state: "LIVE" | "FROZEN" | "MASKED_CONSENT" | "MASKED_VISIBILITY" | "MASKED_BLOCKED" | "MASKED_UNAVAILABLE",

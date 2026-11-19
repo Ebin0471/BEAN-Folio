@@ -57,6 +57,10 @@ export const OX_AUDIT_ACTIONS = {
   // M-O4 additions
   candidateViewed: "ox.candidate.viewed",
   discoverySearched: "ox.discovery.searched",
+  // M-O5 additions
+  shortlistAdded: "ox.shortlist.added",
+  shortlistRemoved: "ox.shortlist.removed",
+  shortlistUpdated: "ox.shortlist.updated",
 } as const;
 
 export const OX_TARGET = {

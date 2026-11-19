@@ -8,7 +8,7 @@ import {
   recomputeSingleMatch,
   getOrgActiveMemberUserIds,
 } from "@/lib/ox/discovery";
-import { serializeCandidateProfileForViewer, serializeMatchForEmployer, type StoredTalentMatchRow } from "@/lib/ox/dto";
+import { serializeCandidateProfileForViewer, serializeMatchForEmployer, maskedStateFor, type StoredTalentMatchRow } from "@/lib/ox/dto";
 import { auditOX, OX_AUDIT_ACTIONS, OX_TARGET } from "@/lib/ox/audit";
 
 export const dynamic = "force-dynamic";
@@ -56,19 +56,6 @@ async function loadOrgAndOpportunity(orgId: string, opportunityId: string, userI
     };
   }
   return { error: null, opportunity };
-}
-
-function maskedStateFor(reason: string): "MASKED_CONSENT" | "MASKED_VISIBILITY" | "MASKED_BLOCKED" | "MASKED_UNAVAILABLE" {
-  switch (reason) {
-    case "CONSENT_INVALID":
-      return "MASKED_CONSENT";
-    case "VISIBILITY_NOT_DISCOVERABLE":
-      return "MASKED_VISIBILITY";
-    case "BLOCK_EXISTS":
-      return "MASKED_BLOCKED";
-    default:
-      return "MASKED_UNAVAILABLE";
-  }
 }
 
 export const GET = handler(async (_req: NextRequest, { params }: RouteParams) => {
