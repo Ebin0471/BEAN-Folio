@@ -127,6 +127,8 @@ model User {
   // ---------- Opportunity Exchange (O3, additive) ----------
   employerOpportunitiesCreated   Opportunity[] @relation("employerOpportunitiesCreated")
   employerOpportunitiesPublished Opportunity[] @relation("employerOpportunitiesPublished")
+  // ---------- Opportunity Exchange (M-O4, additive) ----------
+  talentMatches TalentMatch[] @relation("talentMatches")
 }
 
 model Session {
@@ -1911,6 +1913,7 @@ model Opportunity {
   updatedAt DateTime  @updatedAt
 
   skills OpportunitySkill[]
+  talentMatches TalentMatch[]  @relation("talentMatches")
 
   @@index([organizationId, status])
   @@index([status, updatedAt])
@@ -1936,4 +1939,56 @@ model OpportunitySkill {
 
   @@id([opportunityId, skillId])
   @@index([skillId])
+}
+
+/// One CURRENT deterministic candidate↔opportunity compatibility record
+/// (M-O4, additive). DERIVED DATA — never a hiring decision and never a
+/// rejection record. A stored row NEVER grants visibility: every read path
+/// re-checks consent + visibility + organization verification server-side
+/// through the single discovery boundary (approved decisions D2/D9; queue
+/// safeguard C — expiry cleanup only, never authorization). One current row
+/// per (opportunityId, candidateUserId); recomputation UPDATES the current
+/// row (D3) — no score history is retained.
+///
+/// Storage minimality (owner directive §3.1): identifiers, scoring metadata
+/// and minimal factor/reason information ONLY — no copied candidate names,
+/// email, phone, resumes, full profile data, salary values or skill-list
+/// snapshots. `matchVersion` is metadata stamped on the current row, not a
+/// mechanism for retaining historical score rows.
+model TalentMatch {
+  id               String      @id @default(cuid())
+  opportunityId    String
+  opportunity      Opportunity @relation("talentMatches", fields: [opportunityId], references: [id], onDelete: Cascade)
+  candidateUserId  String
+  candidate        User        @relation("talentMatches", fields: [candidateUserId], references: [id], onDelete: Cascade)
+
+  /// Server-owned scoring formula version ("O4-MATCH-V1").
+  matchVersion     String
+  /// 0-100 deterministic composite of the ACTIVE factors (rounded half-up,
+  /// documented denominator) — an explanation aid, never a hiring
+  /// probability and never a rejection record.
+  score            Int
+  /// True when Stage-1 eligibility passed; false rows carry a reason and are
+  /// never shown to employers as matches.
+  eligible         Boolean
+  /// CONSENT_INVALID | VISIBILITY_NOT_DISCOVERABLE | BLOCK_EXISTS |
+  /// EMPLOYMENT_TYPE_MISMATCH | COMPENSATION_MISMATCH — null when eligible.
+  ineligibleReason String?
+  /// Minimal per-factor explainability metadata (earned/max/applied/reason),
+  /// audience-filtered at serialization. Never contains salary values,
+  /// contact data or anything beyond the factor/reason vocabulary.
+  explanationJson  String?
+  /// When this row was computed (injected clock — the score function is
+  /// pure and receives time as input).
+  generatedAt      DateTime
+  /// Staleness marker; the queue expiry sweep refreshes or removes stale
+  /// rows (safeguard C) and stale rows are never served as current.
+  expiresAt        DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([opportunityId, candidateUserId])
+  @@index([candidateUserId, matchVersion])
+  @@index([opportunityId, score])
 }
