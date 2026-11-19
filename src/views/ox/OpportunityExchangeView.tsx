@@ -17,6 +17,8 @@ import { Briefcase } from "lucide-react";
 import { SectionHeader } from "@/components/bean/SectionHeader";
 
 import OxCandidateProfileView from "./OxCandidateProfileView";
+import OxCandidateTransparencyPanel from "./OxCandidateTransparencyPanel";
+import OxEmployerDiscoveryPanel from "./OxEmployerDiscoveryPanel";
 import OxEmployerOpportunitiesPanel from "./OxEmployerOpportunitiesPanel";
 import OxEmployerSetupView from "./OxEmployerSetupView";
 
@@ -54,6 +56,13 @@ export default function OpportunityExchangeView() {
         <OxEmployerOpportunitiesPanel />
       </section>
 
+      <section aria-labelledby="ox-employer-discovery-heading" className="mt-10">
+        <h2 id="ox-employer-discovery-heading" className="sr-only">
+          Discover talent and shortlists
+        </h2>
+        <OxEmployerDiscoveryPanel />
+      </section>
+
       <section aria-labelledby="ox-candidate-workspace-heading" className="mt-10">
         <SectionHeader
           title="For professionals"
@@ -65,6 +74,9 @@ export default function OpportunityExchangeView() {
         </h2>
         <div className="mt-4">
           <OxCandidateProfileView />
+        </div>
+        <div className="mt-6">
+          <OxCandidateTransparencyPanel />
         </div>
       </section>
     </div>
