@@ -12,6 +12,7 @@ import {
 import { serializeCandidateProfileForViewer, serializeMatchForEmployer, type StoredTalentMatchRow } from "@/lib/ox/dto";
 import { auditOX, OX_AUDIT_ACTIONS, OX_TARGET } from "@/lib/ox/audit";
 import { OX_MATCH_TTL_MS } from "@/lib/ox/matching";
+import { activeInviteExists } from "@/lib/ox/invitation";
 
 export const dynamic = "force-dynamic";
 
@@ -99,7 +100,12 @@ async function buildStoredMatchList(
         serializeMatchForEmployer(
           row,
           "FROZEN",
-          serializeCandidateProfileForViewer(check.profile, { isVerifiedEmployer: true, hasActiveInvite: false })
+          serializeCandidateProfileForViewer(check.profile, {
+            isVerifiedEmployer: true,
+            // M-O6 (RD-14): AFTER_INVITE activates only for a live invitation
+            // AND only after the boundary passed fresh in this request.
+            hasActiveInvite: await activeInviteExists(orgId, row.candidateUserId),
+          })
         )
       );
     } else {
@@ -142,22 +148,29 @@ export const GET = handler(async (req: NextRequest, { params }: RouteParams) => 
     const total = run.eligible.length;
     const start = (page - 1) * DISCOVERY_PAGE_SIZE;
     const now = new Date();
-    const matches = run.eligible.slice(start, start + DISCOVERY_PAGE_SIZE).map((c) =>
-      serializeMatchForEmployer(
-        {
-          id: `${opportunity.id}:${c.candidateUserId}`,
-          opportunityId: opportunity.id,
-          candidateUserId: c.candidateUserId,
-          matchVersion: c.explanation.matchVersion,
-          score: c.score,
-          eligible: true,
-          ineligibleReason: null,
-          explanationJson: JSON.stringify(c.explanation),
-          generatedAt: now,
-          expiresAt: new Date(now.getTime() + OX_MATCH_TTL_MS),
-        },
-        "LIVE",
-        serializeCandidateProfileForViewer(c.profile, { isVerifiedEmployer: true, hasActiveInvite: false })
+    const matches = await Promise.all(
+      run.eligible.slice(start, start + DISCOVERY_PAGE_SIZE).map(async (c) =>
+        serializeMatchForEmployer(
+          {
+            id: `${opportunity.id}:${c.candidateUserId}`,
+            opportunityId: opportunity.id,
+            candidateUserId: c.candidateUserId,
+            matchVersion: c.explanation.matchVersion,
+            score: c.score,
+            eligible: true,
+            ineligibleReason: null,
+            explanationJson: JSON.stringify(c.explanation),
+            generatedAt: now,
+            expiresAt: new Date(now.getTime() + OX_MATCH_TTL_MS),
+          },
+          "LIVE",
+          serializeCandidateProfileForViewer(c.profile, {
+            isVerifiedEmployer: true,
+            // M-O6 (RD-14): live-invitation state, applied strictly after the
+            // boundary pass above (the invitation is never a boundary bypass).
+            hasActiveInvite: await activeInviteExists(id, c.candidateUserId),
+          })
+        )
       )
     );
     await auditOX(user.id, OX_AUDIT_ACTIONS.discoverySearched, OX_TARGET.opportunity, opportunity.id, {
@@ -206,22 +219,29 @@ export const POST = handler(async (req: NextRequest, { params }: RouteParams) =>
   const run = await runDiscoveryForOpportunity({ opportunity, organizationId: id });
   const total = run.eligible.length;
   const now = new Date();
-  const matches = run.eligible.slice(0, DISCOVERY_PAGE_SIZE).map((c) =>
-    serializeMatchForEmployer(
-      {
-        id: `${opportunity.id}:${c.candidateUserId}`,
-        opportunityId: opportunity.id,
-        candidateUserId: c.candidateUserId,
-        matchVersion: c.explanation.matchVersion,
-        score: c.score,
-        eligible: true,
-        ineligibleReason: null,
-        explanationJson: JSON.stringify(c.explanation),
-        generatedAt: now,
-        expiresAt: new Date(now.getTime() + OX_MATCH_TTL_MS),
-      },
-      "LIVE",
-      serializeCandidateProfileForViewer(c.profile, { isVerifiedEmployer: true, hasActiveInvite: false })
+  const matches = await Promise.all(
+    run.eligible.slice(0, DISCOVERY_PAGE_SIZE).map(async (c) =>
+      serializeMatchForEmployer(
+        {
+          id: `${opportunity.id}:${c.candidateUserId}`,
+          opportunityId: opportunity.id,
+          candidateUserId: c.candidateUserId,
+          matchVersion: c.explanation.matchVersion,
+          score: c.score,
+          eligible: true,
+          ineligibleReason: null,
+          explanationJson: JSON.stringify(c.explanation),
+          generatedAt: now,
+          expiresAt: new Date(now.getTime() + OX_MATCH_TTL_MS),
+        },
+        "LIVE",
+        serializeCandidateProfileForViewer(c.profile, {
+          isVerifiedEmployer: true,
+          // M-O6 (RD-14): live-invitation state, applied strictly after the
+          // boundary pass above.
+          hasActiveInvite: await activeInviteExists(id, c.candidateUserId),
+        })
+      )
     )
   );
   await auditOX(user.id, OX_AUDIT_ACTIONS.discoverySearched, OX_TARGET.opportunity, opportunity.id, {

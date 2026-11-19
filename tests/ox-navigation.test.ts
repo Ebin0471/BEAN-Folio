@@ -114,6 +114,25 @@ describe("OX views and routes exist and follow repository conventions", () => {
     { file: "src/app/api/employers/[id]/transfer-ownership/route.ts", methods: ["POST"] },
     { file: "src/app/api/admin/ox/verifications/route.ts", methods: ["GET"] },
     { file: "src/app/api/admin/ox/verifications/[id]/route.ts", methods: ["GET", "PATCH"] },
+    // M-O6 — employer invitations namespace
+    { file: "src/app/api/opportunities/invitations/route.ts", methods: ["GET", "POST"] },
+    { file: "src/app/api/opportunities/invitations/[invitationId]/route.ts", methods: ["GET", "PATCH", "DELETE"] },
+    { file: "src/app/api/opportunities/invitations/[invitationId]/send/route.ts", methods: ["POST"] },
+    { file: "src/app/api/opportunities/invitations/[invitationId]/withdraw/route.ts", methods: ["POST"] },
+    { file: "src/app/api/opportunities/invitations/[invitationId]/negotiations/route.ts", methods: ["POST"] },
+    { file: "src/app/api/opportunities/invitations/[invitationId]/negotiations/[negotiationId]/accept/route.ts", methods: ["POST"] },
+    { file: "src/app/api/opportunities/invitations/[invitationId]/negotiations/[negotiationId]/decline/route.ts", methods: ["POST"] },
+    { file: "src/app/api/opportunities/invitations/[invitationId]/negotiations/[negotiationId]/withdraw/route.ts", methods: ["POST"] },
+    // M-O6 — candidate invitations namespace (recipient-only mirror)
+    { file: "src/app/api/opportunities/me/invitations/route.ts", methods: ["GET"] },
+    { file: "src/app/api/opportunities/me/invitations/[invitationId]/route.ts", methods: ["GET"] },
+    { file: "src/app/api/opportunities/me/invitations/[invitationId]/accept/route.ts", methods: ["POST"] },
+    { file: "src/app/api/opportunities/me/invitations/[invitationId]/decline/route.ts", methods: ["POST"] },
+    { file: "src/app/api/opportunities/me/invitations/[invitationId]/negotiation-request/route.ts", methods: ["POST"] },
+    { file: "src/app/api/opportunities/me/invitations/[invitationId]/negotiations/route.ts", methods: ["POST"] },
+    { file: "src/app/api/opportunities/me/invitations/[invitationId]/negotiations/[negotiationId]/accept/route.ts", methods: ["POST"] },
+    { file: "src/app/api/opportunities/me/invitations/[invitationId]/negotiations/[negotiationId]/decline/route.ts", methods: ["POST"] },
+    { file: "src/app/api/opportunities/me/invitations/[invitationId]/negotiations/[negotiationId]/withdraw/route.ts", methods: ["POST"] },
   ];
 
   test("every OX route file exists with the expected exports and house conventions", () => {
@@ -142,7 +161,10 @@ describe("OX views and routes exist and follow repository conventions", () => {
       const src = readFileSync(route.file, "utf8");
       const isMutation = route.methods.some((m) => m !== "GET");
       if (isMutation) {
-        expect(src).toMatch(/auditOX|auditModeration/);
+        // M-O6 routes delegate every transition (and its in-transaction
+        // auditOX write) to the audited invitation engine — importing it is
+        // the audited path; direct auditOX usage covers all other surfaces.
+        expect(src).toMatch(/auditOX|auditModeration|@\/lib\/ox\/invitation/);
       }
       // shared validation module is the single vocabulary source
       if (route.file.includes("employers") || route.file.includes("admin/ox")) {

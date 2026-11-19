@@ -27,6 +27,8 @@ QUEUED ──claim (status-guarded update)──▶ RUNNING ──handler resolv
 |---|---|---|---|
 | `maintenance.sweep` | `maintenance.sweep` | every 10 min (self-perpetuating chain) | Retention purge, per-table counts logged (`event: "maintenance.sweep"`): `Session` expired >7d · `PasswordResetToken` expired/consumed >7d · `RateLimitBucket` `expiresAt < now` · `ExportJob` `READY` older than 24h **including payload** · `AuditEvent` older than 90d · `SiteRevision` beyond the newest 10 per user (bounded: max 50 users/sweep) · `BackgroundJob` `SUCCEEDED` >7d and `DEAD` >30d. |
 | `site.studio-sweep` | `site.studio-sweep` | every 5 min + on studio reads | Kind-aware stale-task sweep (see §5): honestly fails `ENGINEERING_TASK` (60 min staleness) and `SITE_STUDIO_TURN` (30 min staleness) rows whose runner died; flips linked `SiteStudioMessage` PENDING/RUNNING → FAILED with a user-safe retryable error. |
+| `ox.match-expiry-sweep` | `ox.match-expiry-sweep` | every 6 h | M-O4 (safeguard C): deletes stored TalentMatch rows past `expiresAt` — removal only, never authorization. |
+| `ox.invitation-expiry-sweep` | `ox.invitation-expiry-sweep` | every 6 h | M-O6 (RD-6): transition-only expiry — lapsed SENT/VIEWED invitations and PENDING proposals flip to EXPIRED inside guarded updates (idempotent double-run matches zero rows), stalled negotiations (no pending proposal, no activity 14 d) expire. Hiring history is NEVER deleted; terminal rows are never resurrected; the job makes no authorization decision. |
 
 Custom kinds: `registerHandler(kind, fn)` in a bootstrap path, then `enqueue({ kind, payload, userId? })`. A job whose kind has **no handler** fails honestly each attempt (`error: no handler registered for kind "…"` in the log) until it dead-letters.
 
@@ -106,7 +108,7 @@ WHERE status = 'RUNNING'
 
 -- Recurring chain check (should always return one active row per key)
 SELECT dedupeKey, status, runAt, attempts FROM BackgroundJob
-WHERE dedupeKey IN ('maintenance.sweep', 'site.studio-sweep') ORDER BY createdAt DESC;
+WHERE dedupeKey IN ('maintenance.sweep', 'site.studio-sweep', 'ox.match-expiry-sweep', 'ox.invitation-expiry-sweep') ORDER BY createdAt DESC;
 ```
 
 Prisma equivalents: `db.backgroundJob.findMany({ where: { status: "DEAD" } })`, `cancelQueued(id, userId?)` for QUEUED rows. DEAD rows are purged by the maintenance sweep after 30 days.

@@ -28,6 +28,7 @@ import {
   WORKFLOW_SWEEP_KEY,
 } from "@/lib/riishe/workflow-engine";
 import type { BackgroundJob } from "@prisma/client";
+import type { InvitationExpirySweepCounts } from "@/lib/ox/invitation";
 
 import {
   enqueue,
@@ -60,6 +61,14 @@ export const RIISHE_WORKFLOW_SWEEP_EVERY_MS = 5 * 60_000;
 export const OX_MATCH_EXPIRY_KEY = "ox.match-expiry-sweep";
 export const OX_MATCH_EXPIRY_EVERY_MS = 6 * 60 * 60_000;
 
+/** ox.invitation-expiry-sweep cadence (M-O6, RD-6) — transition-only expiry
+ * of lapsed invitations and pending proposals. Hiring history is NEVER
+ * deleted: terminal rows are never resurrected, nothing is removed, and the
+ * job makes no authorization decision (it only stamps the truthful EXPIRED
+ * state the RD-6 windows imply). */
+export const OX_INVITATION_EXPIRY_KEY = "ox.invitation-expiry-sweep";
+export const OX_INVITATION_EXPIRY_EVERY_MS = 6 * 60 * 60_000;
+
 const DAY_MS = 24 * 60 * 60_000;
 
 /** Delete an abandoned upload's object — idempotent, never fails the sweep. */
@@ -83,6 +92,7 @@ export function registerBuiltInHandlers(): void {
   registerHandler(WORKFLOW_JOB_KIND, runRiisheWorkflowStepHandler);
   registerHandler(WORKFLOW_SWEEP_KEY, runRiisheWorkflowSweepHandler);
   registerHandler(OX_MATCH_EXPIRY_KEY, runOxMatchExpirySweepHandler);
+  registerHandler(OX_INVITATION_EXPIRY_KEY, runOxInvitationExpirySweepHandler);
 }
 
 /**
@@ -97,6 +107,23 @@ async function runOxMatchExpirySweepHandler(_job: BackgroundJob): Promise<{ remo
     console.log(JSON.stringify({ event: "ox.match-expiry-sweep", removed: removed.count }));
   }
   return { removed: removed.count };
+}
+
+/**
+ * M-O6 (RD-6) — transition-only invitation expiry. Delegates to the M-O6
+ * invitation engine: lapsed SENT/VIEWED invitations and pending proposals
+ * flip to EXPIRED inside guarded updates (idempotent double-run matches
+ * zero rows), stalled negotiations expire after their inactivity window,
+ * and terminal rows are never resurrected. Nothing is deleted.
+ */
+async function runOxInvitationExpirySweepHandler(_job: BackgroundJob): Promise<InvitationExpirySweepCounts> {
+  const { sweepExpiredInvitations } = await import("@/lib/ox/invitation");
+  const counts = await sweepExpiredInvitations();
+  const total = counts.expiredInvitations + counts.expiredProposals + counts.stalledNegotiations;
+  if (total > 0) {
+    console.log(JSON.stringify({ event: "ox.invitation-expiry-sweep", ...counts }));
+  }
+  return counts;
 }
 
 // ---------------------------------------------------------------------------

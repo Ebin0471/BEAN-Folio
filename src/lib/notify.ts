@@ -33,6 +33,14 @@ export const NOTIFICATION_TYPES = [
   "INQUIRY_RESPONSE",
   "SAVE",
   "SYSTEM",
+  // M-O6 — Opportunity Exchange invitations & negotiations (payload-minimal:
+  // identifiers + public titles only; never compensation amounts, contact
+  // details or profile content).
+  "HIRING_INVITATION",
+  "HIRING_INVITATION_DECISION",
+  "HIRING_NEGOTIATION_PROPOSAL",
+  "HIRING_INVITATION_WITHDRAWN",
+  "HIRING_INVITATION_EXPIRED",
 ] as const;
 
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];

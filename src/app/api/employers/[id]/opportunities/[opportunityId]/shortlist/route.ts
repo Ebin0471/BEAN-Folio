@@ -11,6 +11,7 @@ import {
 } from "@/lib/ox/discovery";
 import { serializeCandidateProfileForViewer, maskedStateFor } from "@/lib/ox/dto";
 import { auditOX, OX_AUDIT_ACTIONS, OX_TARGET } from "@/lib/ox/audit";
+import { activeInviteExists } from "@/lib/ox/invitation";
 
 export const dynamic = "force-dynamic";
 
@@ -116,7 +117,12 @@ export const GET = handler(async (_req: NextRequest, { params }: RouteParams) =>
       items.push({
         ...base,
         state: "LISTED",
-        candidate: serializeCandidateProfileForViewer(check.profile, { isVerifiedEmployer: true, hasActiveInvite: false }),
+        candidate: serializeCandidateProfileForViewer(check.profile, {
+          isVerifiedEmployer: true,
+          // M-O6 (RD-14): AFTER_INVITE activates only for a live invitation
+          // AND only after the boundary passed fresh in this request.
+          hasActiveInvite: await activeInviteExists(id, entry.candidateUserId),
+        }),
       });
     } else {
       items.push({ ...base, state: maskedStateFor(check.reason) });

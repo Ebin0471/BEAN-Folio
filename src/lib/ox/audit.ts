@@ -21,10 +21,15 @@ import { db } from "@/lib/db";
  *   ox.opportunity.approved | ox.opportunity.rejected                            (O3, admin)
  *   ox.opportunity.paused | ox.opportunity.reopened                               (O3)
  *   ox.opportunity.filled | ox.opportunity.closed | ox.opportunity.deleted        (O3)
+ *   ox.shortlist.added | ox.shortlist.removed | ox.shortlist.updated              (M-O5)
+ *   ox.invitation.drafted | ox.invitation.draft_updated | ox.invitation.draft_discarded       (M-O6)
+ *   ox.invitation.sent | ox.invitation.viewed | ox.invitation.negotiation_requested           (M-O6)
+ *   ox.invitation.accepted | ox.invitation.declined | ox.invitation.withdrawn | ox.invitation.expired   (M-O6)
+ *   ox.negotiation.proposed | ox.negotiation.withdrawn | ox.negotiation.accepted | ox.negotiation.declined | ox.negotiation.expired   (M-O6)
  *
  * Target types: EMPLOYER_ORGANIZATION | EMPLOYER_MEMBERSHIP | EMPLOYER_VERIFICATION
  *               | CANDIDATE_OPPORTUNITY_PROFILE | CANDIDATE_VISIBILITY_CONSENT (O2)
- *               | OPPORTUNITY (O3)
+ *               | OPPORTUNITY (O3) | OPPORTUNITY_INVITATION | INVITATION_NEGOTIATION (M-O6)
  */
 export const OX_AUDIT_ACTIONS = {
   orgCreated: "ox.org.created",
@@ -61,6 +66,22 @@ export const OX_AUDIT_ACTIONS = {
   shortlistAdded: "ox.shortlist.added",
   shortlistRemoved: "ox.shortlist.removed",
   shortlistUpdated: "ox.shortlist.updated",
+  // M-O6 additions
+  invitationDrafted: "ox.invitation.drafted",
+  invitationDraftUpdated: "ox.invitation.draft_updated",
+  invitationDraftDiscarded: "ox.invitation.draft_discarded",
+  invitationSent: "ox.invitation.sent",
+  invitationViewed: "ox.invitation.viewed",
+  invitationNegotiationRequested: "ox.invitation.negotiation_requested",
+  invitationAccepted: "ox.invitation.accepted",
+  invitationDeclined: "ox.invitation.declined",
+  invitationWithdrawn: "ox.invitation.withdrawn",
+  invitationExpired: "ox.invitation.expired",
+  negotiationProposed: "ox.negotiation.proposed",
+  negotiationWithdrawn: "ox.negotiation.withdrawn",
+  negotiationAccepted: "ox.negotiation.accepted",
+  negotiationDeclined: "ox.negotiation.declined",
+  negotiationExpired: "ox.negotiation.expired",
 } as const;
 
 export const OX_TARGET = {
@@ -70,6 +91,9 @@ export const OX_TARGET = {
   candidateProfile: "CANDIDATE_OPPORTUNITY_PROFILE",
   candidateConsent: "CANDIDATE_VISIBILITY_CONSENT",
   opportunity: "OPPORTUNITY",
+  // M-O6 additions
+  opportunityInvitation: "OPPORTUNITY_INVITATION",
+  invitationNegotiation: "INVITATION_NEGOTIATION",
 } as const;
 
 /** Either the global Prisma client or an interactive-transaction client. */

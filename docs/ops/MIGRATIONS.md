@@ -275,3 +275,29 @@ endpoint into a 500).
 This change is purely additive (`CREATE TABLE` × 2 + `CREATE INDEX` × 4)
 and follows the §2 flow; no §4 destructive-approval is required for the DDL
 itself.
+
+## 10. O6 registration — OpportunityInvitation & InvitationNegotiation models (PENDING production application)
+
+M-O6 employer invitations & negotiations: exactly two additive models added
+to both schemas (parity gate OK, 96 models). Both migration artifacts are
+exact `prisma migrate diff` output; the destructive screen is clean
+(statement-leading `DROP/DELETE/UPDATE/TRUNCATE/RENAME` and
+`ALTER COLUMN` — zero matches; the `ON DELETE` clauses are part of the new
+tables' own FK definitions). The SQLite variant was applied ONLY to this
+workspace's isolated QA database (2026-11-19) behind the fail-closed guard
+`scripts/ops/qa-db-env.sh`, after a verified backup and a verified restore
+rehearsal. The PostgreSQL variant is **NOT applied** and is a **deployment
+prerequisite** for any M-O6 production build (the new API routes reference
+the new tables; deploying the app without the tables turns every invitation
+endpoint into a 500).
+
+| Artifact | Path |
+| --- | --- |
+| SQLite migration SQL (exact, Prisma-generated) | `docs/deployment/o6-invitations-additive-sqlite.sql` |
+| PostgreSQL DDL (exact, Prisma-generated) | `docs/deployment/o6-invitations-additive-postgres.sql` |
+| Registration: execution order, backups, verification, rollback | `docs/ops/O6_MIGRATION_REGISTRATION.md` |
+
+This change is purely additive (`CREATE TABLE` × 2 + `CREATE INDEX` × 9,
+two of them unique) and follows the §2 flow; no §4 destructive-approval is
+required for the DDL itself. The production chain is now **O2.1 → O3 → O4 →
+O5 → O6** with `information_schema` gates between steps.

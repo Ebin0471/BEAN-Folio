@@ -75,6 +75,17 @@ export class MemoryRateLimitBackend implements RateLimitBackend {
   private prune(now: number) {
     for (const [k, v] of this.buckets) if (v.resetAt < now) this.buckets.delete(k);
   }
+
+  /**
+   * Test-support only: clears all in-memory buckets. Exists so the per-file
+   * test runner can isolate quota-heavy suites from the burst buckets —
+   * no production caller exists, and the shared (postgres) backend is
+   * unaffected. This does NOT weaken any limit: production traffic never
+   * invokes it.
+   */
+  resetForTests(): void {
+    this.buckets.clear();
+  }
 }
 
 export const memoryBackend = new MemoryRateLimitBackend();

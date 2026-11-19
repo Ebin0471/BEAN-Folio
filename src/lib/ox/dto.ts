@@ -428,3 +428,166 @@ export function serializeMatchForCandidate(
     explanation: profileVisible ? parseExplanation(row.explanationJson) : null,
   };
 }
+
+// ---------- Opportunity invitations + negotiations (M-O6) ----------
+
+/**
+ * Minimal negotiation-thread row (append-only proposal history). Proposed
+ * terms cross from BigInt storage through the checked O2.1 boundary; the
+ * ORIGINAL offer lives on the invitation and is rendered separately, so a
+ * counter is always read against the original (plan §3.3). No free-text
+ * terms exist anywhere in M-O6 (RD-8).
+ */
+export type StoredNegotiationRow = {
+  id: string;
+  invitationId: string;
+  seq: number;
+  proposerRole: string;
+  proposerUserId: string | null;
+  proposedSalaryMinPaise: bigint;
+  proposedSalaryMaxPaise: bigint;
+  proposedCurrency: string;
+  proposedPeriod: string;
+  status: string;
+  decidedAt: Date | null;
+  expiresAt: Date;
+  createdAt: Date;
+};
+
+export function serializeNegotiation(row: StoredNegotiationRow): Record<string, unknown> {
+  return {
+    id: row.id,
+    invitationId: row.invitationId,
+    seq: row.seq,
+    proposerRole: row.proposerRole,
+    proposerUserId: row.proposerUserId,
+    proposedSalaryMinPaise: salaryPaiseFromStorage(row.proposedSalaryMinPaise),
+    proposedSalaryMaxPaise: salaryPaiseFromStorage(row.proposedSalaryMaxPaise),
+    proposedCurrency: row.proposedCurrency,
+    proposedPeriod: row.proposedPeriod,
+    status: row.status,
+    decidedAt: row.decidedAt ? row.decidedAt.toISOString() : null,
+    expiresAt: row.expiresAt.toISOString(),
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+export type StoredInvitationRow = {
+  id: string;
+  organizationId: string;
+  opportunityId: string;
+  candidateUserId: string | null;
+  status: string;
+  offerSalaryMinPaise: bigint;
+  offerSalaryMaxPaise: bigint;
+  offerCurrency: string;
+  offerPeriod: string;
+  acceptedSalaryMinPaise: bigint | null;
+  acceptedSalaryMaxPaise: bigint | null;
+  acceptedCurrency: string | null;
+  acceptedPeriod: string | null;
+  acceptedAt: Date | null;
+  sentAt: Date | null;
+  viewedAt: Date | null;
+  respondedAt: Date | null;
+  withdrawnAt: Date | null;
+  expiresAt: Date | null;
+  createdByUserId: string | null;
+  sentByUserId: string | null;
+  withdrawnByUserId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+/** The shared immutable-snapshot + lifecycle block for both audiences. The
+ * candidate block is attached ONLY by the employer serializer caller, and
+ * only when the discovery boundary passed fresh in the same request (the
+ * invitation is never a profile backdoor — RD-15/override B). */
+function serializeInvitationCore(row: StoredInvitationRow): Record<string, unknown> {
+  return {
+    id: row.id,
+    organizationId: row.organizationId,
+    opportunityId: row.opportunityId,
+    candidateUserId: row.candidateUserId,
+    status: row.status,
+    // Immutable original offer snapshot (frozen at send; RD-14).
+    offer: {
+      salaryMinPaise: salaryPaiseFromStorage(row.offerSalaryMinPaise),
+      salaryMaxPaise: salaryPaiseFromStorage(row.offerSalaryMaxPaise),
+      currency: row.offerCurrency,
+      period: row.offerPeriod,
+    },
+    // Immutable accepted-terms snapshot (stamped exactly once on ACCEPTED;
+    // null until then). Rendered via the SalaryRange component (Part L).
+    accepted: row.acceptedAt
+      ? {
+          salaryMinPaise: salaryPaiseFromStorage(row.acceptedSalaryMinPaise),
+          salaryMaxPaise: salaryPaiseFromStorage(row.acceptedSalaryMaxPaise),
+          currency: row.acceptedCurrency,
+          period: row.acceptedPeriod,
+          acceptedAt: row.acceptedAt.toISOString(),
+        }
+      : null,
+    sentAt: row.sentAt ? row.sentAt.toISOString() : null,
+    viewedAt: row.viewedAt ? row.viewedAt.toISOString() : null,
+    respondedAt: row.respondedAt ? row.respondedAt.toISOString() : null,
+    withdrawnAt: row.withdrawnAt ? row.withdrawnAt.toISOString() : null,
+    expiresAt: row.expiresAt ? row.expiresAt.toISOString() : null,
+    createdByUserId: row.createdByUserId,
+    sentByUserId: row.sentByUserId,
+    withdrawnByUserId: row.withdrawnByUserId,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+/**
+ * Employer-side invitation card. `candidateState` is the truthful
+ * boundary-decided state for this request: a live card carries the candidate
+ * block (rendered through the same discovery serializer as every other
+ * employer surface — salary only per the disclosure matrix with the live
+ * `hasActiveInvite` state); a masked state carries NO candidate content.
+ * The negotiation thread is party-visible hiring history.
+ */
+export function serializeInvitationForEmployer(
+  row: StoredInvitationRow,
+  opts: {
+    candidateState: "LIVE" | "MASKED_CONSENT" | "MASKED_VISIBILITY" | "MASKED_BLOCKED" | "MASKED_UNAVAILABLE";
+    candidate?: Record<string, unknown>;
+    negotiations?: Record<string, unknown>[];
+  }
+): Record<string, unknown> {
+  const masked = opts.candidateState !== "LIVE";
+  return {
+    ...serializeInvitationCore(row),
+    candidateState: opts.candidateState,
+    ...(masked ? {} : { candidate: opts.candidate }),
+    ...(opts.negotiations ? { negotiations: opts.negotiations } : {}),
+  };
+}
+
+/**
+ * Candidate-side invitation view (recipient-only data — the candidate is the
+ * row's own recipient, so the offer snapshot, the thread and the truthful
+ * state are always rendered; override B: recipient rights do not consult
+ * discovery consent). Employer identity is limited to PUBLIC fields (D12
+ * precedent) and the opportunity title/status (what they were invited to).
+ */
+export function serializeInvitationForCandidate(
+  row: StoredInvitationRow,
+  opts: {
+    organization: { id: string; displayName: string; slug: string };
+    opportunity: { id: string; title: string; status: string };
+    negotiations?: Record<string, unknown>[];
+  }
+): Record<string, unknown> {
+  return {
+    ...serializeInvitationCore(row),
+    // RD-18: unread = SENT with no viewedAt (the VIEWED transition IS the
+    // read state — no extra table).
+    unread: row.status === "SENT" && row.viewedAt === null,
+    organization: opts.organization,
+    opportunity: opts.opportunity,
+    ...(opts.negotiations ? { negotiations: opts.negotiations } : {}),
+  };
+}

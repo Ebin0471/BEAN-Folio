@@ -157,6 +157,13 @@ export async function assertCandidateDiscoverableToOrg(
   // salary rows withhold. When disclosed AND incompatible with the
   // opportunity range → hard filter (D10). Withheld salary NEVER filters and
   // NEVER influences the score.
+  // M-O6 note (RD-14): hasActiveInvite stays FALSE here — this is the
+  // ELIGIBILITY FILTER, not a display surface. Feeding invitation state into
+  // it would churn stored matches mid-invitation (an invited candidate whose
+  // disclosed range mismatches could flip ineligible and mask a live
+  // invitation card). AFTER_INVITE disclosure activates at the DISPLAY
+  // serializers only, strictly after this boundary passes (see the route
+  // call sites — `activeInviteExists` + `compensationForViewer`).
   const disclosure = compensationForViewer(profile, { isVerifiedEmployer: true, hasActiveInvite: false });
   if (disclosure && params.opportunity.salaryMinPaise !== null && params.opportunity.salaryMaxPaise !== null) {
     const incompatible =

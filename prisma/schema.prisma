@@ -132,6 +132,12 @@ model User {
   talentMatches TalentMatch[] @relation("talentMatches")
   // ---------- Opportunity Exchange (M-O5, additive) ----------
   shortlistedCandidates CandidateShortlist[] @relation("shortlistedCandidates")
+  // ---------- Opportunity Exchange (M-O6, additive) ----------
+  opportunityInvitationRecipients OpportunityInvitation[] @relation("opportunityInvitationRecipients")
+  invitationsComposedBy           OpportunityInvitation[] @relation("invitationsComposedBy")
+  invitationsSentBy               OpportunityInvitation[] @relation("invitationsSentBy")
+  invitationsWithdrawnBy          OpportunityInvitation[] @relation("invitationsWithdrawnBy")
+  invitationNegotiationProposers  InvitationNegotiation[] @relation("invitationNegotiationProposers")
 }
 
 model Session {
@@ -422,7 +428,7 @@ model Notification {
   id        String    @id @default(cuid())
   userId    String
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  type      String // FOLLOW | FOLLOW_REQUEST | FOLLOW_ACCEPTED | POST_LIKE | POST_COMMENT | COMMENT_REPLY | MENTION | POST_SHARE | MESSAGE | MESSAGE_REQUEST | INQUIRY | INQUIRY_RESPONSE | SAVE | SYSTEM
+  type      String // FOLLOW | FOLLOW_REQUEST | FOLLOW_ACCEPTED | POST_LIKE | POST_COMMENT | COMMENT_REPLY | MENTION | POST_SHARE | MESSAGE | MESSAGE_REQUEST | INQUIRY | INQUIRY_RESPONSE | SAVE | SYSTEM | HIRING_INVITATION | HIRING_INVITATION_DECISION | HIRING_NEGOTIATION_PROPOSAL | HIRING_INVITATION_WITHDRAWN | HIRING_INVITATION_EXPIRED
   payload   String    @default("{}") // JSON string
   actorId   String? // who triggered the notification (self-actions never notify) — used for grouping + suppression
   targetId  String? // post/comment/conversation id the notification is about — used for grouping
@@ -1749,6 +1755,7 @@ model EmployerOrganization {
   verifications EmployerVerification[]
   opportunities Opportunity[]
   shortlists    CandidateShortlist[]
+  invitations   OpportunityInvitation[] @relation("opportunityInvitations")
 
   @@index([verificationStatus])
 }
@@ -1919,6 +1926,7 @@ model Opportunity {
   skills OpportunitySkill[]
   talentMatches TalentMatch[]  @relation("talentMatches")
   shortlistedOpportunities CandidateShortlist[] @relation("shortlistedOpportunities")
+  invitations OpportunityInvitation[] @relation("opportunityInvitations")
 
   @@index([organizationId, status])
   @@index([status, updatedAt])
@@ -2036,4 +2044,134 @@ model CandidateShortlist {
   @@unique([organizationId, opportunityId, candidateUserId])
   @@index([organizationId, status])
   @@index([candidateUserId])
+}
+
+// ---------- Opportunity Exchange (M-O6, additive): invitations + negotiations ----------
+// Owner-approved implementation (M-O6 authorization; RD-1…RD-18 + owner
+// overrides A/B). Exactly two new models per the O0 §3 phase table. Every
+// send revalidates CURRENT eligibility through the single discovery boundary;
+// a sent invitation never bypasses consent (RD-2/RD-15). Compensation
+// snapshots are immutable: the original offer is frozen at send, every
+// proposal carries its own terms, and the accepted terms are stamped exactly
+// once (RD-10/RD-14). Hiring rooms are M-O7 and require an ACCEPTED invitation.
+
+/// One employer-to-candidate opportunity invitation (M-O6, additive).
+/// Tenant-bound: opportunityId always belongs to organizationId (validated on
+/// every write at the API boundary). Carries the IMMUTABLE compensation
+/// snapshot frozen at send — later opportunity edits never rewrite received
+/// invitations (O0 integrity rule). Candidate recipient is nullable with
+/// SetNull: account deletion anonymizes the row while preserving the
+/// hiring-history record (O0 D6, RD-16). Status lifecycle (O0 §2):
+/// DRAFT → SENT → VIEWED → ACCEPTED | DECLINED | NEGOTIATION_REQUESTED |
+/// EXPIRED | WITHDRAWN — transitions are server-owned guarded writes; no
+/// client-supplied status is ever trusted.
+model OpportunityInvitation {
+  id             String               @id @default(cuid())
+  organizationId String
+  organization   EmployerOrganization @relation("opportunityInvitations", fields: [organizationId], references: [id], onDelete: Cascade)
+  opportunityId  String
+  opportunity    Opportunity          @relation("opportunityInvitations", fields: [opportunityId], references: [id], onDelete: Cascade)
+  /// Recipient. Nullable with SetNull per O0 D6 (RD-16): deletion
+  /// anonymizes while preserving the hiring-history row.
+  candidateUserId String?
+  candidate       User?   @relation("opportunityInvitationRecipients", fields: [candidateUserId], references: [id], onDelete: SetNull)
+
+  /// DRAFT | SENT | VIEWED | ACCEPTED | DECLINED | NEGOTIATION_REQUESTED | EXPIRED | WITHDRAWN
+  status String @default("DRAFT")
+
+  /// Immutable original offer — frozen at send (written exactly once by the
+  /// send transaction; no code path ever updates these columns).
+  offerSalaryMinPaise BigInt
+  offerSalaryMaxPaise BigInt
+  offerCurrency       String
+  offerPeriod         String // YEAR | MONTH | HOUR
+
+  /// Immutable accepted terms — stamped exactly once on ACCEPTED (from the
+  /// winning proposal, or from the offer when accepted directly). Never
+  /// rewritten afterwards (RD-10).
+  acceptedSalaryMinPaise BigInt?
+  acceptedSalaryMaxPaise BigInt?
+  acceptedCurrency       String?
+  acceptedPeriod         String?
+  acceptedAt             DateTime?
+
+  sentAt      DateTime?
+  viewedAt    DateTime?
+  respondedAt DateTime?
+  withdrawnAt DateTime?
+  /// Response window set at send (RD-6: 14 days); drives the
+  /// transition-only expiry sweep. Never resurrected past a terminal state.
+  expiresAt DateTime?
+
+  /// Provenance performers (SetNull on account deletion, O0 D6).
+  createdByUserId   String?
+  createdBy         User?   @relation("invitationsComposedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  sentByUserId      String?
+  sentBy            User?   @relation("invitationsSentBy", fields: [sentByUserId], references: [id], onDelete: SetNull)
+  withdrawnByUserId String?
+  withdrawnBy       User?   @relation("invitationsWithdrawnBy", fields: [withdrawnByUserId], references: [id], onDelete: SetNull)
+
+  /// Partial-unique emulation (owner override A on RD-5): holds the constant
+  /// sentinel "ACTIVE" while the row is NON-TERMINAL and NULL once terminal.
+  /// SQLite and PostgreSQL both treat NULLs as distinct in unique indexes, so
+  /// any number of terminal rows coexist while at most ONE non-terminal row
+  /// can exist per (organizationId, opportunityId, candidateUserId) — the
+  /// one-active invariant is enforced by the DATABASE under concurrent sends
+  /// (application checks remain as friendly first-line refusals).
+  activeInvitationToken String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  negotiations InvitationNegotiation[]
+
+  @@unique([organizationId, opportunityId, candidateUserId, activeInvitationToken])
+  @@index([organizationId, status])
+  @@index([opportunityId, status])
+  @@index([candidateUserId, status])
+  @@index([status, expiresAt])
+}
+
+/// Append-only negotiation proposal (M-O6, additive). One row per proposal;
+/// per-invitation monotonic seq (RD-7 cap: 6 proposals). Term columns are
+/// immutable — a changed mind creates a new seq; the ONLY mutable field is
+/// the guarded status of a PENDING proposal (RD-9 one-active protocol: a new
+/// proposal SUPERSEDES the standing one in the same transaction; no
+/// destructive update or delete path exists). The original offer lives on
+/// the invitation and is never overwritten by any proposal (O0 integrity
+/// rule). Proposer is nullable with SetNull (RD-16 anonymization).
+model InvitationNegotiation {
+  id           String                @id @default(cuid())
+  invitationId String
+  invitation   OpportunityInvitation @relation(fields: [invitationId], references: [id], onDelete: Cascade)
+  /// 1-based monotonic per-invitation proposal sequence (assigned inside the
+  /// proposing transaction; @@unique makes history orderable + race-safe).
+  seq            Int
+  /// EMPLOYER | CANDIDATE
+  proposerRole   String
+  proposerUserId String?
+  proposer       User?   @relation("invitationNegotiationProposers", fields: [proposerUserId], references: [id], onDelete: SetNull)
+
+  /// Immutable proposed terms (absolute values, never deltas, never re-read
+  /// from the opportunity).
+  proposedSalaryMinPaise BigInt
+  proposedSalaryMaxPaise BigInt
+  proposedCurrency       String
+  proposedPeriod         String // YEAR | MONTH | HOUR
+
+  /// PENDING | ACCEPTED | DECLINED | SUPERSEDED | WITHDRAWN | EXPIRED — the
+  /// only guarded transitions; decidedAt stamps the moment a PENDING row
+  /// leaves PENDING.
+  status    String  @default("PENDING")
+  decidedAt DateTime?
+  /// Response window for the pending proposal (RD-7: 7 days, stamped at
+  /// creation); drives the transition-only expiry sweep.
+  expiresAt DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([invitationId, seq])
+  @@index([invitationId, status])
+  @@index([status, expiresAt])
 }
