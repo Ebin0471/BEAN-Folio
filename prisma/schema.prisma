@@ -127,8 +127,11 @@ model User {
   // ---------- Opportunity Exchange (O3, additive) ----------
   employerOpportunitiesCreated   Opportunity[] @relation("employerOpportunitiesCreated")
   employerOpportunitiesPublished Opportunity[] @relation("employerOpportunitiesPublished")
+  shortlistsAddedBy CandidateShortlist[] @relation("shortlistsAddedBy")
   // ---------- Opportunity Exchange (M-O4, additive) ----------
   talentMatches TalentMatch[] @relation("talentMatches")
+  // ---------- Opportunity Exchange (M-O5, additive) ----------
+  shortlistedCandidates CandidateShortlist[] @relation("shortlistedCandidates")
 }
 
 model Session {
@@ -1745,6 +1748,7 @@ model EmployerOrganization {
   memberships   EmployerMembership[]
   verifications EmployerVerification[]
   opportunities Opportunity[]
+  shortlists    CandidateShortlist[]
 
   @@index([verificationStatus])
 }
@@ -1914,6 +1918,7 @@ model Opportunity {
 
   skills OpportunitySkill[]
   talentMatches TalentMatch[]  @relation("talentMatches")
+  shortlistedOpportunities CandidateShortlist[] @relation("shortlistedOpportunities")
 
   @@index([organizationId, status])
   @@index([status, updatedAt])
@@ -1991,4 +1996,44 @@ model TalentMatch {
   @@unique([opportunityId, candidateUserId])
   @@index([candidateUserId, matchVersion])
   @@index([opportunityId, score])
+}
+
+/// One employer-side shortlist entry (M-O5, additive). Per-opportunity and
+/// tenant-bound: unique per (organizationId, opportunityId, candidateUserId)
+/// — one entry per candidate per opportunity (approved decision D13). The
+/// opportunityId always belongs to organizationId (validated on every write
+/// at the API boundary). An entry is an employer WORKING RECORD — it does
+/// NOT bypass consent: EVERY add and every read revalidates eligibility
+/// through the single discovery boundary (approved decision D14), and
+/// masked states are rendered truthfully when consent/visibility changed.
+/// Storage minimality: identifiers, authorized status and minimal metadata
+/// ONLY — no copied candidate name, email, phone, salary, resume, skills or
+/// frozen candidate card (D14).
+model CandidateShortlist {
+  id                String      @id @default(cuid())
+  organizationId    String
+  organization      EmployerOrganization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  opportunityId     String
+  opportunity       Opportunity @relation("shortlistedOpportunities", fields: [opportunityId], references: [id], onDelete: Cascade)
+  candidateUserId   String
+  candidate         User        @relation("shortlistedCandidates", fields: [candidateUserId], references: [id], onDelete: Cascade)
+
+  /// Employer-private recruiting note (<= 500 chars, zod-enforced).
+  note              String?
+  /// Match score snapshot at add time (explainability provenance only).
+  scoreAtAdd        Int?
+  /// Scoring formula version at add time.
+  matchVersionAtAdd String?
+  /// The ACTIVE member who added the entry (provenance; SetNull on deletion).
+  addedByUserId     String?
+  addedBy           User?       @relation("shortlistsAddedBy", fields: [addedByUserId], references: [id], onDelete: SetNull)
+  /// ACTIVE | ARCHIVED — archive keeps the record without deleting history.
+  status            String      @default("ACTIVE")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, opportunityId, candidateUserId])
+  @@index([organizationId, status])
+  @@index([candidateUserId])
 }
