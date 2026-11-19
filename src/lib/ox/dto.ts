@@ -323,3 +323,91 @@ export function serializeOpportunity(
     ...(skills ? { skills: skills.map(serializeOpportunitySkill) } : {}),
   };
 }
+
+// ---------- Talent matches (M-O4) ----------
+
+/**
+ * The employer-facing match card. The candidate block renders through the
+ * SAME discovery serializer (`serializeCandidateProfileForViewer`) as every
+ * other employer surface — contact fields are structurally impossible and
+ * salary appears only when the O2 disclosure matrix permits THIS requester.
+ * `explanation` is the audience-safe factor breakdown (vocabulary reasons
+ * only — never salary values, never contact data). Masked states carry the
+ * candidate identifier the org already legitimately knows plus the truthful
+ * state, and NO profile content.
+ */
+export type StoredTalentMatchRow = {
+  id: string;
+  opportunityId: string;
+  candidateUserId: string;
+  matchVersion: string;
+  score: number;
+  eligible: boolean;
+  ineligibleReason: string | null;
+  explanationJson: string | null;
+  generatedAt: Date;
+  expiresAt: Date;
+};
+
+export function parseExplanation(json: string | null): Record<string, unknown> | null {
+  if (!json) return null;
+  try {
+    const parsed: unknown = JSON.parse(json);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function serializeMatchForEmployer(
+  row: StoredTalentMatchRow,
+  state: "LIVE" | "FROZEN" | "MASKED_CONSENT" | "MASKED_VISIBILITY" | "MASKED_BLOCKED" | "MASKED_UNAVAILABLE",
+  candidate?: Record<string, unknown>
+): Record<string, unknown> {
+  const masked = state.startsWith("MASKED");
+  return {
+    candidateUserId: row.candidateUserId,
+    matchVersion: row.matchVersion,
+    score: row.score,
+    generatedAt: row.generatedAt.toISOString(),
+    expiresAt: row.expiresAt.toISOString(),
+    state,
+    // A masked card is a truthful "no longer available" marker ONLY — it
+    // carries neither candidate content nor factor explanations (T15).
+    ...(masked ? {} : { explanation: parseExplanation(row.explanationJson) }),
+    ...(masked ? {} : { candidate }),
+  };
+}
+
+/**
+ * The candidate-facing view of one OWN match (D12): the verified employer's
+ * PUBLIC identity, the opportunity title/status, the audience-safe factor
+ * explanation and the truthful discovery state. No other candidate's data
+ * exists on this shape by construction.
+ */
+export function serializeMatchForCandidate(
+  row: StoredTalentMatchRow,
+  opportunity: { id: string; title: string; status: string },
+  organization: { id: string; displayName: string; slug: string },
+  discoveryState:
+    | "DISCOVERY_ACTIVE"
+    | "DISCOVERY_PAUSED"
+    | "DISCOVERY_HIDDEN"
+    | "DISCOVERY_INVITE_ONLY"
+    | "DISCOVERY_REVOKED"
+    | "DISCOVERY_EXPIRED"
+    | "NO_DISCOVERY",
+  profileVisible: boolean
+): Record<string, unknown> {
+  return {
+    opportunityId: row.opportunityId,
+    opportunity: { id: opportunity.id, title: opportunity.title, status: opportunity.status },
+    organization: { id: organization.id, displayName: organization.displayName, slug: organization.slug },
+    matchVersion: row.matchVersion,
+    score: row.score,
+    generatedAt: row.generatedAt.toISOString(),
+    expiresAt: row.expiresAt.toISOString(),
+    discoveryState,
+    explanation: profileVisible ? parseExplanation(row.explanationJson) : null,
+  };
+}

@@ -54,6 +54,9 @@ export const OX_AUDIT_ACTIONS = {
   opportunityFilled: "ox.opportunity.filled",
   opportunityClosed: "ox.opportunity.closed",
   opportunityDeleted: "ox.opportunity.deleted",
+  // M-O4 additions
+  candidateViewed: "ox.candidate.viewed",
+  discoverySearched: "ox.discovery.searched",
 } as const;
 
 export const OX_TARGET = {

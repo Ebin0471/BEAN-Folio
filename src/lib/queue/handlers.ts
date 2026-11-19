@@ -53,6 +53,13 @@ export const STUDIO_SWEEP_EVERY_MS = 5 * 60_000;
  * scheduling + completion derivation. */
 export const RIISHE_WORKFLOW_SWEEP_EVERY_MS = 5 * 60_000;
 
+/** ox.match-expiry-sweep cadence — removes stale stored TalentMatch rows
+ * (M-O4, safeguard C: expiry cleanup ONLY — the job never grants access,
+ * never restores consent, and never writes candidate data; live reads
+ * recompute eligibility regardless). */
+export const OX_MATCH_EXPIRY_KEY = "ox.match-expiry-sweep";
+export const OX_MATCH_EXPIRY_EVERY_MS = 6 * 60 * 60_000;
+
 const DAY_MS = 24 * 60 * 60_000;
 
 /** Delete an abandoned upload's object — idempotent, never fails the sweep. */
@@ -75,6 +82,21 @@ export function registerBuiltInHandlers(): void {
   registerHandler(RIISHE_AUTOMATION_KEY, runRiisheAutomationHandler);
   registerHandler(WORKFLOW_JOB_KIND, runRiisheWorkflowStepHandler);
   registerHandler(WORKFLOW_SWEEP_KEY, runRiisheWorkflowSweepHandler);
+  registerHandler(OX_MATCH_EXPIRY_KEY, runOxMatchExpirySweepHandler);
+}
+
+/**
+ * M-O4 (safeguard C) — deletes stored TalentMatch rows whose `expiresAt`
+ * has passed. Removal-only: no row is ever created or revived here, and no
+ * authorization decision is made by this job (live eligibility is the
+ * source of truth — approved decision D2).
+ */
+async function runOxMatchExpirySweepHandler(_job: BackgroundJob): Promise<{ removed: number }> {
+  const removed = await db.talentMatch.deleteMany({ where: { expiresAt: { lt: new Date() } } });
+  if (removed.count > 0) {
+    console.log(JSON.stringify({ event: "ox.match-expiry-sweep", removed: removed.count }));
+  }
+  return { removed: removed.count };
 }
 
 // ---------------------------------------------------------------------------

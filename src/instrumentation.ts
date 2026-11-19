@@ -51,6 +51,7 @@ export async function register(): Promise<void> {
       await handlers.ensureRecurring(handlers.MAINTENANCE_SWEEP_KEY, handlers.SWEEP_EVERY_MS);
       await handlers.ensureRecurring(handlers.SITE_STUDIO_SWEEP_KEY, handlers.STUDIO_SWEEP_EVERY_MS);
       await handlers.ensureRecurring(handlers.WORKFLOW_SWEEP_KEY, handlers.RIISHE_WORKFLOW_SWEEP_EVERY_MS);
+      await handlers.ensureRecurring(handlers.OX_MATCH_EXPIRY_KEY, handlers.OX_MATCH_EXPIRY_EVERY_MS);
       worker.startWorker();
 
       let shuttingDown = false;
