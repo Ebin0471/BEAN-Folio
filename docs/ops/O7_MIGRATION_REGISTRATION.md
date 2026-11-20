@@ -7,7 +7,7 @@ under verified pre-push integrity). No production database exists or was touched
 sandbox.**
 
 Additive-only change: 4 new tables (`HiringRoom`, `HiringRoomMember`, `Interview`,
-`HiringStageEvent`), 1 unique + 10 secondary indexes, new foreign keys (humans nullable
+`HiringStageEvent`), 2 unique + 9 secondary indexes, new foreign keys (humans nullable
 `ON DELETE SET NULL` per O0 D6 / O7 RD-20; owning aggregates `ON DELETE CASCADE`). No
 existing table, column, row or index is modified. Zero `DROP`/`DELETE`/`UPDATE`/`RENAME`
 statements (screened below).
@@ -26,7 +26,7 @@ Model parity: **100 models identical across both dialects** (`scripts/check-sche
 Both artifacts are the exact byte-for-byte `prisma migrate diff` output from the published
 baseline schema (`1c0d501b`) to the M-O7 schema — nothing hand-written. Destructive screen
 (`grep -Ein "^DROP|^DELETE|^UPDATE|TRUNCATE|RENAME|ALTER COLUMN|DROP COLUMN|DROP TABLE"`)
-returns **zero matches** on both files. Statements per artifact: 4 `CREATE TABLE`, 10 `CREATE INDEX`, 1 `CREATE UNIQUE INDEX`
+returns **zero matches** on both files. Statements per artifact: 4 `CREATE TABLE`, 9 `CREATE INDEX`, 2 `CREATE UNIQUE INDEX`
 per table set — including `CREATE UNIQUE INDEX "HiringRoom_invitationId_key"` (the O7 RD-1
 one-room-per-invitation database guarantee) and `CREATE UNIQUE INDEX
 "HiringRoomMember_roomId_userId_key"`. The `Interview` table carries the nullable
