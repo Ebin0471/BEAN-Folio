@@ -175,6 +175,25 @@ export const POST = handler(async (req: NextRequest, { params }: Ctx) => {
   if (!partner) return ERR.notFound();
   if (await blockedEitherWay(user.id, partner.userId)) return ERR.forbidden();
 
+  // Message-request gate (documented contract): the opening message IS the
+  // request — every further send is refused until the recipient approves,
+  // and a DECLINED thread accepts no further sends at all (the start route's
+  // re-open flow is the only path back to PENDING). The pinned opening-send
+  // contract in tests/social-network.test.ts is preserved.
+  if (partner.requestState !== "ACTIVE") {
+    const priorMessages = await db.message.count({ where: { conversationId } });
+    const openingAllowed = partner.requestState === "PENDING" && priorMessages === 0;
+    if (!openingAllowed) {
+      return err(
+        partner.requestState === "DECLINED"
+          ? "Your conversation request was declined"
+          : "The recipient has not approved this conversation request yet",
+        409,
+        "DM_REQUEST_PENDING"
+      );
+    }
+  }
+
   const parsed = await parseBody(req, sendSchema);
   if (parsed.response) return parsed.response;
   const input = parsed.data;

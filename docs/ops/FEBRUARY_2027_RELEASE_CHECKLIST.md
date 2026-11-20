@@ -91,29 +91,41 @@ UNIQUE INDEX"; the exact artifact statement count is **2 CREATE UNIQUE INDEX + 9
 INDEX** (both unique indexes were already correctly named in the same doc; the DDL totals
 are unchanged: 11 indexes + 4 tables per dialect). Corrected in this commit.
 
-### Phase 4 — Complete launch-readiness audit — **NOT STARTED**
+### Phase 4 — Complete launch-readiness audit — **COMPLETE (2026-11-20)**
 
-End-to-end journeys to audit: candidate registration & portfolio; privacy/publication
-controls; employer onboarding & verification; discovery & consent; opportunity creation &
-applications; matching, shortlisting & invitations; compensation negotiation; hiring rooms,
-interview scheduling & outcomes; messaging & notifications; account deletion & privacy;
-responsive desktop & mobile. Plus performance, accessibility, security, privacy, operational
-recovery, error handling.
+Canonical QA fixture re-bootstrap, a 97-check live-HTTP journey audit across ten
+journeys, a browser audit (desktop + mobile), a security/operational probe pass,
+and one P1 fix (found → fixed → re-verified live). PostgreSQL DDL remains
+**REGISTERED ONLY**; production migrations, deployment and any production
+database operation remain separately authorized gates.
+
+| # | Item | Status | Evidence |
+|---|------|--------|----------|
+| 4.1 | Preflight + environment | DONE | `git ls-remote` == local HEAD == `a6db165aa857dbd13eb8de2e4158287b35677f8d` (clean main); `/home/z/my-project` preserved untouched @ `9947e73f`; fail-closed guard re-validated live (correct OK + refusal behaviors); a stale auto-started dev server serving the LEGACY workspace on :3000 was found and replaced with the authoritative workspace server (pinned `DATABASE_URL`, upload sentinel 401, ensure-dev green). |
+| 4.2 | Canonical QA fixture re-bootstrap | DONE | Pre-change backups verified (`ec275bed…` empty-schema, `5bffac42…` pre-reset); documented seeders run in order (professions 221, seed.ts 8 demo users/14 projects, 10 canonical QA accounts, social E2E, admin promotion); NEW committed bootstrap `scripts/seed-ox-journeys.ts` drives the real HTTP APIs end-to-end (register → org → verification → admin review → opportunity → shortlist → invitations); clean deterministic dataset verified (5 OX profiles, 4 orgs, 3 opportunities, 2 SENT invitations, integrity ok, FK 0); manifest documented in `docs/ops/PHASE4_FIXTURE_MANIFEST.md`. The lost 1,026-user historical dataset was NOT recreated (per owner directive). |
+| 4.3 | Eleven journey audits | DONE | J1–J10 via live HTTP + DB verification (`scripts/qa-journeys.ts`): **97/97 checks green in a single pass** (J1 11, J2 7, J3 10, J4 9, J5 11, J6 6, J7 7, J8 16, J9 11, J10 9), repeatable (self-provisioning journeys). J11 responsive browser audit: desktop 1440×900 + mobile 390×844 (home, onboarding, OX candidate + employer surfaces, profile, empty states, score-transparency expander, bottom nav), zero console/page errors, keyboard focus visible, sticky footer verified. |
+| 4.4 | Security & operational audit | DONE | Regression suites: security-hardening 8/8, auth+auth-routes 20/20, media-upload(+http 9/9 when server up)+route 4/4, ox authz/room routes 45/45, social-network 30/30. Live probes: session cookie HttpOnly+SameSite=lax; anonymous upload 401; text-pose-as-png honestly classified (content sniffing); admin surface 403; media raw object-authz (anon 403 / owner 200); generic error bodies; rate limits observed firing (register 10/min); timings: APIs 11–76 ms, home DCL 677 ms. Known pre-existing deferrals stand (CSP Tier-C M-1, per-process rate-limit backend HP-3). No security certification or external penetration test claimed. |
+| 4.5 | Findings register | DONE | **P1-1 (FIXED):** `POST /api/me/messages/[id]` did not enforce the documented message-request consent gate (unlimited sends to a PENDING recipient; sends into a DECLINED thread). Minimal fix (19 lines, route-only): opening message = the request; further sends refused 409 `DM_REQUEST_PENDING` until approval; DECLINED threads closed. Verified live via J9 and pinned contract preserved (social-network 30/30). **P3 (recorded, post-launch):** pseudonymous match-card labels show truncated ids (privacy-correct); focus outline visible but subtle; known-baseline test-infra items unchanged. **P0/P2: none found.** |
+| 4.6 | Verification gates | DONE | `bunx tsc --noEmit` → **0 errors**; `bun run lint` → **0 errors / 13 warnings** (baseline); full regression suite (90 files, batched sequential) → **0 failures** (queue-reliability timing flake did not recur; 2 live-HTTP suites 13/13 with server up); `bunx next build` → **exit 0** (pre-existing instrumentation warnings only); `check-schema-parity.ts` → **parity 100/100**; QA DB `integrity_check` ok, `foreign_key_check` 0; secret scan clean (documented fixture passwords only); runtime-data scan clean (db/uploads/.env git-ignored). |
+
+**Phase 4 environment incident record:** the sandbox dev server was OOM-killed twice
+by concurrent heavy test batches (3 GB sandbox RAM); recovered each time via the
+pinned-URL launcher, and the full suite was executed file-batched sequentially. The
+stale-workspace auto-start server incident (4.1) was contained with zero writes to
+the legacy workspace.
 
 | Severity | Meaning | Count |
 |----------|---------|-------|
 | P0 | Critical security / data-loss / launch-blocking | 0 known |
-| P1 | Core user journey broken or materially unreliable | 0 known |
+| P1 | Core user journey broken or materially unreliable | 0 open (P1-1 fixed and re-verified this phase) |
 | P2 | Important, safely includable pre-launch | 0 known |
-| P3 | Post-launch enhancement | 2 known |
+| P3 | Post-launch enhancement | 4 known |
 
-The two P3 entries are the test-infrastructure findings in the known-baseline register
-below (queue-timing flake classification + `auth.test` accumulated-DB invariants, both
-classified 2026-11-20 during Phase 1); product code is untouched by both. The P0/P1/P2
-counts remain 0 known.
-
-Known baseline defects carried from the O6-era audit record (not new findings): none open —
-M22 blockers were resolved before O1 (protocol §6 re-baseline: tsc 0, full suite green).
+The four P3 entries: (1) match-card pseudonym label polish (truncated ids, privacy-correct);
+(2) keyboard focus outline visible but could be higher-contrast; (3)+(4) the two known-baseline
+test-infrastructure classifications from Phase 1 (queue-timing flake + auth.test accumulated-DB
+invariants). The M22-era CSP (M-1) and rate-limit backend (HP-3) deferrals remain documented
+Tier-C follow-ups in the protocol register.
 
 ### Phase 5 — Beta and public launch — **NOT STARTED**
 
@@ -126,6 +138,7 @@ public launch in February 2027.
 
 | Date (UTC) | Entry |
 |-----------|-------|
+| 2026-11-20 | **Phase 4 (launch-readiness audit) complete**: canonical QA fixture re-bootstrap through real APIs (manifest committed); 97/97 live-HTTP journey checks green (J1–J10, repeatable) + J11 browser audit desktop/mobile with zero console errors; security/ops probe pass clean; one P1 found & fixed (message-request consent gate unenforced server-side → opening-message-only pre-approval, 409 `DM_REQUEST_PENDING`; verified live + 30/30 pinned suite); P3 register: 4 known, no P0/P2; gates: tsc 0, lint 0e/13w baseline, full suite 0 failures, production build exit 0, parity 100/100, integrity ok FK 0, scans clean. Fixture infra committed (`seed-ox-journeys.ts`, `qa-journeys.ts`, manifest doc). |
 | 2026-11-20 | **Phase 3 (database & infrastructure readiness) complete**: workspace re-cloned from the verified remote main `3d86f87` after another container recycle (stale workspace preserved, no history rewrite); chain inventory 12/12 artifacts SHA-verified and 12/12 byte-for-byte reproducible; full O2.1→O7 rehearsal on a disposable copy (every stage integrity ok, FK 0, empty intermediate diff, fixtures preserved; tables 90→100); RD-1/RD-4/O6 DB-level invariants + FK SET NULL/CASCADE behaviors verified; double-apply refusals demonstrated (O2.1 noted replayable-by-construction); canonical QA DB rebuilt behind the fail-closed guard (100 tables, parity 100, db-push in-sync) — original Phase 2 QA file + fixtures not reproducible after the recycle, recorded as a Phase 4 prerequisite; verified backup (sha256 `f5e28b0c…`) + restore drill to a disposable target (100-table parity, original untouched); PG artifacts structurally screened, never executed. Documentation-only commit: checklist + O7 registration prose counts; zero product code changes. |
 | 2026-11-20 | **Phase 2 (M-O7) complete**: schema parity 100, engine+routes+UI+tests implemented, 58 new tests, full suite 1384/1384, 28-step live-HTTP journey 28/28, browser acceptance (1 crash found→fixed→re-verified), migration artifacts registered (PG not executed), completion report filed. Published via bean-sync with SHA verification. |
 | 2026-11-20 | Phase 1 executed: recovery verdict C; authoritative workspace cloned at `93779fe7`; stale workspace preserved; QA DB bootstrapped (96 tables, integrity ok); dev server serving authoritative app on :3000; tsc 0 / lint 0e-13w; full suite 1326 tests → 1323 pass, 4 investigated (1 timing flake classified, 2 accumulation invariants resolved via QA bootstrap, auth 9/9); browser acceptance zero errors; legacy-DB leak incident contained; checklist + restored O7 register committed and published. |
@@ -140,9 +153,8 @@ above restores them on a fresh workspace. Product code untouched.
 
 ## Next concrete deliverable
 
-Phase 4 — the complete launch-readiness audit with the P0–P3 register. Prerequisite noted
-from Phase 3: canonical QA fixture re-bootstrap (the rebuilt QA database is at schema
-parity 100 with zero fixture rows — Phase 4 journey tests need the canonical demo accounts
-restored first). Then Phase 5 — controlled private beta and the February 2027 public
-launch. PostgreSQL application, any production database operation and deployment remain
-separately authorized gates.
+Phase 5 — controlled private beta and the February 2027 public launch, on top of the
+Phase 4 audit baseline (97/97 journey checks, one P1 fixed, no open P0/P2). Before beta:
+owner decisions on the recorded P3 polish items (optional), CSP Tier-C rollout timing (M-1)
+and the rate-limit shared backend (HP-3) if beta scale demands it. PostgreSQL application,
+any production database operation and deployment remain separately authorized gates.
