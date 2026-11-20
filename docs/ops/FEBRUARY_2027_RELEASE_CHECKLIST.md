@@ -39,7 +39,7 @@ never modify the legacy DB). Standing rule recorded: **every DB-touching command
 (`/home/z/bean-folio-dev-launch.sh`, outside the repo) and the batched test runner are sandbox
 plumbing — never committed to the product repo. |
 
-### Phase 2 — M-O7 completion — **NOT STARTED**
+### Phase 2 — M-O7 completion — **COMPLETE (2026-11-20)**
 
 Reimplementation from the approved owner decision register (RD-1…RD-22 + acceptance
 clarifications A–D), restored at `docs/ops/O7_OWNER_DECISION_REGISTER.md`. Exactly 4 new
@@ -50,14 +50,14 @@ All M-O1–M-O6 functionality preserved.
 
 | # | Item | Status |
 |---|------|--------|
-| 2.1 | Restored decision register committed | PENDING |
-| 2.2 | Schema: 4 models in both dialects + parity gate | PENDING |
-| 2.3 | Lib layer: room authz, serializers (VIEWER allowlist), activity timeline, notifications, reason vocabulary | PENDING |
-| 2.4 | API routes (rooms / members / stages / interviews / withdraw / close / cancel) | PENDING |
-| 2.5 | UI: employer + candidate hiring-room panels | PENDING |
-| 2.6 | Migration registration (O7 SQLite + PG DDL, registration doc) — NOT executed | PENDING |
-| 2.7 | Regression coverage + security matrix per RD | PENDING |
-| 2.8 | M-O7 completion report + browser acceptance | PENDING |
+| 2.1 | Restored decision register committed | DONE (`1c0d501b`) |
+| 2.2 | Schema: 4 models in both dialects + parity gate | DONE — parity 100/100; `Interview.meetingLink` (RD-15) included |
+| 2.3 | Lib layer: room authz, serializers (VIEWER allowlist), activity timeline, notifications, reason vocabulary | DONE — `src/lib/ox/room.ts` + `room-shared.ts` + `room-dto.ts`; +15 audit actions; +6 notification types; clarification-A verification recorded |
+| 2.4 | API routes (rooms / members / stages / interviews / withdraw / close / cancel) | DONE — 17 routes, party-aware 404-deny, strict zod, rate limits |
+| 2.5 | UI: employer + candidate hiring-room panels | DONE — 2 new panels + 2 additive view insertions; browser-verified |
+| 2.6 | Migration registration (O7 SQLite + PG DDL, registration doc) — NOT executed | DONE (registered) — artifacts + `docs/ops/O7_MIGRATION_REGISTRATION.md`; PG DDL NOT executed (deployment prerequisite) |
+| 2.7 | Regression coverage + security matrix per RD | DONE — 58 new tests (engine 31 + routes 27), full suite 1384/1384, 28-step live-HTTP journey 28/28 |
+| 2.8 | M-O7 completion report + browser acceptance | DONE — `docs/ops/O7_COMPLETION_REPORT.md`; browser evidence incl. one found-and-fixed detail-shape crash |
 
 ### Phase 3 — Database and infrastructure readiness — **NOT STARTED**
 
@@ -96,6 +96,7 @@ public launch in February 2027.
 
 | Date (UTC) | Entry |
 |-----------|-------|
+| 2026-11-20 | **Phase 2 (M-O7) complete**: schema parity 100, engine+routes+UI+tests implemented, 58 new tests, full suite 1384/1384, 28-step live-HTTP journey 28/28, browser acceptance (1 crash found→fixed→re-verified), migration artifacts registered (PG not executed), completion report filed. Published via bean-sync with SHA verification. |
 | 2026-11-20 | Phase 1 executed: recovery verdict C; authoritative workspace cloned at `93779fe7`; stale workspace preserved; QA DB bootstrapped (96 tables, integrity ok); dev server serving authoritative app on :3000; tsc 0 / lint 0e-13w; full suite 1326 tests → 1323 pass, 4 investigated (1 timing flake classified, 2 accumulation invariants resolved via QA bootstrap, auth 9/9); browser acceptance zero errors; legacy-DB leak incident contained; checklist + restored O7 register committed and published. |
 
 **Known-baseline register additions (fresh-workspace findings, classified):**
@@ -108,6 +109,7 @@ above restores them on a fresh workspace. Product code untouched.
 
 ## Next concrete deliverable
 
-Phase 2 task 2.2 — M-O7 schema: the four approved hiring models (`HiringRoom`,
-`HiringRoomMember`, `Interview`, `HiringStageEvent`) in BOTH dialects, parity gate 96→100,
-per `docs/ops/O7_OWNER_DECISION_REGISTER.md`.
+Phase 3 — database & infrastructure readiness: validate the registered migration sequence
+O2.1 → O3 → O4 → O5 → O6 → O7 with isolated-QA backups + restore drills and integrity
+verification (PG application and any production operation remain separately authorized
+gates). Then Phase 4 — the full launch-readiness audit with the P0–P3 register.

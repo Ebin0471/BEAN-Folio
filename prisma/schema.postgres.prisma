@@ -169,6 +169,15 @@ model User {
   invitationsSentBy               OpportunityInvitation[] @relation("invitationsSentBy")
   invitationsWithdrawnBy          OpportunityInvitation[] @relation("invitationsWithdrawnBy")
   invitationNegotiationProposers  InvitationNegotiation[] @relation("invitationNegotiationProposers")
+  // ---------- Opportunity Exchange (M-O7, additive) ----------
+  hiringRoomCandidates            HiringRoom[]        @relation("hiringRoomCandidates")
+  hiringRoomsCreatedBy            HiringRoom[]        @relation("hiringRoomsCreatedBy")
+  hiringRoomMemberships           HiringRoomMember[]  @relation("hiringRoomMemberships")
+  hiringRoomMembershipsAssignedBy HiringRoomMember[]  @relation("hiringRoomMembershipsAssignedBy")
+  interviewsProposedBy            Interview[]         @relation("interviewsProposedBy")
+  interviewsScheduledBy           Interview[]         @relation("interviewsScheduledBy")
+  interviewsCancelledBy           Interview[]         @relation("interviewsCancelledBy")
+  hiringStageEventActors          HiringStageEvent[]  @relation("hiringStageEventActors")
 }
 
 model Session {
@@ -1787,6 +1796,7 @@ model EmployerOrganization {
   opportunities Opportunity[]
   shortlists    CandidateShortlist[]
   invitations   OpportunityInvitation[] @relation("opportunityInvitations")
+  hiringRooms   HiringRoom[]         @relation("hiringRoomOrganizations")
 
   @@index([verificationStatus])
 }
@@ -1958,6 +1968,7 @@ model Opportunity {
   talentMatches TalentMatch[]  @relation("talentMatches")
   shortlistedOpportunities CandidateShortlist[] @relation("shortlistedOpportunities")
   invitations OpportunityInvitation[] @relation("opportunityInvitations")
+  hiringRooms HiringRoom[]         @relation("hiringRoomOpportunities")
 
   @@index([organizationId, status])
   @@index([status, updatedAt])
@@ -2154,6 +2165,7 @@ model OpportunityInvitation {
   updatedAt DateTime @updatedAt
 
   negotiations InvitationNegotiation[]
+  hiringRoom   HiringRoom?
 
   @@unique([organizationId, opportunityId, candidateUserId, activeInvitationToken])
   @@index([organizationId, status])
@@ -2204,4 +2216,198 @@ model InvitationNegotiation {
   @@unique([invitationId, seq])
   @@index([invitationId, status])
   @@index([status, expiresAt])
+}
+
+/// Hiring room (M-O7, additive). Exactly one room per accepted invitation —
+/// the DB-level `@unique(invitationId)` makes concurrent duplicate creation
+/// resolve to exactly one room (O7 RD-1); the loser observes 409
+/// OX_HIRING_ROOM_EXISTS.
+model HiringRoom {
+  id             String                @id @default(cuid())
+  /// One-to-one join contract (O7 RD-1/RD-3). Cascade: a room cannot outlive
+  /// its invitation row.
+  invitationId   String                @unique
+  invitation     OpportunityInvitation @relation(fields: [invitationId], references: [id], onDelete: Cascade)
+  organizationId String
+  organization   EmployerOrganization  @relation("hiringRoomOrganizations", fields: [organizationId], references: [id], onDelete: Cascade)
+  opportunityId  String
+  opportunity    Opportunity           @relation("hiringRoomOpportunities", fields: [opportunityId], references: [id], onDelete: Cascade)
+
+  /// Candidate. Nullable with SetNull per O0 D6 (O7 RD-20): deletion
+  /// anonymizes while the employer retains the frozen hiring-history row.
+  candidateUserId String?
+  candidate       User?   @relation("hiringRoomCandidates", fields: [candidateUserId], references: [id], onDelete: SetNull)
+
+  /// Identity snapshot frozen at room creation (O7 RD-19): the room keeps
+  /// rendering this name even after DISCOVERY consent revocation or account
+  /// deletion. Never refreshed from the live profile.
+  candidateDisplayName String
+
+  /// ACTIVE | ON_HOLD | CANDIDATE_WITHDRAWN | CLOSED | CANCELLED (O7 RD-2).
+  /// ON_HOLD rejects writes with OX_ROOM_NOT_ACTIONABLE; terminal states are
+  /// final — never reopened.
+  status String @default("ACTIVE")
+
+  /// Stage vocabulary (O7 RD-9, O0-FIXED): INVITATION_ACCEPTED |
+  /// INITIAL_REVIEW | SCREENING | INTERVIEW | ASSESSMENT | REFERENCE_CHECK |
+  /// OFFER | HIRED | REJECTED | WITHDRAWN. Forward-only (O7 RD-10); HIRED
+  /// reachable only from OFFER.
+  currentStage String @default("INVITATION_ACCEPTED")
+
+  /// Frozen accepted compensation terms — copied once from the invitation's
+  /// immutable accepted* snapshot inside the creation transaction. Never
+  /// recomputed from the opportunity and never rewritten (O0 RD-10 / O7
+  /// join contract).
+  acceptedSalaryMinPaise BigInt
+  acceptedSalaryMaxPaise BigInt
+  acceptedCurrency       String
+  acceptedPeriod         String // YEAR | MONTH | HOUR
+
+  /// IANA-validated, display-only candidate timezone (O7 RD-14). UTC remains
+  /// the authoritative storage for every DateTime column.
+  candidateTimezone String?
+
+  /// Terminal metadata. CLOSED requires closedOutcome HIRED|REJECTED
+  /// (O7 RD-8); CANCELLED requires closedReason from the O7 RD-11
+  /// room-cancellation vocabulary; CANDIDATE_WITHDRAWN records the
+  /// candidate's WITHDRAWN reason code on the stage event.
+  closedOutcome String?
+  closedReason  String?
+  closedAt      DateTime?
+  pausedAt      DateTime?
+
+  /// Room creator (SetNull on account deletion, O0 D6 / O7 RD-20).
+  createdByUserId String?
+  createdBy       User?   @relation("hiringRoomsCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members    HiringRoomMember[]
+  stages     HiringStageEvent[]
+  interviews Interview[]
+
+  @@index([organizationId, status])
+  @@index([candidateUserId, status])
+  @@index([opportunityId, status])
+  @@index([status, updatedAt])
+}
+
+/// Room-scoped membership (M-O7, additive). v1 assigns exactly one
+/// room-scoped role: HIRING_MANAGER (O7 RD-4/RD-5). Soft removal records
+/// removedAt; re-assignment reactivates the same row through a guarded
+/// updateMany, so (roomId, userId) stays unique forever.
+model HiringRoomMember {
+  id     String     @id @default(cuid())
+  roomId String
+  room   HiringRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  /// Nullable with SetNull per O0 D6 (O7 RD-20): deleted members keep the
+  /// membership audit trail without dangling user references.
+  userId String?
+  user   User?   @relation("hiringRoomMemberships", fields: [userId], references: [id], onDelete: SetNull)
+
+  /// HIRING_MANAGER (O7 RD-4: the only room-scoped role in v1)
+  roomRole String
+
+  /// Performer provenance (SetNull on account deletion, O0 D6 / O7 RD-20).
+  assignedByUserId String?
+  assignedBy       User?   @relation("hiringRoomMembershipsAssignedBy", fields: [assignedByUserId], references: [id], onDelete: SetNull)
+
+  /// Soft removal (O7 RD-4): non-null marks the membership inactive; the row
+  /// is never hard-deleted (append-only audit trail).
+  removedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([roomId, userId])
+  @@index([roomId, roomRole, removedAt])
+  @@index([userId])
+}
+
+/// Interview scheduling row (M-O7, additive). One row per interview with
+/// mutable scheduling state; the append-only history lives in
+/// HiringStageEvent + the server-derived activity timeline (O7 RD-12/RD-16
+/// and acceptance clarification B — history is never rebuilt solely from
+/// this mutable row).
+model Interview {
+  id     String     @id @default(cuid())
+  roomId String
+  room   HiringRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  /// PHONE_SCREEN | VIDEO | ONSITE | ASSESSMENT | OTHER (O7 RD-12)
+  type String
+
+  /// Video-call link (O7 RD-15): zod-validated https ≤500 chars at the API
+  /// boundary; serialized ONLY to the room candidate and employer roles with
+  /// room mutation rights, and omitted by every serializer once the interview
+  /// is CANCELLED or COMPLETED. Never rewritten, never liveness-tested.
+  meetingLink String?
+
+  /// PROPOSED | CONFIRMED | CANCELLED | COMPLETED (O7 RD-12)
+  status String @default("PROPOSED")
+
+  /// UTC-authoritative window (O7 RD-13): endsAt > startsAt, 15min–4h,
+  /// startsAt strictly future at propose/reschedule time; the only past-time
+  /// write is recording COMPLETED.
+  startsAt DateTime
+  endsAt   DateTime
+
+  /// EMPLOYER | CANDIDATE — who proposed the CURRENT times; flips when the
+  /// other side counters with an alternate slot (O7 RD-12), moving the
+  /// confirmation right to the other party.
+  proposedByRole String
+
+  /// Performer provenance (SetNull on account deletion, O0 D6 / O7 RD-20).
+  proposedByUserId  String?
+  proposedBy        User?   @relation("interviewsProposedBy", fields: [proposedByUserId], references: [id], onDelete: SetNull)
+  schedulingUserId  String?
+  schedulingUser    User?   @relation("interviewsScheduledBy", fields: [schedulingUserId], references: [id], onDelete: SetNull)
+  cancelledByUserId String?
+  cancelledBy       User?   @relation("interviewsCancelledBy", fields: [cancelledByUserId], references: [id], onDelete: SetNull)
+
+  /// Required when status=CANCELLED (O7 RD-11 interview vocabulary:
+  /// SCHEDULING_CONFLICT | UNAVAILABLE | NO_LONGER_REQUIRED | OTHER).
+  cancelReason String?
+  completedAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([roomId, status])
+  @@index([status, startsAt])
+}
+
+/// Append-only stage history (M-O7, additive). One row per entered stage;
+/// forward-only transitions plus the WITHDRAWN/REJECTED/HIRED terminal
+/// events (O7 RD-9/RD-10). Rows are immutable — corrections happen as new
+/// forward events, never edits.
+model HiringStageEvent {
+  id     String     @id @default(cuid())
+  roomId String
+  room   HiringRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  /// Stage ENTERED by this event (O7 RD-9 vocabulary incl. WITHDRAWN).
+  stage String
+  /// Stage left (null for the initial INVITATION_ACCEPTED event).
+  fromStage String?
+
+  /// EMPLOYER | CANDIDATE | SYSTEM (O7 RD-7 uses actorRole:"CANDIDATE" for
+  /// the WITHDRAWN event).
+  actorRole String
+
+  actorUserId String?
+  actor       User?   @relation("hiringStageEventActors", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  /// Required reason CODE for REJECTED/WITHDRAWN events (O7 RD-11 closed
+  /// vocabulary). Reason codes are visible to the candidate.
+  reason String?
+  /// Optional employer-private note, ≤500 chars (O7 RD-11). NEVER serialized
+  /// to the candidate by any serializer.
+  note String?
+
+  createdAt DateTime @default(now())
+
+  @@index([roomId, createdAt])
 }

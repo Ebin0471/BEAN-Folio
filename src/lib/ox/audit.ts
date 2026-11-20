@@ -26,10 +26,16 @@ import { db } from "@/lib/db";
  *   ox.invitation.sent | ox.invitation.viewed | ox.invitation.negotiation_requested           (M-O6)
  *   ox.invitation.accepted | ox.invitation.declined | ox.invitation.withdrawn | ox.invitation.expired   (M-O6)
  *   ox.negotiation.proposed | ox.negotiation.withdrawn | ox.negotiation.accepted | ox.negotiation.declined | ox.negotiation.expired   (M-O6)
+ *   ox.room.created | ox.room.paused | ox.room.resumed | ox.room.stage_advanced       (M-O7)
+ *   ox.room.withdrawn | ox.room.cancelled | ox.room.closed                            (M-O7)
+ *   ox.room.member_assigned | ox.room.member_removed                                  (M-O7)
+ *   ox.interview.proposed | ox.interview.confirmed | ox.interview.alternate           (M-O7)
+ *   ox.interview.rescheduled | ox.interview.cancelled | ox.interview.completed        (M-O7)
  *
  * Target types: EMPLOYER_ORGANIZATION | EMPLOYER_MEMBERSHIP | EMPLOYER_VERIFICATION
  *               | CANDIDATE_OPPORTUNITY_PROFILE | CANDIDATE_VISIBILITY_CONSENT (O2)
  *               | OPPORTUNITY (O3) | OPPORTUNITY_INVITATION | INVITATION_NEGOTIATION (M-O6)
+ *               | HIRING_ROOM | HIRING_ROOM_MEMBER | INTERVIEW (M-O7)
  */
 export const OX_AUDIT_ACTIONS = {
   orgCreated: "ox.org.created",
@@ -82,6 +88,22 @@ export const OX_AUDIT_ACTIONS = {
   negotiationAccepted: "ox.negotiation.accepted",
   negotiationDeclined: "ox.negotiation.declined",
   negotiationExpired: "ox.negotiation.expired",
+  // M-O7 additions
+  roomCreated: "ox.room.created",
+  roomPaused: "ox.room.paused",
+  roomResumed: "ox.room.resumed",
+  roomStageAdvanced: "ox.room.stage_advanced",
+  roomWithdrawn: "ox.room.withdrawn",
+  roomCancelled: "ox.room.cancelled",
+  roomClosed: "ox.room.closed",
+  roomMemberAssigned: "ox.room.member_assigned",
+  roomMemberRemoved: "ox.room.member_removed",
+  interviewProposed: "ox.interview.proposed",
+  interviewConfirmed: "ox.interview.confirmed",
+  interviewAlternate: "ox.interview.alternate",
+  interviewRescheduled: "ox.interview.rescheduled",
+  interviewCancelled: "ox.interview.cancelled",
+  interviewCompleted: "ox.interview.completed",
 } as const;
 
 export const OX_TARGET = {
@@ -94,6 +116,10 @@ export const OX_TARGET = {
   // M-O6 additions
   opportunityInvitation: "OPPORTUNITY_INVITATION",
   invitationNegotiation: "INVITATION_NEGOTIATION",
+  // M-O7 additions
+  hiringRoom: "HIRING_ROOM",
+  hiringRoomMember: "HIRING_ROOM_MEMBER",
+  interview: "INTERVIEW",
 } as const;
 
 /** Either the global Prisma client or an interactive-transaction client. */

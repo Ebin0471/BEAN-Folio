@@ -16,10 +16,12 @@ import { Briefcase } from "lucide-react";
 
 import { SectionHeader } from "@/components/bean/SectionHeader";
 
+import OxCandidateHiringRoomsPanel from "./OxCandidateHiringRoomsPanel";
 import OxCandidateInvitationsPanel from "./OxCandidateInvitationsPanel";
 import OxCandidateProfileView from "./OxCandidateProfileView";
 import OxCandidateTransparencyPanel from "./OxCandidateTransparencyPanel";
 import OxEmployerDiscoveryPanel from "./OxEmployerDiscoveryPanel";
+import OxEmployerHiringRoomsPanel from "./OxEmployerHiringRoomsPanel";
 import OxEmployerInvitationsPanel from "./OxEmployerInvitationsPanel";
 import OxEmployerOpportunitiesPanel from "./OxEmployerOpportunitiesPanel";
 import OxEmployerSetupView from "./OxEmployerSetupView";
@@ -72,6 +74,13 @@ export default function OpportunityExchangeView() {
         <OxEmployerInvitationsPanel />
       </section>
 
+      <section aria-labelledby="ox-employer-rooms-heading" className="mt-10">
+        <h2 id="ox-employer-rooms-heading" className="sr-only">
+          Hiring rooms
+        </h2>
+        <OxEmployerHiringRoomsPanel />
+      </section>
+
       <section aria-labelledby="ox-candidate-workspace-heading" className="mt-10">
         <SectionHeader
           title="For professionals"
@@ -90,6 +99,13 @@ export default function OpportunityExchangeView() {
         <div className="mt-6">
           <OxCandidateInvitationsPanel />
         </div>
+
+        <section aria-labelledby="ox-candidate-rooms-heading" className="mt-6">
+          <h2 id="ox-candidate-rooms-heading" className="sr-only">
+            Hiring rooms
+          </h2>
+          <OxCandidateHiringRoomsPanel />
+        </section>
       </section>
     </div>
   );

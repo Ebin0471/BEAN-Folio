@@ -41,6 +41,15 @@ export const NOTIFICATION_TYPES = [
   "HIRING_NEGOTIATION_PROPOSAL",
   "HIRING_INVITATION_WITHDRAWN",
   "HIRING_INVITATION_EXPIRED",
+  // M-O7 — Hiring Rooms & interviews (payload-minimal: identifiers, public
+  // titles and vocabulary codes only; never amounts, contact details, links
+  // or profile content).
+  "HIRING_ROOM_CREATED",
+  "HIRING_ROOM_STAGE",
+  "HIRING_INTERVIEW",
+  "HIRING_ROOM_WITHDRAWN",
+  "HIRING_ROOM_CLOSED",
+  "HIRING_ROOM_MEMBER",
 ] as const;
 
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
