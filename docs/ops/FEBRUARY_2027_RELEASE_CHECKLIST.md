@@ -127,10 +127,41 @@ test-infrastructure classifications from Phase 1 (queue-timing flake + auth.test
 invariants). The M22-era CSP (M-1) and rate-limit backend (HP-3) deferrals remain documented
 Tier-C follow-ups in the protocol register.
 
-### Phase 5 — Beta and public launch — **NOT STARTED**
+### Phase 5 — Controlled beta preparation — **COMPLETE (2026-11-21)**
 
-Controlled private beta → real user feedback → critical-defect resolution → feature freeze →
-public launch in February 2027.
+Beta preparation only: release candidate established and re-verified in a fresh
+workspace; the private-beta plan, operational-readiness audit, additional launch
+assurance, prepare-only PostgreSQL/deployment prerequisites and the release-candidate
+checklist were produced and published. **No beta invitations, no external
+communications, no PostgreSQL migration, no deployment.** Gates A (PostgreSQL),
+B (deployment) and C (public launch) remain separately owner-authorized.
+
+| # | Item | Status | Evidence |
+|---|------|--------|----------|
+| 5.1 | Workspace + release candidate established | DONE | Workspace had been recycled; fresh clone of authoritative remote `main` verified `git ls-remote` == local HEAD == **`e52786e44e7d6993ed02403f5f4edcd4e70cf43e`** (clean main); `/home/z/my-project` preserved untouched; QA DB rebuilt via guard-sanctioned path (100 tables, integrity ok, FK 0); fixture manifest seeders re-run in order, post-bootstrap counts == Phase 4 manifest §4 exactly. |
+| 5.2 | Phase 4 evidence + P0/P1 verification | DONE | Phase 4 completion evidence read from this checklist; the single P1 (P1-1 messaging consent gate) is in the published fix commit `e52786e`; **97/97 journey checks re-run green in a single pass** in this workspace (J1 11, J2 7, J3 10, J4 9, J5 11, J6 6, J7 7, J8 16, J9 11, J10 9); remaining P2/P3 recorded (4 P3 + M-1/HP-3/M-7 deferrals → `PHASE5_LAUNCH_ASSURANCE.md` §8 register). |
+| 5.3 | Core functionality real, not placeholder | DONE | The 97-check live-HTTP auditor (`scripts/qa-journeys.ts`) drives real APIs and verifies real DB state; browser spot checks this phase (desktop 1440×900 + mobile 390×844: home, auth, onboarding end-to-end, OX employer+candidate panels with live consent data) — zero console/page errors; design system preserved. |
+| 5.4 | Private beta plan | DONE | `docs/ops/PHASE5_BETA_PLAN.md` — manual white-glove onboarding (candidates + employers incl. verification), owner-side invitation/access management, cohort recommendation **10 candidates + 4 employers (2 verified orgs)** with funnel-density rationale, feedback collection, bug triage + support SLO, incident escalation ladder, deletion/privacy handling, success metrics, expansion criteria; explicit non-goals (no room chat/document-sharing/M-O8, no invitations without owner approval). |
+| 5.5 | Operational readiness audit | DONE | `docs/ops/PHASE5_OPERATIONAL_READINESS.md` — health/ready verified live (queue counters, DB reachable), error visibility (reportError → structured logs + optional webhook; error boundaries present), backup/restore tooling + drills, session cookie flags, durable queue + notification delivery, upload transports + authz ladder, rate limiter observed FIRING, rollback levers, admin controls; honest gap register G-1…G-8 (G-1/G-2/G-8 = operator actions; zero-cost tooling only). |
+| 5.6 | Additional launch assurance | DONE | `docs/ops/PHASE5_LAUNCH_ASSURANCE.md` — a11y (semantic landmarks, keyboard flows, real a11y tree checks; no AT session claimed), cross-tenant suites green, session/account security (rate limiter firing live), upload/download ladder, privacy/data-exposure, production build exit 0, mobile 390×844 checks; consolidated unresolved-risk register R-1…R-11 (P0 none, P1 none open, P2 none on product surfaces, P3 eleven recorded) + explicit non-claims (no pentest, no certification). |
+| 5.7 | PostgreSQL/deployment prerequisites (prepare only) | DONE | `docs/ops/PHASE5_POSTGRES_DEPLOYMENT_PREREQUISITES.md` — Gate A (O2.1→O7 execution order with all 12 registered artifact SHA-256s, O2.1 destructive-adjacent §4 approval checklist, backup/restore evidence requirements, production verification commands), Gate B (deployment + rollback procedure, pre/post checks), Gate C (launch), boundary statement: nothing executed, nothing authorized. |
+| 5.8 | Release-candidate checklist | DONE | `docs/ops/PHASE5_RELEASE_CANDIDATE_CHECKLIST.md` — functional/UX/security/data/performance/monitoring/support/limitations verified item-by-item; beta entry criteria (operator actions pending: deployment approval, backup drill, uptime poll, cohort list), beta exit criteria, February-2027 go/no-go criteria; feature freeze rule stated. |
+| 5.9 | Verification gates (this phase) | DONE | `bunx tsc --noEmit` → **0 errors**; `bun run lint` → **0 errors / 13 warnings** (baseline); full regression suite (90 files, sequential, pinned QA URL) → **1371 tests, 0 failures** (timing flake did not recur); `bunx next build` → **exit 0**; parity 100/100; QA DB integrity ok / FK 0; secret + runtime-data scans run at publish (bean-sync built-in). |
+
+**Phase 5 environment incident record (contained, resolved):** the first full-suite
+execution in the fresh workspace was launched WITHOUT an inline-pinned `DATABASE_URL`;
+the inherited legacy URL (`file:/home/z/my-project/db/custom.db`) was picked up by
+direct-DB test suites, which created fixture rows in the LEGACY workspace database.
+Containment the same hour: read-only inspection proved the legacy DB was already
+**data-empty in this container instance** (oldest of its 354 user rows was created
+during the incident run itself — the historical content did not survive the container
+recycle, consistent with the Phase 3 finding), `PRAGMA integrity_check` = ok,
+**zero pre-existing rows modified (none existed)**; fixture rows deliberately LEFT in
+place per the never-modify-legacy policy; no write reached any other protected target
+(all live-HTTP suites wrote through the pinned QA server). The full suite was
+re-executed with the pinned URL: 90 files, 0 failures. Standing rule re-affirmed with
+renewed force: **every command that can touch a database — including `bun test` —
+must pin `DATABASE_URL` inline.**
 
 ---
 
@@ -138,6 +169,7 @@ public launch in February 2027.
 
 | Date (UTC) | Entry |
 |-----------|-------|
+| 2026-11-21 | **Phase 5 (controlled beta preparation) complete**: workspace recycled again → fresh clone verified at `e52786e` (remote == local, stale workspace preserved); QA DB rebuilt guard-sanctioned (100 tables, integrity ok, FK 0), manifest seeders re-run (post-bootstrap counts == Phase 4 manifest exactly); Phase 4 evidence re-verified live — **97/97 journey checks green in a single pass**, gates green (tsc 0, lint 0e/13w, full suite 90 files/1371 tests/0 failures with pinned URL, build exit 0, parity 100/100); browser spot checks desktop+mobile zero errors; P0/P1: none open (P1-1 fix re-verified in J9); five Phase 5 docs produced (beta plan with 10-candidate + 4-employer cohort recommendation, operational readiness G-1…G-8, launch assurance R-1…R-11, prepare-only PostgreSQL/deployment gates A/B/C, RC checklist entry/exit/go-no-go). Incident contained: one un-pinned suite run created fixture rows in the legacy DB — proven read-only to be already data-empty pre-incident, integrity ok, zero pre-existing rows modified, rows left in place; pin-everywhere rule re-affirmed. No invitations, no PostgreSQL, no deployment. Documentation-only commit; zero product code changes. |
 | 2026-11-20 | **Phase 4 (launch-readiness audit) complete**: canonical QA fixture re-bootstrap through real APIs (manifest committed); 97/97 live-HTTP journey checks green (J1–J10, repeatable) + J11 browser audit desktop/mobile with zero console errors; security/ops probe pass clean; one P1 found & fixed (message-request consent gate unenforced server-side → opening-message-only pre-approval, 409 `DM_REQUEST_PENDING`; verified live + 30/30 pinned suite); P3 register: 4 known, no P0/P2; gates: tsc 0, lint 0e/13w baseline, full suite 0 failures, production build exit 0, parity 100/100, integrity ok FK 0, scans clean. Fixture infra committed (`seed-ox-journeys.ts`, `qa-journeys.ts`, manifest doc). |
 | 2026-11-20 | **Phase 3 (database & infrastructure readiness) complete**: workspace re-cloned from the verified remote main `3d86f87` after another container recycle (stale workspace preserved, no history rewrite); chain inventory 12/12 artifacts SHA-verified and 12/12 byte-for-byte reproducible; full O2.1→O7 rehearsal on a disposable copy (every stage integrity ok, FK 0, empty intermediate diff, fixtures preserved; tables 90→100); RD-1/RD-4/O6 DB-level invariants + FK SET NULL/CASCADE behaviors verified; double-apply refusals demonstrated (O2.1 noted replayable-by-construction); canonical QA DB rebuilt behind the fail-closed guard (100 tables, parity 100, db-push in-sync) — original Phase 2 QA file + fixtures not reproducible after the recycle, recorded as a Phase 4 prerequisite; verified backup (sha256 `f5e28b0c…`) + restore drill to a disposable target (100-table parity, original untouched); PG artifacts structurally screened, never executed. Documentation-only commit: checklist + O7 registration prose counts; zero product code changes. |
 | 2026-11-20 | **Phase 2 (M-O7) complete**: schema parity 100, engine+routes+UI+tests implemented, 58 new tests, full suite 1384/1384, 28-step live-HTTP journey 28/28, browser acceptance (1 crash found→fixed→re-verified), migration artifacts registered (PG not executed), completion report filed. Published via bean-sync with SHA verification. |
@@ -153,8 +185,10 @@ above restores them on a fresh workspace. Product code untouched.
 
 ## Next concrete deliverable
 
-Phase 5 — controlled private beta and the February 2027 public launch, on top of the
-Phase 4 audit baseline (97/97 journey checks, one P1 fixed, no open P0/P2). Before beta:
-owner decisions on the recorded P3 polish items (optional), CSP Tier-C rollout timing (M-1)
-and the rate-limit shared backend (HP-3) if beta scale demands it. PostgreSQL application,
-any production database operation and deployment remain separately authorized gates.
+Phase 5 preparation is COMPLETE. The next deliverables are **owner-decision gates**, not
+agent work: (1) approve the beta plan + cohort-1 list, (2) authorize Gate B deployment
+environment (then the operator backup drill + uptime poll per the RC entry criteria),
+(3) optionally schedule Gate A (PostgreSQL O2.1→O7) before or after beta per
+`PHASE5_POSTGRES_DEPLOYMENT_PREREQUISITES.md`. Beta execution (inviting participants)
+starts ONLY on a separate explicit owner instruction — no invitations, no external
+communications and no launch announcements are authorized by this phase.
