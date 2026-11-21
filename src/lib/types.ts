@@ -486,6 +486,10 @@ export interface RiisheWorkflowStepDTO {
   tool: string;
   title: string;
   risk: string; // LOW | MEDIUM | HIGH | DESTRUCTIVE
+  /** Registry-derived automation level (B2): 1 auto / 2 confirm / 3 destructive-confirm. */
+  level: number | null;
+  /** Honest reversal story from the registry (null = read-only or unknown tool). */
+  undo: { supported: boolean; how: string | null } | null;
   requiresApproval: boolean;
   status: string; // PENDING | AWAITING_APPROVAL | READY | RUNNING | SUCCEEDED | FAILED | SKIPPED | CANCELLED
   error: string | null;

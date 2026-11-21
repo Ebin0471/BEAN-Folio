@@ -53,6 +53,49 @@ export const RISK_APPROVAL: Record<ToolRisk, boolean> = {
   DESTRUCTIVE: true,
 };
 
+// ------------------------------------------------------------- automation policy
+
+/**
+ * Automation level (blueprint §5, B2) — the REGISTRY-level permission
+ * declaration. The planner reads these values; it can never set, raise or
+ * bypass them.
+ *
+ *  1  Safe automatic execution — drafts, private records, read-only analysis.
+ *     Nothing public changes and nothing is sent.
+ *  2  Explicit user confirmation required for EVERY execution — anything that
+ *     sends a message, publishes/schedules public content or otherwise makes
+ *     the owner visible to others. approval:true is enforced even where the
+ *     generic risk map would have permitted silent execution (e.g. the
+ *     MEDIUM-risk scheduled post below).
+ *  3  Never silently executed — destructive actions with irreversible
+ *     effects. They additionally require the typed confirm interaction
+ *     (approve with confirm=true) and otherwise answer confirm-required.
+ *     RIISHE has NO tools for spending money or purchasing services and must
+ *     never gain them.
+ */
+export type ToolAutomationLevel = 1 | 2 | 3;
+
+export const TOOL_LEVELS: ToolAutomationLevel[] = [1, 2, 3];
+
+/** Registry-level automation category (drives pre-authorization preferences). */
+export type ToolCategory = "discovery" | "outreach" | "content" | "relationship" | "growth";
+
+export const TOOL_CATEGORIES: ToolCategory[] = ["discovery", "outreach", "content", "relationship", "growth"];
+
+/** Undo metadata: the honest reversal story for a tool's persistent effect. */
+export interface ToolUndo {
+  supported: boolean;
+  /** How to reverse it (user-facing, honest); null when nothing persists. */
+  how: string | null;
+}
+
+/** Verification result recorded in the step's resultJson (B2 verify phase). */
+export interface ToolVerification {
+  ok: boolean;
+  /** Evidence: what was re-read from the backend and what it showed. */
+  detail: string;
+}
+
 export interface ToolContext {
   /** The workflow owner — every handler re-verifies ownership server-side. */
   userId: string;
@@ -61,7 +104,7 @@ export interface ToolContext {
   /**
    * Present ONLY when executed at approval time inside an authenticated HTTP
    * request. HIGH tools that reuse a real API route handler (enquiry send)
-   * require it — the queue never executes HIGH tools.
+   * require it — the queue never executes them.
    */
   createInquiry?: (req: NextRequest) => Promise<Response>;
 }
@@ -71,6 +114,10 @@ export interface RiisheToolDef<S = unknown> {
   title: string;
   description: string;
   risk: ToolRisk;
+  /** Registry-level automation level (see ToolAutomationLevel). */
+  level: ToolAutomationLevel;
+  /** Registry-level automation category. */
+  category: ToolCategory;
   inputSchema: ZodType<S>;
   timeoutMs: number;
   maxAttempts: number;
@@ -78,6 +125,25 @@ export interface RiisheToolDef<S = unknown> {
   idempotent: boolean;
   auditAction: string;
   execute: (ctx: ToolContext, input: S) => Promise<Record<string, unknown>>;
+  /**
+   * B2 verify phase: re-read the persistent output from the backend after the
+   * handler returns. A failed verification is a FAILED step — success is
+   * never reported before the persistent result is confirmed. Read-only tools
+   * (no persistent output) declare no verify function.
+   */
+  verify?: (ctx: ToolContext, input: S, result: Record<string, unknown>) => Promise<ToolVerification>;
+  /** Honest reversal story for the tool's persistent effect (null = read-only). */
+  undo: ToolUndo | null;
+}
+
+/**
+ * Approval rule of record: a tool requires explicit user approval when the
+ * REGISTRY says so — its automation level is 2 or 3 (or its risk tier is
+ * HIGH/DESTRUCTIVE). The generic risk map alone is never sufficient: a
+ * Level-2 MEDIUM-risk tool still requires approval.
+ */
+export function toolApprovalRequired(tool: Pick<RiisheToolDef, "level" | "risk">): boolean {
+  return tool.level >= 2 || tool.risk === "HIGH" || tool.risk === "DESTRUCTIVE";
 }
 
 // ---------------------------------------------------------------- discovery
@@ -538,6 +604,121 @@ async function topContentExecute(ctx: ToolContext, input: z.infer<typeof topCont
   return { windowDays: input.days, top: items };
 }
 
+// ---------------------------------------------------------------- verification
+
+/**
+ * B2 verify hooks — every tool that produces a PERSISTENT output re-reads its
+ * own result from the backend here. Verification failures are real failures
+ * (the step retries/fails honestly); read-only tools declare none.
+ */
+
+async function verifyPostRow(
+  ctx: ToolContext,
+  postId: unknown,
+  expect: { status?: string[]; scheduledInFuture?: boolean; mustNotExist?: boolean }
+): Promise<ToolVerification> {
+  if (typeof postId !== "string" || postId.length === 0) return { ok: false, detail: "no post id in the tool result" };
+  const post = await db.post.findFirst({ where: { id: postId, authorId: ctx.userId }, select: { id: true, status: true, scheduledAt: true } });
+  if (expect.mustNotExist) {
+    return post
+      ? { ok: false, detail: `post ${postId} still exists (status ${post.status}) after deletion` }
+      : { ok: true, detail: `re-read confirmed post ${postId} no longer exists` };
+  }
+  if (!post) return { ok: false, detail: `post ${postId} not found for the owner after execution` };
+  if (expect.status && !expect.status.includes(post.status)) {
+    return { ok: false, detail: `post ${postId} status is ${post.status}, expected ${expect.status.join("/")}` };
+  }
+  if (expect.scheduledInFuture && (!post.scheduledAt || post.scheduledAt.getTime() <= Date.now())) {
+    return { ok: false, detail: `post ${postId} has no future scheduled time` };
+  }
+  return { ok: true, detail: `re-read confirmed post ${postId} (status ${post.status}) in the database` };
+}
+
+const verifyPostDraft = (ctx: ToolContext, _input: unknown, result: Record<string, unknown>) =>
+  verifyPostRow(ctx, result.postId, { status: ["DRAFT"] });
+const verifyPostScheduled = (ctx: ToolContext, _input: unknown, result: Record<string, unknown>) =>
+  verifyPostRow(ctx, result.postId, { status: ["SCHEDULED"], scheduledInFuture: true });
+const verifyPostPublished = (ctx: ToolContext, _input: unknown, result: Record<string, unknown>) =>
+  verifyPostRow(ctx, result.postId, { status: ["PUBLISHED"] });
+const verifyPostDeleted = (ctx: ToolContext, _input: unknown, result: Record<string, unknown>) =>
+  verifyPostRow(ctx, result.postId, { mustNotExist: true });
+
+async function verifyEnquiryDraft(ctx: ToolContext, _input: unknown, result: Record<string, unknown>): Promise<ToolVerification> {
+  const taskId = result.draftTaskId;
+  if (typeof taskId !== "string" || taskId.length === 0) return { ok: false, detail: "no draft task id in the tool result" };
+  const task = await db.agentTask.findFirst({
+    where: { id: taskId, userId: ctx.userId, agent: "RIISHE", kind: "ENQUIRY_DRAFT", status: "AWAITING_APPROVAL" },
+    select: { id: true, status: true },
+  });
+  return task
+    ? { ok: true, detail: `re-read confirmed enquiry draft ${taskId} is awaiting approval` }
+    : { ok: false, detail: `enquiry draft ${taskId} not found awaiting approval after preparation` };
+}
+
+async function verifyEnquirySent(ctx: ToolContext, _input: unknown, result: Record<string, unknown>): Promise<ToolVerification> {
+  const inquiryId = result.inquiryId;
+  if (typeof inquiryId !== "string" || inquiryId.length === 0) return { ok: false, detail: "no inquiry id in the tool result" };
+  const inquiry = await db.inquiry.findFirst({ where: { id: inquiryId, senderId: ctx.userId }, select: { id: true, status: true } });
+  return inquiry
+    ? { ok: true, detail: `re-read confirmed inquiry ${inquiryId} recorded (status ${inquiry.status})` }
+    : { ok: false, detail: `inquiry ${inquiryId} not found for the sender after sending` };
+}
+
+async function verifyShortlist(ctx: ToolContext, input: unknown, result: Record<string, unknown>): Promise<ToolVerification> {
+  const usernames = (result.added as unknown) ?? (input as { usernames?: string[] })?.usernames ?? [];
+  if (!Array.isArray(usernames) || usernames.length === 0) return { ok: true, detail: "nothing was added" };
+  const added = usernames as string[];
+  const people = await db.user.findMany({
+    where: { username: { in: added.map((u) => u.toLowerCase()) } },
+    select: { id: true, username: true },
+  });
+  const rows = await db.riisheCreatorShortlist.findMany({
+    where: { userId: ctx.userId, personId: { in: people.map((p) => p.id) } },
+    select: { personId: true },
+  });
+  const stored = new Set(rows.map((r) => r.personId));
+  const missing = added.filter((u) => {
+    const person = people.find((p) => p.username === u.toLowerCase());
+    return person ? !stored.has(person.id) : true;
+  });
+  return missing.length === 0
+    ? { ok: true, detail: `re-read confirmed ${added.length} shortlist row(s) stored` }
+    : { ok: false, detail: `shortlist rows missing after execution: ${missing.join(", ")}` };
+}
+
+async function verifyReminderScheduled(ctx: ToolContext, _input: unknown, result: Record<string, unknown>): Promise<ToolVerification> {
+  const automationId = result.automationId;
+  if (typeof automationId !== "string" || automationId.length === 0) return { ok: false, detail: "no automation id in the tool result" };
+  const automation = await db.riisheAutomation.findFirst({
+    where: { id: automationId, userId: ctx.userId, status: "ACTIVE" },
+    select: { id: true, status: true },
+  });
+  return automation
+    ? { ok: true, detail: `re-read confirmed reminder automation ${automationId} is ACTIVE` }
+    : { ok: false, detail: `reminder automation ${automationId} not found ACTIVE after scheduling` };
+}
+
+async function verifyReminderCancelled(ctx: ToolContext, _input: unknown, result: Record<string, unknown>): Promise<ToolVerification> {
+  const automationId = result.automationId;
+  if (typeof automationId !== "string" || automationId.length === 0) return { ok: false, detail: "no automation id in the tool result" };
+  const automation = await db.riisheAutomation.findFirst({
+    where: { id: automationId, userId: ctx.userId, status: "CANCELLED" },
+    select: { id: true, status: true },
+  });
+  return automation
+    ? { ok: true, detail: `re-read confirmed reminder automation ${automationId} is CANCELLED` }
+    : { ok: false, detail: `reminder automation ${automationId} not CANCELLED after cancellation` };
+}
+
+async function verifyNoteSaved(ctx: ToolContext, _input: unknown, result: Record<string, unknown>): Promise<ToolVerification> {
+  const noteId = result.noteId;
+  if (typeof noteId !== "string" || noteId.length === 0) return { ok: false, detail: "no note id in the tool result" };
+  const note = await db.riisheContactNote.findFirst({ where: { id: noteId, userId: ctx.userId }, select: { id: true } });
+  return note
+    ? { ok: true, detail: `re-read confirmed note ${noteId} stored for the owner` }
+    : { ok: false, detail: `note ${noteId} not found for the owner after saving` };
+}
+
 // ---------------------------------------------------------------- registry
 
 /**
@@ -562,168 +743,220 @@ export const RIISHE_TOOLS: Record<string, RiisheToolDef<never>> = {
     title: "Discover creators",
     description: "Find and explain matching creators from real public profiles (profession, skills, location).",
     risk: "LOW",
+    level: 1,
+    category: "discovery",
     inputSchema: searchCreatorsInput,
     timeoutMs: 20_000,
     maxAttempts: 3,
     idempotent: true,
     auditAction: "riishe.tool.search_creators",
     execute: searchCreatorsExecute,
+    undo: null, // read-only — nothing persists
   }),
   "discovery.opportunityRadar": defineTool({
     name: "discovery.opportunityRadar",
     title: "Run opportunity radar",
     description: "Surface real collaboration opportunities from recent public activity in the owner's fields.",
     risk: "LOW",
+    level: 1,
+    category: "discovery",
     inputSchema: radarInput,
     timeoutMs: 20_000,
     maxAttempts: 3,
     idempotent: true,
     auditAction: "riishe.tool.opportunity_radar",
     execute: radarExecute,
+    undo: null, // read-only — nothing persists
   }),
   "shortlist.addCreators": defineTool({
     name: "shortlist.addCreators",
     title: "Shortlist creators",
     description: "Save creators to the owner's private shortlist (self, blocked and unknown accounts refused).",
     risk: "MEDIUM",
+    level: 1,
+    category: "relationship",
     inputSchema: shortlistInput,
     timeoutMs: 20_000,
     maxAttempts: 3,
     idempotent: true,
     auditAction: "riishe.tool.shortlist_add",
     execute: shortlistExecute,
+    verify: verifyShortlist,
+    undo: { supported: true, how: "Remove the person from the shortlist in the discovery panel." },
   }),
   "enquiry.draft": defineTool({
     name: "enquiry.draft",
     title: "Prepare enquiry draft",
     description: "Prepare a personalized collaboration enquiry draft for review — nothing is sent.",
     risk: "LOW",
+    level: 1,
+    category: "outreach",
     inputSchema: enquiryDraftInput,
     timeoutMs: 20_000,
     maxAttempts: 3,
     idempotent: true,
     auditAction: "riishe.tool.enquiry_draft",
     execute: enquiryDraftExecute,
+    verify: verifyEnquiryDraft,
+    undo: { supported: true, how: "Dismiss the draft in RIISHE outreach drafts — nothing was sent." },
   }),
   "enquiry.send": defineTool({
     name: "enquiry.send",
     title: "Send approved enquiry",
     description: "Send an APPROVED enquiry draft through the real inquiry API. Requires explicit confirmation.",
     risk: "HIGH",
+    level: 2,
+    category: "outreach",
     inputSchema: enquirySendInput,
     timeoutMs: 30_000,
     maxAttempts: 1,
     idempotent: false,
     auditAction: "riishe.tool.enquiry_send",
     execute: enquirySendExecute,
+    verify: verifyEnquirySent,
+    undo: { supported: false, how: "A real message was delivered to another person — it cannot be unsent." },
   }),
   "post.draft": defineTool({
     name: "post.draft",
     title: "Draft a social post",
     description: "Create a real DRAFT post (caption + hashtags) for the owner to review — never published.",
     risk: "LOW",
+    level: 1,
+    category: "content",
     inputSchema: postDraftInput,
     timeoutMs: 20_000,
     maxAttempts: 3,
     idempotent: false,
     auditAction: "riishe.tool.post_draft",
     execute: postDraftExecute,
+    verify: verifyPostDraft,
+    undo: { supported: true, how: "Delete the draft post in the composer — it was never public." },
   }),
   "post.schedule": defineTool({
     name: "post.schedule",
     title: "Schedule a social post",
-    description: "Create a real SCHEDULED post that publishes automatically when due (existing sweep).",
+    description: "Create a real SCHEDULED post that publishes automatically when due (existing sweep). Requires explicit confirmation — the post becomes public when due.",
     risk: "MEDIUM",
+    level: 2,
+    category: "content",
     inputSchema: postScheduleInput,
     timeoutMs: 20_000,
     maxAttempts: 3,
     idempotent: false,
     auditAction: "riishe.tool.post_schedule",
     execute: postScheduleExecute,
+    verify: verifyPostScheduled,
+    undo: { supported: true, how: "Cancel or re-draft the scheduled post in the composer any time before it fires." },
   }),
   "post.publish": defineTool({
     name: "post.publish",
     title: "Publish a draft post",
     description: "Publish a draft created in this workflow. Requires explicit confirmation.",
     risk: "HIGH",
+    level: 2,
+    category: "content",
     inputSchema: publishInput,
     timeoutMs: 20_000,
     maxAttempts: 1,
     idempotent: true,
     auditAction: "riishe.tool.post_publish",
     execute: postPublishExecute,
+    verify: verifyPostPublished,
+    undo: { supported: true, how: "Set the post back to draft or private in the composer (unpublish)." },
   }),
   "post.delete": defineTool({
     name: "post.delete",
     title: "Delete a post",
     description: "Delete one of the owner's posts. Destructive: separate confirmation showing exactly what is removed.",
     risk: "DESTRUCTIVE",
+    level: 3,
+    category: "content",
     inputSchema: deletePostInput,
     timeoutMs: 20_000,
     maxAttempts: 1,
     idempotent: true,
     auditAction: "riishe.tool.post_delete",
     execute: postDeleteExecute,
+    verify: verifyPostDeleted,
+    undo: { supported: false, how: "Deletion is permanent — the post cannot be restored by RIISHE." },
   }),
   "followup.scheduleReminder": defineTool({
     name: "followup.scheduleReminder",
     title: "Schedule a follow-up reminder",
     description: "Track an outgoing inquiry and prepare a follow-up draft after N days; auto-cancels on response.",
     risk: "MEDIUM",
+    level: 1,
+    category: "outreach",
     inputSchema: reminderInput,
     timeoutMs: 20_000,
     maxAttempts: 3,
     idempotent: false,
     auditAction: "riishe.tool.followup_schedule",
     execute: reminderExecute,
+    verify: verifyReminderScheduled,
+    undo: { supported: true, how: "Cancel the reminder (followup.cancelReminder or the automations panel)." },
   }),
   "followup.cancelReminder": defineTool({
     name: "followup.cancelReminder",
     title: "Cancel a follow-up reminder",
     description: "Cancel one of the owner's scheduled reminders.",
     risk: "MEDIUM",
+    level: 1,
+    category: "outreach",
     inputSchema: reminderCancelInput,
     timeoutMs: 20_000,
     maxAttempts: 3,
     idempotent: true,
     auditAction: "riishe.tool.followup_cancel",
     execute: reminderCancelExecute,
+    verify: verifyReminderCancelled,
+    undo: { supported: true, how: "Schedule the reminder again with the same details." },
   }),
   "relationship.saveNote": defineTool({
     name: "relationship.saveNote",
     title: "Save a relationship note",
     description: "Save a PRIVATE note about a person (visible only to the owner).",
     risk: "MEDIUM",
+    level: 1,
+    category: "relationship",
     inputSchema: noteInput,
     timeoutMs: 20_000,
     maxAttempts: 3,
     idempotent: true,
     auditAction: "riishe.tool.note_save",
     execute: noteExecute,
+    verify: verifyNoteSaved,
+    undo: { supported: true, how: "Delete the note in the relationship notes panel." },
   }),
   "growth.weeklyReport": defineTool({
     name: "growth.weeklyReport",
     title: "Summarize weekly performance",
     description: "Real weekly relationship/outreach counts from recorded events only.",
     risk: "LOW",
+    level: 1,
+    category: "growth",
     inputSchema: weeklyReportInput,
     timeoutMs: 20_000,
     maxAttempts: 3,
     idempotent: true,
     auditAction: "riishe.tool.weekly_report",
     execute: weeklyReportExecute,
+    undo: null, // read-only — nothing persists
   }),
   "growth.topContent": defineTool({
     name: "growth.topContent",
     title: "Identify top-performing content",
     description: "The owner's top posts by REAL recorded engagement (likes/comments/bookmarks/shares).",
     risk: "LOW",
+    level: 1,
+    category: "growth",
     inputSchema: topContentInput,
     timeoutMs: 20_000,
     maxAttempts: 3,
     idempotent: true,
     auditAction: "riishe.tool.top_content",
     execute: topContentExecute,
+    undo: null, // read-only — nothing persists
   }),
 };
 
@@ -735,7 +968,7 @@ export function toolCatalogForPlanner(): string {
   return Object.values(RIISHE_TOOLS)
     .map(
       (t) =>
-        `${t.name} (${t.risk}) — ${t.description} Input: ${JSON.stringify(zodShapeSummary(t.inputSchema))}`
+        `${t.name} (risk ${t.risk}, automation level ${t.level}${t.level >= 2 ? ", REQUIRES explicit user confirmation" : ""}) — ${t.description} Input: ${JSON.stringify(zodShapeSummary(t.inputSchema))}`
     )
     .join("\n");
 }

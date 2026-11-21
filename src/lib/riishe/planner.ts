@@ -61,8 +61,10 @@ Rules:
 - Steps that need another step's output must list it in dependsOn.
 - draftRef / postRef params take the PLANNER ID of the step that produced the draft/post.
 - schedule is optional and only valid where the tool description allows it.
-- You cannot send messages, publish posts or delete anything without the user's
-  later confirmation - plan accordingly (draft first, send/publish later).
+- You cannot send messages, publish or schedule public posts, or delete anything
+  without the user's later confirmation - plan accordingly (draft first,
+  send/publish later). Catalog entries marked "REQUIRES explicit user
+  confirmation" always go through approval; you cannot bypass that.
 - Never include real third-party contact details you were not given.
 - If the goal cannot be mapped to the catalog, reply exactly: {"error":"unmappable"}`;
 

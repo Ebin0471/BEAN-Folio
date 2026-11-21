@@ -24,7 +24,12 @@ import { db } from "@/lib/db";
 import { notify } from "@/lib/notify";
 import { enqueue, cancelQueued } from "@/lib/queue";
 import { auditEvent } from "@/lib/riishe/audit";
-import { getTool, REF_FIELDS, type ToolContext } from "@/lib/riishe/tools";
+import { getTool, toolApprovalRequired, REF_FIELDS, type RiisheToolDef, type ToolContext } from "@/lib/riishe/tools";
+import {
+  dailyActionCapStatus,
+  initialStatusForStep,
+  mayExecuteStep,
+} from "@/lib/riishe/automation-policy";
 
 export const WORKFLOW_JOB_KIND = "riishe.workflow";
 export const WORKFLOW_SWEEP_KEY = "riishe.workflow.sweep";
@@ -128,6 +133,9 @@ export function toWorkflowDTO(w: {
       tool: s.kind,
       title: s.title,
       risk: s.risk,
+      // Registry-derived automation policy (B2): level + honest undo story.
+      level: getTool(s.kind)?.level ?? null,
+      undo: getTool(s.kind)?.undo ?? null,
       requiresApproval: s.requiresApproval,
       status: s.status,
       error: s.error,
@@ -251,11 +259,16 @@ export async function createWorkflowFromPlan(
       return rowId;
     });
     const depsDone = depRowIds.length === 0;
-    const status: StepStatus = tool.risk === "HIGH" || tool.risk === "DESTRUCTIVE"
-      ? "AWAITING_APPROVAL"
-      : scheduledFor || !depsDone
+    // B2: the REGISTRY decides approval policy (level 2/3 or HIGH/DESTRUCTIVE
+    // risk) — never the model output, never the risk map alone. The owner's
+    // automation preferences then decide whether an approval-class step can
+    // start pre-authorized, and whether a Level-1 step auto-runs at all.
+    // Scheduled or dependency-blocked steps stay PENDING; the unlock/sweep
+    // paths apply the same policy when their time comes.
+    const status: StepStatus =
+      scheduledFor || !depsDone
         ? "PENDING"
-        : "READY";
+        : ((await initialStatusForStep(userId, tool)) as StepStatus);
     const row = await db.riisheWorkflowStep.create({
       data: {
         workflowId: workflow.id,
@@ -267,7 +280,7 @@ export async function createWorkflowFromPlan(
         paramsJson: JSON.stringify(validated),
         dependsOnJson: JSON.stringify(depRowIds),
         risk: tool.risk,
-        requiresApproval: tool.risk === "HIGH" || tool.risk === "DESTRUCTIVE",
+        requiresApproval: toolApprovalRequired(tool),
         status,
         maxAttempts: tool.maxAttempts,
         timeoutMs: tool.timeoutMs,
@@ -375,7 +388,7 @@ async function executeTool(step: {
   paramsJson: string;
   timeoutMs: number;
   workflowId: string;
-}, userId: string, createInquiry?: ToolContext["createInquiry"]) {
+}, userId: string, createInquiry?: ToolContext["createInquiry"]): Promise<{ params: Record<string, unknown>; result: Record<string, unknown> }> {
   const tool = getTool(step.kind);
   if (!tool) throw new Error(`tool ${step.kind} is no longer registered`);
   const params = await resolveStepParams(step.workflowId, step);
@@ -386,8 +399,32 @@ async function executeTool(step: {
       setTimeout(() => reject(new Error(`tool timed out after ${step.timeoutMs}ms`)), step.timeoutMs)
     ),
   ]);
-  return result ?? {};
+  return { params, result: result ?? {} };
 }
+
+/**
+ * B2 verify phase: when the tool declares a verify hook, RE-READ its
+ * persistent output from the backend. A failed verification throws (the step
+ * retries, then fails honestly) — success is never reported before the
+ * persistent result is confirmed. On success the verification evidence is
+ * recorded in the step's resultJson.
+ */
+async function verifyToolOutput(
+  tool: RiisheToolDef<never>,
+  ctx: Pick<ToolContext, "userId" | "workflowId" | "stepId">,
+  params: Record<string, unknown>,
+  result: Record<string, unknown>
+): Promise<Record<string, unknown>> {
+  if (!tool.verify) return result;
+  const verification = await tool.verify({ userId: ctx.userId, workflowId: ctx.workflowId, stepId: ctx.stepId }, params as never, result);
+  if (!verification.ok) {
+    throw new Error(`verification failed: ${verification.detail}`);
+  }
+  return { ...result, verification: { ok: true, detail: verification.detail, at: new Date().toISOString() } };
+}
+
+/** Exported for the B2 permission-matrix suite (verification-failure pins). */
+export { verifyToolOutput };
 
 /** Queue entrypoint: run ONE workflow step (durable, retried by the queue). */
 export async function runWorkflowStepJob(job: BackgroundJob): Promise<void> {
@@ -412,9 +449,39 @@ export async function runWorkflowStepJob(job: BackgroundJob): Promise<void> {
     // Paused/cancelled workflows stop scheduling; the job is released.
     return;
   }
-  if (step.requiresApproval && step.approvedAt === null) {
-    // Approval must come through the API; never execute unapproved HIGH tools.
+  // B2 execution gate (defense in depth): the LIVE registry + the stored flag
+  // decide — a Level-2 tool always requires approval even when the generic
+  // risk map would have permitted execution, and the owner's current
+  // pre-authorization preferences are honored (never a stale stored state).
+  const tool = getTool(step.kind);
+  if (!(await mayExecuteStep(payload.userId, step, tool))) {
     await db.riisheWorkflowStep.update({ where: { id: step.id }, data: { status: "AWAITING_APPROVAL" } });
+    return;
+  }
+  // B2 daily action cap: real executions are counted per owner per UTC day.
+  // A step blocked by the cap FAILS honestly (retryable after 00:00 UTC);
+  // dependents skip — nothing executes silently past the cap.
+  const cap = await dailyActionCapStatus(payload.userId);
+  if (!cap.allowed) {
+    const capMessage = `Daily automation action cap reached (${cap.executedToday}/${cap.cap}). Retry after 00:00 UTC or raise your cap in RIISHE automation settings.`;
+    await db.riisheWorkflowStep.update({
+      where: { id: step.id },
+      data: { status: "FAILED", error: capMessage, finishedAt: new Date() },
+    });
+    await auditEvent(payload.userId, "riishe.automation.daily_cap_reached", "RiisheWorkflowStep", step.id, {
+      tool: step.kind,
+      executedToday: cap.executedToday,
+      cap: cap.cap,
+    });
+    await notify({
+      userId: payload.userId,
+      actorId: null,
+      type: "SYSTEM",
+      payload: { text: `RIISHE workflow "${workflow.title}" step "${step.title}" did not run: ${capMessage}` },
+      dedupKey: `riishe.wfstep-cap:${step.id}`,
+    }).catch(() => undefined);
+    await skipDependents(step.workflowId, step.id, payload.userId);
+    await afterStepTerminal(step.workflowId, payload.userId);
     return;
   }
 
@@ -424,12 +491,16 @@ export async function runWorkflowStepJob(job: BackgroundJob): Promise<void> {
   });
 
   try {
-    const result = await executeTool(step, payload.userId);
+    const { params, result } = await executeTool(step, payload.userId);
+    // B2 verify phase: re-read the persistent output before success is recorded.
+    const verifiedResult = tool
+      ? await verifyToolOutput(tool, { userId: payload.userId, workflowId: step.workflowId, stepId: step.id }, params, result)
+      : result;
     await db.riisheWorkflowStep.update({
       where: { id: step.id },
       data: {
         status: "SUCCEEDED",
-        resultJson: JSON.stringify(result),
+        resultJson: JSON.stringify(verifiedResult),
         error: null,
         finishedAt: new Date(),
       },
@@ -437,6 +508,14 @@ export async function runWorkflowStepJob(job: BackgroundJob): Promise<void> {
     await auditEvent(payload.userId, "riishe.workflow.step_succeeded", "RiisheWorkflowStep", step.id, {
       tool: step.kind,
     });
+    if (tool) {
+      // B2 uniform audit trail: every meaningful tool execution is audited
+      // with the registry-declared action, regardless of handler-internal audits.
+      await auditEvent(payload.userId, tool.auditAction, "RiisheWorkflowStep", step.id, {
+        via: "workflow",
+        workflowId: step.workflowId,
+      });
+    }
     await afterStepTerminal(step.workflowId, payload.userId);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -492,22 +571,43 @@ export async function executeApprovedStep(
   if (workflow.status !== "ACTIVE") {
     throw new WorkflowError("The workflow is not active", "inactive");
   }
+  // B2: live approval gate + daily cap at approval-time execution too.
+  const tool = getTool(step.kind);
+  if (!(await mayExecuteStep(userId, step, tool))) {
+    throw new WorkflowError("This step still needs your explicit approval", "approval-required");
+  }
+  const cap = await dailyActionCapStatus(userId);
+  if (!cap.allowed) {
+    throw new WorkflowError(
+      `Daily automation action cap reached (${cap.executedToday}/${cap.cap}). Try again after 00:00 UTC.`,
+      "daily-cap"
+    );
+  }
   await db.riisheWorkflowStep.update({
     where: { id: step.id },
     data: { status: "RUNNING", attempts: { increment: 1 }, startedAt: new Date() },
   });
   try {
-    const result = await executeTool(step, userId, createInquiry);
+    const { params, result } = await executeTool(step, userId, createInquiry);
+    const verifiedResult = tool
+      ? await verifyToolOutput(tool, { userId, workflowId: step.workflowId, stepId: step.id }, params, result)
+      : result;
     await db.riisheWorkflowStep.update({
       where: { id: step.id },
-      data: { status: "SUCCEEDED", resultJson: JSON.stringify(result), error: null, finishedAt: new Date() },
+      data: { status: "SUCCEEDED", resultJson: JSON.stringify(verifiedResult), error: null, finishedAt: new Date() },
     });
     await auditEvent(userId, "riishe.workflow.step_succeeded", "RiisheWorkflowStep", step.id, {
       tool: step.kind,
       via: "approval",
     });
+    if (tool) {
+      await auditEvent(userId, tool.auditAction, "RiisheWorkflowStep", step.id, {
+        via: "approval",
+        workflowId: step.workflowId,
+      });
+    }
     await afterStepTerminal(step.workflowId, userId);
-    return { already: false, result };
+    return { already: false, result: verifiedResult };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await db.riisheWorkflowStep.update({
@@ -536,8 +636,8 @@ async function afterStepTerminal(workflowId: string, userId: string) {
     if (depStates.length === 0) continue;
     if (depStates.every((st) => st === "SUCCEEDED")) {
       const tool = getTool(step.kind);
-      const next: StepStatus =
-        tool && (tool.risk === "HIGH" || tool.risk === "DESTRUCTIVE") ? "AWAITING_APPROVAL" : "READY";
+      // B2: registry + owner preferences decide the unlocked status.
+      const next: StepStatus = await initialStatusForStep(userId, tool);
       await db.riisheWorkflowStep.update({ where: { id: step.id }, data: { status: next } });
       unlocked = true;
     } else if (depStates.some((st) => st === "FAILED" || st === "SKIPPED" || st === "CANCELLED")) {
@@ -655,7 +755,9 @@ export async function retryStep(userId: string, stepId: string) {
   if (!step) throw new WorkflowError("Step not found", "not-found");
   if (step.status !== "FAILED") throw new WorkflowError("Only failed steps can be retried", "invalid");
   const tool = getTool(step.kind);
-  const needsApproval = tool && (tool.risk === "HIGH" || tool.risk === "DESTRUCTIVE");
+  // B2: registry-derived approval (level 2/3 or HIGH/DESTRUCTIVE) re-enters
+  // approval on retry; approval resets so confirmation is always fresh.
+  const needsApproval = tool ? toolApprovalRequired(tool) : step.requiresApproval;
   await db.riisheWorkflowStep.update({
     where: { id: stepId },
     data: {
@@ -666,6 +768,13 @@ export async function retryStep(userId: string, stepId: string) {
       finishedAt: null,
     },
   });
+  // A retry is explicit owner intent to finish the work: re-activate a
+  // workflow that completion/failure derivation had closed (a CANCELLED
+  // workflow stays cancelled — that was an explicit decision).
+  const workflow = await db.riisheWorkflow.findFirst({ where: { id: step.workflowId, userId } });
+  if (workflow && (workflow.status === "COMPLETED" || workflow.status === "FAILED")) {
+    await db.riisheWorkflow.update({ where: { id: workflow.id }, data: { status: "ACTIVE" } });
+  }
   await scheduleReadySteps(step.workflowId, userId);
   await auditEvent(userId, "riishe.workflow.step_retried", "RiisheWorkflowStep", stepId, { tool: step.kind });
 }
@@ -690,11 +799,11 @@ export async function setWorkflowStatus(userId: string, workflowId: string, acti
       if (step.status === "PENDING" && !step.scheduledFor) {
         const deps = safeIds(step.dependsOnJson);
         const ok = deps.every((d) => byId.get(d)?.status === "SUCCEEDED");
-        const tool = getTool(step.kind);
         if (ok && deps.length > 0) {
+          const tool = getTool(step.kind);
           await db.riisheWorkflowStep.update({
             where: { id: step.id },
-            data: { status: tool && (tool.risk === "HIGH" || tool.risk === "DESTRUCTIVE") ? "AWAITING_APPROVAL" : "READY" },
+            data: { status: await initialStatusForStep(userId, tool) },
           });
         }
       }
@@ -768,8 +877,8 @@ export async function runWorkflowSweep(): Promise<{ recovered: number; scheduled
       if (!states.every((st) => st === "SUCCEEDED")) continue;
     }
     const tool = getTool(step.kind);
-    const next: StepStatus =
-      tool && (tool.risk === "HIGH" || tool.risk === "DESTRUCTIVE") ? "AWAITING_APPROVAL" : "READY";
+    // B2: registry + owner preferences decide how due steps start.
+    const next: StepStatus = await initialStatusForStep(step.userId, tool);
     await db.riisheWorkflowStep.update({ where: { id: step.id }, data: { status: next } });
     scheduled++;
   }

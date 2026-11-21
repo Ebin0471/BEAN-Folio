@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   ClipboardCheck,
   RefreshCw,
+  ShieldCheck,
   Workflow as WorkflowIcon,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -43,6 +44,24 @@ interface DashboardDTO {
     enquiryDrafts: number;
   };
   failures: { workflowId: string; workflowTitle: string; stepId: string; title: string; tool: string; error: string | null; attempts: number; maxAttempts: number }[];
+  automationPolicy?: {
+    preferences: {
+      autoRunLevel1: boolean;
+      confirmEachLevel2: boolean;
+      allowedLevel2Categories: string[];
+      dailyActionCap: number;
+    };
+    cap: { cap: number; executedToday: number; allowed: boolean; defaultCap: number };
+    catalog: {
+      name: string;
+      title: string;
+      risk: string;
+      level: number;
+      category: string;
+      approvalRequired: boolean;
+      undo: { supported: boolean; how: string | null } | null;
+    }[];
+  };
   counts: {
     activeAutomations: number;
     pausedAutomations: number;
@@ -131,6 +150,44 @@ export function RiisheDashboardPanel({ onBack }: { onBack: () => void }) {
           <Count label="Scheduled jobs" value={c.scheduledJobs} />
           <Count label="Failed steps" value={c.failedSteps} accent={c.failedSteps > 0} danger />
         </div>
+
+        {/* automation policy (B2): live permission levels + daily action cap */}
+        {data.automationPolicy ? (
+          <Section
+            icon={<ShieldCheck className="size-4 text-primary" aria-hidden />}
+            title="Automation policy"
+            hint={`Level 1 runs automatically · Level 2 waits for your confirmation · Level 3 needs typed confirmation. Today: ${data.automationPolicy.cap.executedToday}/${data.automationPolicy.cap.cap} actions used.`}
+          >
+            <ul className="space-y-1.5">
+              {data.automationPolicy.catalog.map((t) => (
+                <li key={t.name} className="flex flex-wrap items-center gap-2 rounded-lg border border-border/60 bg-background/70 px-3 py-2 text-sm">
+                  <span className="font-medium text-foreground">{t.title}</span>
+                  <span className="text-xs text-muted-foreground">{t.name}</span>
+                  <span
+                    className={cn(
+                      "rounded-full px-2 py-0.5 text-[10px]",
+                      t.level === 1
+                        ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                        : t.level === 2
+                          ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                          : "bg-red-500/15 text-red-600 dark:text-red-400"
+                    )}
+                  >
+                    L{t.level}{t.approvalRequired ? " · confirm" : " · auto"}
+                  </span>
+                  <span className="rounded-full bg-secondary px-2 py-0.5 text-[10px] text-secondary-foreground">{t.category}</span>
+                  {t.undo ? (
+                    <span className={cn("text-[10px]", t.undo.supported ? "text-muted-foreground" : "text-red-600/80 dark:text-red-400/80")}>
+                      {t.undo.supported ? "reversible" : "irreversible"}
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-muted-foreground">read-only</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </Section>
+        ) : null}
 
         {/* pending approvals */}
         <Section

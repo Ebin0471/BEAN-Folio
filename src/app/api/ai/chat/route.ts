@@ -9,6 +9,8 @@ import { buildPortfolioContext } from "@/lib/intelligence/context";
 import { detectDelegationIntent, prepareDelegation } from "@/lib/intelligence/delegation";
 import { runAutomationIntent, detectAutomationIntent } from "@/lib/riishe/actions";
 import { looksLikeWorkflow, planAndCreateWorkflow } from "@/lib/riishe/planner";
+import { interpretRequest, nextBestAction } from "@/lib/riishe/response-loop";
+import { systemPromptWithMode } from "@/lib/riishe/modes";
 import type { RiisheActionCard } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -55,7 +57,15 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
   // portfolio context as every other RIISHE surface.
   const { profileBlock, projectsBlock, projects } = await buildPortfolioContext(user);
 
-  const systemPrompt = riisheSystemPrompt(profileBlock, projectsBlock, projects.length);
+  // ---- Response loop (B1): ground → gap → plan → act → verify → report.
+  // One deterministic interpretation per message: the active response mode
+  // shapes the prompt emphasis; the gap (if any) is appended to ADVISORY
+  // replies only (the action layers ask their own questions when they run).
+  const interpretation = interpretRequest(message);
+  const systemPrompt = systemPromptWithMode(
+    riisheSystemPrompt(profileBlock, projectsBlock, projects.length),
+    interpretation.mode
+  );
 
   // Recent history for continuity (only USER/ASSISTANT rows).
   const history = await db.aiMessage.findMany({
@@ -141,7 +151,11 @@ AUTOMATION MODE — the user's request was executed against their real BEAN Foli
 ${automationOutcome.grounding}
 
 ${automationOutcome.replyInstruction}`
-        : systemPrompt;
+        : interpretation.missingInfo
+          ? `${systemPrompt}
+
+GAP MODE — the user asked RIISHE to DO something, but one required piece of information is missing: ${interpretation.missingInfo}. Ask exactly ONE clear, friendly question for that missing piece. Do not guess, do not invent a person or value, and do not ask about anything else.`
+          : systemPrompt;
 
     const { text: reply } = await aiComplete(
       replySystemPrompt,
@@ -197,9 +211,16 @@ ${automationOutcome.replyInstruction}`
 
     await db.aiUsage.create({ data: { userId: user.id, feature: "chat" } });
 
+    // One relevant next action (never a wall of recommendations).
+    const nextAction = nextBestAction(interpretation.mode, {
+      hasActionCard: Boolean(workflowCard) || Boolean(automationOutcome),
+      hasDelegationCard: Boolean(delegation),
+    });
+
     return ok({
       conversationId: conversation.id,
       reply,
+      ...(nextAction ? { nextAction } : {}),
       ...(delegation ? { delegation } : {}),
       ...(automationOutcome ? { automation: automationOutcome.action } : {}),
       ...(workflowCard ? { automation: workflowCard } : {}),

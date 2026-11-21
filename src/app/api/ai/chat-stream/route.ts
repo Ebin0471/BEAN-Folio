@@ -6,6 +6,7 @@ import { err, ERR, parseBody, handler } from "@/lib/api-helpers";
 import { aiGate, aiStream, AiProviderError } from "@/lib/ai";
 import { riisheSystemPrompt } from "@/lib/intelligence/personas";
 import { buildPortfolioContext } from "@/lib/intelligence/context";
+import { classifyMode, systemPromptWithMode } from "@/lib/riishe/modes";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -82,7 +83,13 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
   // with a false provenance claim).
   const { profileBlock, projectsBlock, projects } = await buildPortfolioContext(user);
 
-  const systemPrompt = riisheSystemPrompt(profileBlock, projectsBlock, projects.length);
+  // Response loop (B1): the active response mode shapes prompt emphasis.
+  // Execution intent detection is deliberately NOT repeated here — the
+  // non-streaming chat route is the action path; streaming stays advisory.
+  const systemPrompt = systemPromptWithMode(
+    riisheSystemPrompt(profileBlock, projectsBlock, projects.length),
+    classifyMode(message)
+  );
 
   const history = await db.aiMessage.findMany({
     where: { conversationId: conversation.id, role: { in: ["USER", "ASSISTANT"] } },

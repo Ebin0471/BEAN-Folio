@@ -5,6 +5,12 @@ import { handler, ok, ERR } from "@/lib/api-helpers";
 import { db } from "@/lib/db";
 import { toAutomationDTO } from "@/lib/riishe/engine";
 import { toWorkflowDTO } from "@/lib/riishe/workflow-engine";
+import { RIISHE_TOOLS, toolApprovalRequired } from "@/lib/riishe/tools";
+import {
+  dailyActionCapStatus,
+  getAutomationPreferences,
+  DEFAULT_DAILY_ACTION_CAP,
+} from "@/lib/riishe/automation-policy";
 
 export const dynamic = "force-dynamic";
 
@@ -21,7 +27,7 @@ export const GET = handler(async (_req: NextRequest): Promise<NextResponse> => {
   const user = await getSessionUser();
   if (!user) return ERR.unauthorized();
 
-  const [automations, workflows, scheduledJobs, runs, draftCount] = await Promise.all([
+  const [automations, workflows, scheduledJobs, runs, draftCount, prefs, cap] = await Promise.all([
     db.riisheAutomation.findMany({
       where: { userId: user.id, status: { in: ["ACTIVE", "PAUSED"] } },
       orderBy: { updatedAt: "desc" },
@@ -51,6 +57,8 @@ export const GET = handler(async (_req: NextRequest): Promise<NextResponse> => {
     db.agentTask.count({
       where: { userId: user.id, agent: "RIISHE", kind: "ENQUIRY_DRAFT", status: "AWAITING_APPROVAL" },
     }),
+    getAutomationPreferences(user.id),
+    dailyActionCapStatus(user.id),
   ]);
 
   const pendingApprovals = workflows.flatMap((w) =>
@@ -108,6 +116,27 @@ export const GET = handler(async (_req: NextRequest): Promise<NextResponse> => {
     })),
     approvals: { pendingSteps: pendingApprovals, enquiryDrafts: draftCount },
     failures: failedSteps,
+    automationPolicy: {
+      preferences: {
+        autoRunLevel1: prefs.autoRunLevel1,
+        confirmEachLevel2: prefs.confirmEachLevel2,
+        allowedLevel2Categories: prefs.allowedLevel2Categories,
+        dailyActionCap: prefs.dailyActionCap,
+      },
+      cap: { cap: cap.cap, executedToday: cap.executedToday, allowed: cap.allowed, defaultCap: DEFAULT_DAILY_ACTION_CAP },
+      // B2 registry catalog: every REGISTERED tool with its real automation
+      // level — no placeholder tools; future batches register nothing until
+      // their implementations exist.
+      catalog: Object.values(RIISHE_TOOLS).map((t) => ({
+        name: t.name,
+        title: t.title,
+        risk: t.risk,
+        level: t.level,
+        category: t.category,
+        approvalRequired: toolApprovalRequired(t),
+        undo: t.undo,
+      })),
+    },
     counts: {
       activeAutomations: automations.filter((a) => a.status === "ACTIVE").length,
       pausedAutomations: automations.filter((a) => a.status === "PAUSED").length,

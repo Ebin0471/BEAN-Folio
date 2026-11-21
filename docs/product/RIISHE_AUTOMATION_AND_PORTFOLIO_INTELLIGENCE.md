@@ -7,7 +7,7 @@
 | Repository | `Ebin0471/BEAN-Folio` |
 | Base revision | `main` @ `39e02063b61240959e368d3e2a50c4be2f5d177b` (verified against `origin/main` on 2026-11-21 UTC before editing) |
 | Document | `docs/product/RIISHE_AUTOMATION_AND_PORTFOLIO_INTELLIGENCE.md` |
-| Status | **SPECIFICATION — awaiting owner review. No implementation is authorized by this document.** |
+| Status | **APPROVED SPECIFICATION (2026-11-21) — OD-1…OD-12 approved on the recommended defaults with five mandatory refinements; decisions recorded in `docs/product/RIISHE_OWNER_DECISION_RECORD.md`. Batches B1–B2 are authorized for implementation; B3–B12 remain pending.** |
 | Research date | 2026-11-21 UTC |
 | Launch target | February 2027 public launch (scope-preserving; post-launch items marked separately) |
 
@@ -909,20 +909,37 @@ This document includes: executive vision (§0); personality + response examples 
 
 # Open owner decisions
 
-| ID | Decision required | Recommendation |
-| --- | --- | --- |
-| OD-1 | Approve this blueprint as the RIISHE product/technical direction | Approve with any scope edits; nothing proceeds until reviewed |
-| OD-2 | AI quota policy for new features: keep one shared pool (6/min, 30/day) or per-feature budgets | Keep shared pool for beta; revisit at launch (identity pack consumes more) |
-| OD-3 | Enable non-managed image providers (Gemini/OpenAI/Diffusers) for user-facing banner/avatar | Keep managed-only through beta (existing LAXII V1 rule); decide post-beta with key-management review |
-| OD-4 | External web research tool for RIISHE | Not in v1; requires capability + safety design; revisit post-launch |
-| OD-5 | External delivery channel (email/push) for scheduled reports | None in v1 (no email exists in product); in-app only |
-| OD-6 | Analytics retention windows (raw 180d / aggregates 24mo proposed) | Approve or adjust; must align with account-deletion architecture |
-| OD-7 | Privacy suppression threshold k (5 proposed) | Confirm 5 for beta; re-evaluate at launch |
-| OD-8 | Event storage: derivation-only vs one additive `MetricDay` aggregate table | Approve `MetricDay` (minimal addition) if report latency/aggregation cost matters; derivation-only is acceptable for beta |
-| OD-9 | Identity Pack scope for beta (which of the 14 outputs ship first) | Recommend headline/bio/structure/skills/resume draft + report in beta; visuals follow |
-| OD-10 | LAXII generation budget headroom for identity-pack usage (daily image caps and USD cost guard) | Model expected beta usage; raise caps deliberately, never silently |
-| OD-11 | Post-launch reconsideration trigger for an external agent framework (LangGraph.js criteria in §15.3) | Adopt trigger criteria; no action now |
-| OD-12 | RIISHE i18n (next-intl installed but unused) | English-only for beta; i18n post-launch **[P-L]** |
+> **Resolution record (2026-11-21):** the owner approved OD-1…OD-12 on the
+> recommended defaults below, with five mandatory refinements recorded in
+> [`docs/product/RIISHE_OWNER_DECISION_RECORD.md`](./RIISHE_OWNER_DECISION_RECORD.md)
+> (R1: k counts distinct people, never event count, and never limits a
+> person's access to their own data; R2: differencing/repeated-filter attack
+> protection with suppression applied before model interpretation; R3:
+> retention must respect deletion and consent — aggregates never preserve
+> identifiable data past the approved purpose; R4: banner, avatar and resume
+> are first-class Identity Pack outputs that batching must not silently omit;
+> R5: user-generated content is untrusted input that can never expand
+> permissions or bypass tool authorization). Original recommendations are
+> preserved verbatim below; the approval column reflects the owner decision.
+
+| ID | Decision required | Recommendation | Owner decision (2026-11-21) | Status |
+| --- | --- | --- | --- | --- |
+| OD-1 | Approve this blueprint as the RIISHE product/technical direction | Approve with any scope edits; nothing proceeds until reviewed | Approved as the product and technical direction; B1–B2 authorized first | **APPROVED** |
+| OD-2 | AI quota policy for new features: keep one shared pool (6/min, 30/day) or per-feature budgets | Keep shared pool for beta; revisit at launch (identity pack consumes more) | Shared AI quota for beta; LAXII image caps and budget controls remain separate; no silent quota increases | **APPROVED** |
+| OD-3 | Enable non-managed image providers (Gemini/OpenAI/Diffusers) for user-facing banner/avatar | Keep managed-only through beta (existing LAXII V1 rule); decide post-beta with key-management review | Managed image provider only through beta, per the existing LAXII policy | **APPROVED** |
+| OD-4 | External web research tool for RIISHE | Not in v1; requires capability + safety design; revisit post-launch | Excluded from beta; RIISHE uses verified internal knowledge and authorized user context | **APPROVED** |
+| OD-5 | External delivery channel (email/push) for scheduled reports | None in v1 (no email exists in product); in-app only | In-app scheduled reports only; no email/push/external delivery in beta | **APPROVED** |
+| OD-6 | Analytics retention windows (raw 180d / aggregates 24mo proposed) | Approve or adjust; must align with account-deletion architecture | 180d raw / 24mo aggregates proposed; implement only with deletion, consent-revocation and retention safeguards verified; never retain identifiable data beyond the approved purpose | **APPROVED WITH REFINEMENT (R3)** |
+| OD-7 | Privacy suppression threshold k (5 proposed) | Confirm 5 for beta; re-evaluate at launch | k ≥ 5 for employer/platform aggregates; counts distinct people, never event count; never limits a person's own-data access; differencing/repeated-filter protection with suppression before model interpretation | **APPROVED WITH REFINEMENTS (R1, R2)** |
+| OD-8 | Event storage: derivation-only vs one additive `MetricDay` aggregate table | Approve `MetricDay` (minimal addition) if report latency/aggregation cost matters; derivation-only is acceptable for beta | Derivation-only for beta; no `MetricDay` (or any analytics table) until measured query cost or latency justifies it | **APPROVED** |
+| OD-9 | Identity Pack scope for beta (which of the 14 outputs ship first) | Recommend headline/bio/structure/skills/resume draft + report in beta; visuals follow | Full 14-output pack approved (headline, biographies, structure, project drafts, skills, experience/education drafts, resume, banner, avatar, SEO, theme, contact/CTA, quality report); assets remain reviewable drafts; banner/avatar/resume are first-class outputs that must not be silently omitted by batching | **APPROVED WITH REFINEMENT (R4)** |
+| OD-10 | LAXII generation budget headroom for identity-pack usage (daily image caps and USD cost guard) | Model expected beta usage; raise caps deliberately, never silently | Keep existing LAXII quotas and monetary safeguards; measure expected usage before proposing increases | **APPROVED** |
+| OD-11 | Post-launch reconsideration trigger for an external agent framework (LangGraph.js criteria in §15.3) | Adopt trigger criteria; no action now | Continue on the existing workflow engine; reconsider an external framework only when the documented post-launch trigger conditions are met | **APPROVED** |
+| OD-12 | RIISHE i18n (next-intl installed but unused) | English-only for beta; i18n post-launch **[P-L]** | English-only beta; localization post-launch | **APPROVED** |
+
+The approval covers the blueprint and its decisions only. It does not
+authorize production deployment, paid infrastructure, PostgreSQL migration,
+external communications or irreversible user actions.
 
 ---
 

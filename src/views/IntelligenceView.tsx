@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowRightLeft,
+  CornerDownRight,
   Plus,
   Send,
   ServerCrash,
@@ -128,9 +129,12 @@ function ChatTab({
   >(null);
   /** Structured action card from an automation intent (same side-channel pattern as delegation). */
   const [automation, setAutomation] = useState<RiisheActionCard | null>(null);
+  /** The ONE relevant next action for the last turn (chip under the reply). */
+  const [nextAction, setNextAction] = useState<{ label: string; prompt: string } | null>(null);
   /** Automation dashboard toggle — chat stays the primary interface. */
   const [dashboardOpen, setDashboardOpen] = useState(false);
   const threadRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
 
   const refreshConversations = useCallback(async (silent = false) => {
     if (!silent) setConvLoading(true);
@@ -164,6 +168,7 @@ function ChatTab({
     setRetryMessage(null);
     setDelegation(null);
     setAutomation(null);
+    setNextAction(null);
     try {
       const res = await api<{ conversation: { id: string; title: string; messages: AiMessageDTO[] } }>(
         `/api/ai/conversations/${id}`
@@ -185,6 +190,7 @@ function ChatTab({
     setRetryMessage(null);
     setDelegation(null);
     setAutomation(null);
+    setNextAction(null);
     setInput("");
   };
 
@@ -201,6 +207,7 @@ function ChatTab({
       const res = await api<{
         conversationId: string;
         reply: string;
+        nextAction?: { label: string; prompt: string };
         delegation?: { taskId: string; kind: string; targetAgent: string; brief: string; destinationUrl: string; destinationLabel: string };
         automation?: RiisheActionCard;
       }>("/api/ai/chat", {
@@ -218,6 +225,7 @@ function ChatTab({
       setActiveId(res.conversationId);
       setDelegation(res.delegation ?? null);
       setAutomation(res.automation ?? null);
+      setNextAction(res.nextAction ?? null);
       onQuotaUsed();
       void refreshConversations(true);
     } catch (e) {
@@ -459,6 +467,23 @@ function ChatTab({
               {automation && !sending && (
                 <AutomationActionCard action={automation} onDismiss={() => setAutomation(null)} />
               )}
+              {nextAction && !sending && (
+                <div className="flex justify-start">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 max-w-full gap-1.5 rounded-full border-border/70 text-xs"
+                    onClick={() => {
+                      setInput(nextAction.prompt);
+                      composerRef.current?.focus();
+                    }}
+                    aria-label={`Suggested next step: ${nextAction.label}`}
+                  >
+                    <CornerDownRight className="size-3.5 shrink-0 text-primary" aria-hidden />
+                    <span className="truncate">{nextAction.label}</span>
+                  </Button>
+                </div>
+              )}
               {sending && (
                 <div className="flex justify-start">
                   <div className="flex items-center gap-2 rounded-2xl rounded-bl-md border border-border/70 bg-background/60 px-4 py-3">
@@ -479,6 +504,7 @@ function ChatTab({
             }}
           >
             <Textarea
+              ref={composerRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => {

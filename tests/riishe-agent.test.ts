@@ -223,7 +223,11 @@ describe("workflow engine", () => {
     expect(s1.status).toBe("READY"); // ready → queued
     expect(s2.risk).toBe("HIGH"); // from the REGISTRY, not the plan
     expect(s2.requiresApproval).toBe(true);
-    expect(s2.status).toBe("AWAITING_APPROVAL");
+    // B2 level-gating: a dependency-blocked step starts PENDING and enters
+    // approval the moment its dependencies complete (the "dependency order"
+    // test pins that end state). Approval is never requested for a step that
+    // cannot run yet — same terminal behavior, no premature approval prompt.
+    expect(s2.status).toBe("PENDING");
     expect(s2.ref).toBe("s2");
 
     const jobs = await db.backgroundJob.findMany({ where: { kind: "riishe.workflow", status: "QUEUED" } });

@@ -31,9 +31,12 @@ function statusFor(e: WorkflowError): number {
     case "terminal":
     case "conflict":
     case "inactive":
+    case "approval-required":
       return 409;
     case "confirm-required":
       return 428; // precondition required — the UI shows the confirm dialog
+    case "daily-cap":
+      return 429; // daily automation action cap — honest quota semantics
     default:
       return 400;
   }
