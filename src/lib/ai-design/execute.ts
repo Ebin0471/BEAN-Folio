@@ -231,6 +231,11 @@ export function applyPatchConfig(config: SiteConfig, patch: DesignPatch): SiteCo
         : config.backgroundEffects !== undefined
           ? { backgroundEffects: config.backgroundEffects }
           : {}),
+      ...(patch.scene3d !== undefined
+        ? { scene3d: patch.scene3d === null ? undefined : patch.scene3d }
+        : config.scene3d !== undefined
+          ? { scene3d: config.scene3d }
+          : {}),
       pages: config.pages,
     };
     const normalized = normalizeConfig(candidate);

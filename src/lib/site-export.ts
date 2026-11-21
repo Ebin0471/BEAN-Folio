@@ -63,6 +63,7 @@ import {
   motionScriptTags,
   vendorSpecsIncludingTexture,
 } from "@/lib/giftz/motion-engine";
+import { SCENE3D_RUNTIME_PATH, buildScene3dRuntime } from "@/lib/giftz/scene3d";
 
 // ------------------------------------------------------------------ types
 
@@ -1713,7 +1714,12 @@ export async function buildSiteExport(input: SiteExportInput): Promise<SiteExpor
         motionWarnings.push(`Vendor file "${spec.pkgPath}" could not be read — the motion runtime will leave content fully visible (static fallback).`);
       }
     }
-    files.push({ path: MOTION_RUNTIME_PATH, data: Buffer.from(buildMotionRuntime(motionProgram), "utf8") });
+    if (motionProgram.gsapEnabled || motionProgram.vanta) {
+      files.push({ path: MOTION_RUNTIME_PATH, data: Buffer.from(buildMotionRuntime(motionProgram), "utf8") });
+    }
+    if (motionProgram.scene3d.length > 0) {
+      files.push({ path: SCENE3D_RUNTIME_PATH, data: Buffer.from(buildScene3dRuntime({ respectReducedMotion: motionProgram.respectReducedMotion, scenes: motionProgram.scene3d }), "utf8") });
+    }
   }
 
   // ---- media assets

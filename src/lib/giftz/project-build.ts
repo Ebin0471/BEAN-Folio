@@ -34,6 +34,7 @@ import {
   compileMotionProgram,
   vendorFileSpecs,
 } from "@/lib/giftz/motion-engine";
+import { SCENE3D_RUNTIME_PATH } from "@/lib/giftz/scene3d";
 import { log } from "@/lib/logger";
 import { recordGiftzActivity } from "./project-activity";
 import { PROJECT_FILE_LIMITS, isBinaryPath, mimeForPath } from "./project-files";
@@ -232,6 +233,35 @@ export function motionBuildChecks(config: SiteConfig, tree: Map<string, Effectiv
     }
   }
 
+  // Structured 3D scenes (GZ-3) — generated runtime + vendor presence.
+  if (program && program.scene3d.length > 0) {
+    if (!tree.has(SCENE3D_RUNTIME_PATH)) {
+      diagnostics.push({
+        path: SCENE3D_RUNTIME_PATH,
+        severity: "error",
+        message: `missing generated 3D runtime "${SCENE3D_RUNTIME_PATH}" — re-save the site config so the compiler re-emits it`,
+      });
+    }
+    const sceneRefs = Array.from(tree.values()).filter(
+      (f) => f.path.endsWith(".html") && f.encoding === "utf8" && f.content.includes(`assets/vendor/three.min.js`)
+    ).length;
+    if (sceneRefs === 0) {
+      diagnostics.push({
+        path: "(scene3d)",
+        severity: "warning",
+        message: "3D scenes are enabled but no page references the three.js vendor script — re-save the site config to regenerate the HTML",
+      });
+    }
+    const objectCount = program.scene3d.reduce((n, s) => n + s.objects.length, 0);
+    if (objectCount > 36) {
+      diagnostics.push({
+        path: "site.config.json",
+        severity: "warning",
+        message: `${objectCount} 3D objects across ${program.scene3d.length} scene(s) — heavy scenes hurt low-power devices`,
+      });
+    }
+  }
+
   // User/AI-authored animation scripts — provenance-preserving checks.
   for (const file of tree.values()) {
     if (file.encoding !== "utf8" || !/\.(js|mjs)$/.test(file.path)) continue;
@@ -297,6 +327,92 @@ export function motionBuildChecks(config: SiteConfig, tree: Map<string, Effectiv
     }
   }
 
+  return diagnostics;
+}
+
+// ------------------------------------------------------------------ static markup checks (GZ-1)
+
+const SCRIPT_GLOBAL_RE = /\b(?:gsap|ScrollTrigger|THREE|VANTA)\s*[.(]/;
+const VENDOR_SCRIPT_RE = /<script[^>]+src=["']\.\/assets\/vendor\/[^"']+["'][^>]*>/gi;
+
+/**
+ * Static markup sanity checks over the effective tree's HTML files. These are
+ * honest STATIC checks (an HTML-shape lint, not a browser run): they verify
+ * document structure facts that matter for rendering and accessibility.
+ * Runtime/visual behavior remains the domain of the real preview and the
+ * published URL — never claimed by this build.
+ */
+export function markupBuildChecks(tree: Map<string, EffectiveFile>): BuildDiagnostic[] {
+  const diagnostics: BuildDiagnostic[] = [];
+  for (const file of tree.values()) {
+    if (file.encoding !== "utf8" || !file.path.endsWith(".html")) continue;
+
+    // --- duplicate element ids break anchor links, aria-controls and querySelector targeting.
+    const idCounts = new Map<string, number>();
+    for (const match of file.content.matchAll(/\sid=["']([^"']+)["']/g)) {
+      const id = match[1];
+      if (!id) continue;
+      idCounts.set(id, (idCounts.get(id) ?? 0) + 1);
+    }
+    const dups = [...idCounts.entries()].filter(([, n]) => n > 1).slice(0, 3);
+    for (const [id, count] of dups) {
+      diagnostics.push({
+        path: file.path,
+        severity: "error",
+        message: `duplicate element id "${id}" (${count} occurrences) — ids must be unique per page`,
+      });
+    }
+
+    // --- viewport meta: without it mobile browsers render a desktop layout.
+    if (!/name=["']viewport["']/i.test(file.content)) {
+      diagnostics.push({
+        path: file.path,
+        severity: "warning",
+        message: 'missing <meta name="viewport"> — mobile browsers will render a zoomed-out desktop layout',
+      });
+    }
+
+    // --- lang attribute: accessibility basics (screen readers, translation).
+    if (!/<html[^>]*\slang=/i.test(file.content)) {
+      diagnostics.push({
+        path: file.path,
+        severity: "warning",
+        message: "<html> has no lang attribute — screen readers cannot pick the right pronunciation rules",
+      });
+    }
+
+    // --- content images without alt text (empty alt IS valid for decorative images).
+    let missingAlt = 0;
+    for (const match of file.content.matchAll(/<img\b[^>]*>/gi)) {
+      const tag = match[0];
+      if (!/\balt=/i.test(tag)) missingAlt += 1;
+    }
+    if (missingAlt > 0) {
+      diagnostics.push({
+        path: file.path,
+        severity: "warning",
+        message: `${missingAlt} <img> element${missingAlt === 1 ? "" : "s"} without an alt attribute — add alt text (or alt="" for decorative images)`,
+      });
+    }
+
+    // --- script order: a custom script that touches GSAP/THREE/VANTA globals
+    // must come AFTER the local vendor script tags in the same document.
+    const firstVendor = VENDOR_SCRIPT_RE.exec(file.content)?.index ?? -1;
+    VENDOR_SCRIPT_RE.lastIndex = 0;
+    if (firstVendor >= 0) {
+      const inlineScripts = [...file.content.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)];
+      for (const script of inlineScripts.slice(0, 24)) {
+        if (script.index < firstVendor && SCRIPT_GLOBAL_RE.test(script[1])) {
+          diagnostics.push({
+            path: file.path,
+            severity: "error",
+            message: "script order: an inline script references gsap/THREE/VANTA globals BEFORE the local vendor scripts load — move it after the assets/vendor <script> tags (deferred vendors only execute in order)",
+          });
+          break;
+        }
+      }
+    }
+  }
   return diagnostics;
 }
 
@@ -487,6 +603,13 @@ export async function runProjectBuild(
       checks.push(...motionChecks);
       if (motionChecks.length > 0) checksRun += 1;
     }
+
+    // --- check 9 (GZ-1): static markup sanity — duplicate ids, viewport/lang
+    // meta, img alt text and script ordering. Honest HTML-shape lint: NOT a
+    // browser run; runtime behavior stays with the real preview/published URL.
+    const markupChecks = markupBuildChecks(tree);
+    checks.push(...markupChecks);
+    if (markupChecks.length > 0) checksRun += 1;
 
     // --- result + artifact
     const errors = checks.filter((c) => c.severity === "error").length;

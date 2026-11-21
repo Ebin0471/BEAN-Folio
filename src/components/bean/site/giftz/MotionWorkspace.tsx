@@ -18,7 +18,7 @@
  */
 
 import { useMemo, useState } from "react";
-import { RefreshCw, Save, Sparkles, Trash2, Waves } from "lucide-react";
+import { Boxes, RefreshCw, Save, Sparkles, Trash2, Waves } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -40,6 +40,13 @@ import {
   type GsapMotionBlock,
   type GsapTargetElement,
 } from "@/lib/giftz/motion-engine";
+import {
+  SCENE3D_OBJECT_KINDS,
+  defaultScene3dBlock,
+  type Scene3dBlock,
+  type Scene3dObjectSpec,
+  type Scene3dSceneSpec,
+} from "@/lib/giftz/scene3d";
 import type { SiteConfig } from "@/lib/site-config";
 
 interface MotionWorkspaceProps {
@@ -76,19 +83,23 @@ function kebabId(base: string, taken: Set<string>): string {
 export function MotionWorkspace({ siteId, config, saving, onSave, refreshToken }: MotionWorkspaceProps) {
   const gsapBlock: GsapMotionBlock = config?.motion.gsap ?? { enabled: false, respectReducedMotion: true, animations: [] };
   const background = config?.backgroundEffects ?? null;
+  const scene3dBlock: Scene3dBlock = config?.scene3d ?? defaultScene3dBlock();
   const [draftGsap, setDraftGsap] = useState<GsapMotionBlock>(gsapBlock);
   const [draftBg, setDraftBg] = useState(background);
+  const [draftScene3d, setDraftScene3d] = useState<Scene3dBlock>(scene3dBlock);
   const [dirty, setDirty] = useState(false);
   const [reducedPreview, setReducedPreview] = useState(false);
   const [previewNonce, setPreviewNonce] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [expandedScene, setExpandedScene] = useState<string | null>(null);
 
   // Re-hydrate drafts when the site changes or files were re-synced elsewhere.
   const configKey = `${siteId}:${refreshToken}`;
   useMemo(() => {
     setDraftGsap(config?.motion.gsap ?? { enabled: false, respectReducedMotion: true, animations: [] });
     setDraftBg(config?.backgroundEffects ?? null);
+    setDraftScene3d(config?.scene3d ?? defaultScene3dBlock());
     setDirty(false);
   }, [configKey]);
 
@@ -141,6 +152,114 @@ export function MotionWorkspace({ siteId, config, saving, onSave, refreshToken }
     markDirty();
   };
 
+  // ---- scene3d helpers (GZ-3) -------------------------------------------
+  const updateScene = (id: string, patch: Partial<Scene3dSceneSpec>) => {
+    setDraftScene3d((block) => ({
+      ...block,
+      scenes: block.scenes.map((s) => (s.id === id ? { ...s, ...patch } : s)),
+    }));
+    markDirty();
+  };
+
+  const addScene = () => {
+    if (draftScene3d.scenes.length >= 3) return;
+    const taken = new Set(draftScene3d.scenes.map((s) => s.id));
+    const next: Scene3dSceneSpec = {
+      id: kebabId("scene-3d", taken),
+      target: { kind: "hero" },
+      camera: { fov: 55, position: { x: 0, y: 0, z: 6 } },
+      objects: [
+        {
+          id: "primary-shape",
+          kind: "icosahedron",
+          position: { x: 0, y: 0, z: 0 },
+          scale: 1,
+          material: { kind: "standard", color: "#e5c878", metalness: 0.2, roughness: 0.5 },
+          animation: { kind: "rotate", speed: 0.4, axis: "y" },
+        },
+        {
+          id: "satellite-shape",
+          kind: "torus",
+          position: { x: 2.2, y: 0.4, z: -0.6 },
+          scale: 0.8,
+          material: { kind: "standard", color: "#8a6d3b", metalness: 0.3, roughness: 0.6 },
+          animation: { kind: "orbit", speed: 0.3, radius: 2.2 },
+        },
+      ],
+      interactions: { pointer: "parallax", hover: "scale" },
+      scroll: { mode: "cameraDolly", strength: 0.5 },
+      quality: { mobile: "reduced", maxPixelRatio: 1.5 },
+    };
+    setDraftScene3d((block) => ({ ...block, scenes: [...block.scenes, next] }));
+    setExpandedScene(next.id);
+    markDirty();
+  };
+
+  const removeScene = (id: string) => {
+    setDraftScene3d((block) => ({ ...block, scenes: block.scenes.filter((s) => s.id !== id) }));
+    markDirty();
+  };
+
+  const updateObject = (sceneId: string, objectId: string, patch: Partial<Scene3dObjectSpec>) => {
+    setDraftScene3d((block) => ({
+      ...block,
+      scenes: block.scenes.map((s) =>
+        s.id === sceneId
+          ? { ...s, objects: s.objects.map((o) => (o.id === objectId ? { ...o, ...patch } : o)) }
+          : s
+      ),
+    }));
+    markDirty();
+  };
+
+  const addObject = (scene: Scene3dSceneSpec) => {
+    if (scene.objects.length >= 24) return;
+    const taken = new Set(scene.objects.map((o) => o.id));
+    const next: Scene3dObjectSpec = {
+      id: kebabId("shape", taken),
+      kind: "sphere",
+      position: { x: -1.8, y: 0.2, z: 0 },
+      scale: 0.9,
+      material: { kind: "standard", color: "#c9a55c", metalness: 0.2, roughness: 0.55 },
+      animation: { kind: "float", speed: 0.5 },
+    };
+    updateScene(scene.id, { objects: [...scene.objects, next] });
+    markDirty();
+  };
+
+  const removeObject = (sceneId: string, objectId: string) => {
+    updateScene(sceneId, {
+      objects: (draftScene3d.scenes.find((s) => s.id === sceneId)?.objects ?? []).filter((o) => o.id !== objectId),
+    });
+    markDirty();
+  };
+
+  const sceneNumber = (
+    value: number | undefined,
+    fallback: number,
+    min: number,
+    max: number,
+    onCommit: (n: number) => void,
+    label: string
+  ) => (
+    <div>
+      <Label className="text-[10px]">{label}</Label>
+      <Input
+        className="h-7 text-[11px]"
+        type="number"
+        min={min}
+        max={max}
+        step="any"
+        value={typeof value === "number" ? value : fallback}
+        onChange={(e) => {
+          const parsed = Number(e.target.value);
+          if (Number.isFinite(parsed)) onCommit(parsed);
+        }}
+        aria-label={label}
+      />
+    </div>
+  );
+
   const save = async () => {
     if (!config) return;
     setError(null);
@@ -148,6 +267,7 @@ export function MotionWorkspace({ siteId, config, saving, onSave, refreshToken }
       ...config,
       motion: { ...config.motion, gsap: draftGsap },
       backgroundEffects: draftBg ?? undefined,
+      scene3d: draftScene3d,
     };
     try {
       await onSave(candidate);
@@ -556,6 +676,311 @@ export function MotionWorkspace({ siteId, config, saving, onSave, refreshToken }
               </div>
             ) : (
               <p className="mt-2 text-[11px] text-muted-foreground">Disabled — no WebGL background will be generated.</p>
+            )}
+          </section>
+
+          {/* 3D scene engine (GZ-3) */}
+          <section className="rounded-lg border border-border/60 bg-card p-3" aria-label="3D scene engine">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Boxes className="size-4 text-primary" aria-hidden />
+                <h3 className="text-[13px] font-semibold">3D scenes</h3>
+                <Switch
+                  checked={draftScene3d.enabled}
+                  onCheckedChange={(v) => {
+                    setDraftScene3d((b) => ({ ...b, enabled: v }));
+                    markDirty();
+                  }}
+                  aria-label="Enable 3D scene engine"
+                />
+              </div>
+              <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" onClick={addScene} disabled={!draftScene3d.enabled || draftScene3d.scenes.length >= 3}>
+                Add scene
+              </Button>
+            </div>
+            <label className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground">
+              <Switch
+                checked={draftScene3d.respectReducedMotion}
+                onCheckedChange={(v) => {
+                  setDraftScene3d((b) => ({ ...b, respectReducedMotion: v }));
+                  markDirty();
+                }}
+                aria-label="Respect prefers-reduced-motion for 3D scenes"
+              />
+              Respect reduced motion (recommended)
+            </label>
+
+            {!draftScene3d.enabled ? (
+              <p className="mt-2 text-[11px] text-muted-foreground">Disabled — no 3D scenes will be generated.</p>
+            ) : draftScene3d.scenes.length === 0 ? (
+              <p className="mt-2 text-[11px] text-muted-foreground">
+                No scenes yet — add one, or ask the chat agent for e.g. “add an interactive 3D hero with floating golden shapes”.
+              </p>
+            ) : (
+              <ul className="mt-2 flex flex-col gap-2">
+                {draftScene3d.scenes.map((scene) => {
+                  const open = expandedScene === scene.id;
+                  return (
+                    <li key={scene.id} className="rounded-md border border-border/50 bg-background/50 p-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <button
+                          type="button"
+                          className="min-w-0 flex-1 text-left"
+                          onClick={() => setExpandedScene(open ? null : scene.id)}
+                          aria-expanded={open}
+                        >
+                          <span className="block truncate text-[12px] font-medium">{scene.id}</span>
+                          <span className="block truncate text-[10px] text-muted-foreground">
+                            {scene.target.kind}
+                            {scene.target.kind === "section" ? ` · ${scene.target.sectionId ?? "(none)"}` : ""} ·{" "}
+                            {scene.objects.length} object{scene.objects.length === 1 ? "" : "s"} · pointer {scene.interactions?.pointer ?? "parallax"}
+                          </span>
+                        </button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+                          onClick={() => removeScene(scene.id)}
+                          aria-label={`Remove 3D scene ${scene.id}`}
+                        >
+                          <Trash2 className="size-3.5" aria-hidden />
+                        </Button>
+                      </div>
+                      {open ? (
+                        <div className="mt-2 grid grid-cols-2 gap-2">
+                          <div>
+                            <Label className="text-[10px]">Target</Label>
+                            <Select
+                              value={scene.target.kind}
+                              onValueChange={(v) => updateScene(scene.id, { target: { kind: v as "page" | "hero" | "section", sectionId: scene.target.sectionId } })}
+                            >
+                              <SelectTrigger className="h-7 text-[11px]" aria-label="Scene target"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="hero" className="text-[11px]">hero</SelectItem>
+                                <SelectItem value="page" className="text-[11px]">page</SelectItem>
+                                <SelectItem value="section" className="text-[11px]">section…</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          {scene.target.kind === "section" ? (
+                            <div>
+                              <Label className="text-[10px]">Section</Label>
+                              <Select
+                                value={scene.target.sectionId ?? ""}
+                                onValueChange={(v) => updateScene(scene.id, { target: { kind: "section", sectionId: v } })}
+                              >
+                                <SelectTrigger className="h-7 text-[11px]" aria-label="Scene section"><SelectValue /></SelectTrigger>
+                                <SelectContent className="max-h-64">
+                                  {sectionOptions.map((s) => (
+                                    <SelectItem key={s.id} value={s.id} className="text-[11px]">{s.type} · {s.id}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          ) : (
+                            <div>
+                              <Label className="text-[10px]">Camera FOV</Label>
+                              <Input
+                                className="h-7 text-[11px]"
+                                type="number"
+                                min={20}
+                                max={100}
+                                value={scene.camera?.fov ?? 55}
+                                onChange={(e) => {
+                                  const parsed = Number(e.target.value);
+                                  if (Number.isFinite(parsed)) {
+                                    const cam = scene.camera ?? { position: { x: 0, y: 0, z: 6 } };
+                                    updateScene(scene.id, { camera: { ...cam, fov: parsed } });
+                                  }
+                                }}
+                                aria-label="Camera field of view"
+                              />
+                            </div>
+                          )}
+                          {(["x", "y", "z"] as const).map((axis) =>
+                            sceneNumber(
+                              scene.camera?.position?.[axis],
+                              { x: 0, y: 0, z: 6 }[axis],
+                              -40,
+                              40,
+                              (n) => {
+                                const base = scene.camera?.position ?? { x: 0, y: 0, z: 6 };
+                                updateScene(scene.id, { camera: { ...(scene.camera ?? { fov: 55 }), position: { ...base, [axis]: n } } });
+                              },
+                              `Camera ${axis.toUpperCase()}`
+                            )
+                          )}
+
+                          <div className="col-span-2">
+                            <div className="flex items-center justify-between">
+                              <Label className="text-[10px]">Objects ({scene.objects.length}/24)</Label>
+                              <Button variant="outline" size="sm" className="h-6 px-2 text-[10px]" onClick={() => addObject(scene)} disabled={scene.objects.length >= 24}>
+                                Add object
+                              </Button>
+                            </div>
+                            <ul className="mt-1 flex flex-col gap-1.5">
+                              {scene.objects.map((object) => (
+                                <li key={object.id} className="rounded border border-border/40 bg-card/60 p-1.5">
+                                  <div className="flex items-center gap-1.5">
+                                    <Input
+                                      className="h-6 w-28 text-[10px] font-mono"
+                                      value={object.id}
+                                      readOnly
+                                      aria-label="Object id"
+                                      title={object.id}
+                                    />
+                                    <Select value={object.kind} onValueChange={(v) => updateObject(scene.id, object.id, { kind: v as Scene3dObjectSpec["kind"] })}>
+                                      <SelectTrigger className="h-6 flex-1 text-[10px]" aria-label="Object geometry"><SelectValue /></SelectTrigger>
+                                      <SelectContent className="max-h-56">
+                                        {SCENE3D_OBJECT_KINDS.map((k) => (
+                                          <SelectItem key={k} value={k} className="text-[11px]">{k}</SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
+                                      onClick={() => removeObject(scene.id, object.id)}
+                                      aria-label={`Remove object ${object.id}`}
+                                    >
+                                      <Trash2 className="size-3" aria-hidden />
+                                    </Button>
+                                  </div>
+                                  <div className="mt-1 grid grid-cols-3 gap-1.5">
+                                    {(["x", "y", "z"] as const).map((axis) =>
+                                      sceneNumber(
+                                        object.position?.[axis],
+                                        0,
+                                        -40,
+                                        40,
+                                        (n) => updateObject(scene.id, object.id, { position: { ...(object.position ?? { x: 0, y: 0, z: 0 }), [axis]: n } }),
+                                        `Pos ${axis.toUpperCase()}`
+                                      )
+                                    )}
+                                  </div>
+                                  <div className="mt-1 grid grid-cols-3 gap-1.5">
+                                    {sceneNumber(object.scale, 1, 0.05, 12, (n) => updateObject(scene.id, object.id, { scale: n }), "Scale")}
+                                    {sceneNumber(object.animation?.speed, 0.6, 0.05, 3, (n) => updateObject(scene.id, object.id, { animation: { ...(object.animation ?? { kind: "none" }), speed: n } }), "Anim speed")}
+                                    <div>
+                                      <Label className="text-[10px]">Animation</Label>
+                                      <Select
+                                        value={object.animation?.kind ?? "none"}
+                                        onValueChange={(v) => updateObject(scene.id, object.id, { animation: { ...(object.animation ?? { speed: 0.6 }), kind: v as NonNullable<Scene3dObjectSpec["animation"]>["kind"] } })}
+                                      >
+                                        <SelectTrigger className="h-7 text-[11px]" aria-label="Object animation"><SelectValue /></SelectTrigger>
+                                        <SelectContent>
+                                          {(["none", "rotate", "float", "pulse", "orbit"] as const).map((k) => (
+                                            <SelectItem key={k} value={k} className="text-[11px]">{k}</SelectItem>
+                                          ))}
+                                        </SelectContent>
+                                      </Select>
+                                    </div>
+                                  </div>
+                                  <div className="mt-1 grid grid-cols-2 gap-1.5">
+                                    <div>
+                                      <Label className="text-[10px]">Color</Label>
+                                      <Input
+                                        className="h-7 text-[11px] font-mono"
+                                        value={object.material?.color ?? "#e5c878"}
+                                        onChange={(e) => updateObject(scene.id, object.id, { material: { ...(object.material ?? { kind: "standard" }), color: e.target.value } })}
+                                        aria-label="Object color"
+                                      />
+                                    </div>
+                                    <label className="flex items-end gap-2 pb-1 text-[10px] text-muted-foreground">
+                                      <Switch
+                                        checked={object.material?.wireframe ?? false}
+                                        onCheckedChange={(v) => updateObject(scene.id, object.id, { material: { ...(object.material ?? { kind: "standard" }), wireframe: v } })}
+                                        aria-label={`Wireframe ${object.id}`}
+                                      />
+                                      Wireframe
+                                    </label>
+                                  </div>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+
+                          <div>
+                            <Label className="text-[10px]">Pointer</Label>
+                            <Select
+                              value={scene.interactions?.pointer ?? "parallax"}
+                              onValueChange={(v) => updateScene(scene.id, { interactions: { ...(scene.interactions ?? { hover: "none" }), pointer: v as "none" | "parallax" | "rotate" } })}
+                            >
+                              <SelectTrigger className="h-7 text-[11px]" aria-label="Pointer interaction"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                {(["none", "parallax", "rotate"] as const).map((k) => (
+                                  <SelectItem key={k} value={k} className="text-[11px]">{k}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div>
+                            <Label className="text-[10px]">Hover</Label>
+                            <Select
+                              value={scene.interactions?.hover ?? "none"}
+                              onValueChange={(v) => updateScene(scene.id, { interactions: { ...(scene.interactions ?? { pointer: "none" }), hover: v as "none" | "scale" | "spin" } })}
+                            >
+                              <SelectTrigger className="h-7 text-[11px]" aria-label="Hover interaction"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                {(["none", "scale", "spin"] as const).map((k) => (
+                                  <SelectItem key={k} value={k} className="text-[11px]">{k}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div>
+                            <Label className="text-[10px]">Scroll camera</Label>
+                            <Select
+                              value={scene.scroll?.mode ?? "none"}
+                              onValueChange={(v) => updateScene(scene.id, { scroll: { ...(scene.scroll ?? { strength: 0.5 }), mode: v as "none" | "cameraDolly" | "cameraOrbit" } })}
+                            >
+                              <SelectTrigger className="h-7 text-[11px]" aria-label="Scroll interaction"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                {(["none", "cameraDolly", "cameraOrbit"] as const).map((k) => (
+                                  <SelectItem key={k} value={k} className="text-[11px]">{k}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div>
+                            <Label className="text-[10px]">On mobile</Label>
+                            <Select
+                              value={scene.quality?.mobile ?? "reduced"}
+                              onValueChange={(v) => updateScene(scene.id, { quality: { ...(scene.quality ?? { maxPixelRatio: 1.5 }), mobile: v as "full" | "reduced" | "off" } })}
+                            >
+                              <SelectTrigger className="h-7 text-[11px]" aria-label="Mobile quality"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                {(["full", "reduced", "off"] as const).map((k) => (
+                                  <SelectItem key={k} value={k} className="text-[11px]">{k}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="col-span-2">
+                            <Label className="text-[10px]">Fallback (no-WebGL background)</Label>
+                            <Input
+                              className="h-7 text-[11px] font-mono"
+                              placeholder="optional, e.g. #101014"
+                              value={scene.fallback?.value ?? ""}
+                              onChange={(e) => {
+                                const value = e.target.value;
+                                updateScene(scene.id, {
+                                  fallback: value.trim() ? { kind: scene.fallback?.kind ?? "color", value } : undefined,
+                                });
+                              }}
+                              aria-label="Scene fallback color"
+                            />
+                          </div>
+                          <p className="col-span-2 text-[10px] leading-relaxed text-muted-foreground">
+                            Decorative three.js overlay on “{scene.target.kind}” — pointer-events: none, disposed on pagehide; reduced-motion / no-WebGL visitors see the page content unchanged.
+                          </p>
+                        </div>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
             )}
           </section>
         </div>

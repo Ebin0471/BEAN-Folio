@@ -54,7 +54,7 @@ export const STEP_TOOLS: readonly ToolDef[] = [
     family: "deterministic",
     targetKind: "none",
     needsInstruction: false,
-    description: "Reveal preset, duration, stagger, easing, intensity, hover effects, scroll reveal, once/repeat, background effect, micro-interactions — applied from the step's patch.",
+    description: "Reveal preset, duration, stagger, easing, intensity, hover effects, scroll reveal, once/repeat, background effect, 3D scenes (scene3d block), micro-interactions — applied from the step's patch.",
   },
   {
     id: "palette.apply",

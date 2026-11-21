@@ -28,6 +28,11 @@
 
 import { z } from "zod";
 import type { SiteConfig } from "@/lib/site-config";
+import {
+  SCENE3D_RUNTIME_PATH,
+  compileScene3dBlock,
+  type Scene3dSceneProgram,
+} from "./scene3d";
 
 // ---------------------------------------------------------------- plugins
 
@@ -1062,6 +1067,8 @@ export interface MotionProgram {
   animations: MotionStep[];
   plugins: GsapPluginId[];
   vanta: VantaProgram | null;
+  /** Structured 3D scenes (GZ-3) — empty when none are enabled/valid. */
+  scene3d: Scene3dSceneProgram[];
 }
 
 export interface VendorFileSpec {
@@ -1075,23 +1082,26 @@ export interface VendorFileSpec {
 export function vendorFileSpecs(program: MotionProgram | null): VendorFileSpec[] {
   if (!program) return [];
   const specs: VendorFileSpec[] = [];
+  const needsThree = Boolean(program.vanta) || program.scene3d.length > 0;
   if (program.gsapEnabled) {
     for (const plugin of program.plugins) {
       const spec = GSAP_PLUGIN_CATALOG[plugin];
       specs.push({ path: `${VENDOR_DIR}/${spec.fileName}`, pkgPath: spec.pkgPath, encoding: "utf8", approxBytes: spec.approxBytes });
     }
   }
-  if (program.vanta) {
+  if (needsThree) {
     const three = THREE_VENDOR;
     specs.push({ path: `${VENDOR_DIR}/${three.fileName}`, pkgPath: three.pkgPath, encoding: "utf8", approxBytes: three.approxBytes });
-    const effect = getVantaEffect(program.vanta.effect);
-    if (effect) {
-      specs.push({
-        path: `${VENDOR_DIR}/${effect.distFile}`,
-        pkgPath: `vanta/dist/${effect.distFile}`,
-        encoding: "utf8",
-        approxBytes: 30000,
-      });
+    if (program.vanta) {
+      const effect = getVantaEffect(program.vanta.effect);
+      if (effect) {
+        specs.push({
+          path: `${VENDOR_DIR}/${effect.distFile}`,
+          pkgPath: `vanta/dist/${effect.distFile}`,
+          encoding: "utf8",
+          approxBytes: 30000,
+        });
+      }
     }
   }
   return specs;
@@ -1118,6 +1128,9 @@ export function pluginsForAnimations(animations: MotionStep[]): GsapPluginId[] {
 export function compileMotionProgram(config: SiteConfig): { program: MotionProgram | null; issues: MotionIssue[] } {
   const issues: MotionIssue[] = [];
   const sectionIds = new Set<string>(config.pages.flatMap((page) => page.sections.map((s) => s.id)));
+  const heroSectionIds = new Set(
+    config.pages.flatMap((page) => page.sections).filter((s) => s.type.startsWith("hero")).map((s) => s.id)
+  );
 
   const gsapBlock = (config.motion as unknown as { gsap?: GsapMotionBlock } | undefined)?.gsap;
   let animations: MotionStep[] = [];
@@ -1186,9 +1199,15 @@ export function compileMotionProgram(config: SiteConfig): { program: MotionProgr
     }
   }
 
-  if (!gsapEnabled && !vanta) return { program: null, issues };
+  // Structured 3D scenes (GZ3) — compiled from the site config's scene3d block.
+  const scene3dBlock = (config as unknown as { scene3d?: import("./scene3d").Scene3dBlock }).scene3d;
+  const scene3dCompiled = compileScene3dBlock(scene3dBlock, sectionIds, heroSectionIds);
+  issues.push(...scene3dCompiled.issues.map((i) => ({ path: i.path, message: i.message })));
+  const scene3dScenes = scene3dCompiled.scenes;
+
+  if (!gsapEnabled && !vanta && scene3dScenes.length === 0) return { program: null, issues };
   const hasGsapContent = gsapEnabled && animations.length > 0;
-  if (!hasGsapContent && !vanta) return { program: null, issues };
+  if (!hasGsapContent && !vanta && scene3dScenes.length === 0) return { program: null, issues };
   return {
     program: {
       gsapEnabled: hasGsapContent,
@@ -1196,6 +1215,7 @@ export function compileMotionProgram(config: SiteConfig): { program: MotionProgr
       animations,
       plugins: pluginsForAnimations(animations),
       vanta,
+      scene3d: scene3dScenes,
     },
     issues,
   };
@@ -1205,6 +1225,7 @@ export function compileMotionProgram(config: SiteConfig): { program: MotionProgr
 export function motionScriptTags(program: MotionProgram | null): string[] {
   if (!program) return [];
   const tags: string[] = [];
+  const threeTagged = new Set<string>();
   if (program.gsapEnabled) {
     for (const plugin of program.plugins) {
       const spec = GSAP_PLUGIN_CATALOG[plugin];
@@ -1213,10 +1234,18 @@ export function motionScriptTags(program: MotionProgram | null): string[] {
   }
   if (program.vanta) {
     tags.push(`<script src="./${VENDOR_DIR}/${THREE_VENDOR.fileName}" defer></script>`);
+    threeTagged.add(THREE_VENDOR.fileName);
     const effect = getVantaEffect(program.vanta.effect);
     if (effect) tags.push(`<script src="./${VENDOR_DIR}/${effect.distFile}" defer></script>`);
   }
-  if (tags.length) tags.push(`<script src="./${MOTION_RUNTIME_PATH}" defer></script>`);
+  if (program.scene3d.length > 0 && !threeTagged.has(THREE_VENDOR.fileName)) {
+    tags.push(`<script src="./${VENDOR_DIR}/${THREE_VENDOR.fileName}" defer></script>`);
+    threeTagged.add(THREE_VENDOR.fileName);
+  }
+  if ((program.gsapEnabled || program.vanta) && tags.length) {
+    tags.push(`<script src="./${MOTION_RUNTIME_PATH}" defer></script>`);
+  }
+  if (program.scene3d.length > 0) tags.push(`<script src="./${SCENE3D_RUNTIME_PATH}" defer></script>`);
   return tags;
 }
 

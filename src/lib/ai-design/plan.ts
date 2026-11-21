@@ -23,6 +23,7 @@ import { PALETTES } from "@/lib/site-palettes";
 import { GLASS_PRESET_IDS, designPresets, templatePresets } from "@/lib/site-config";
 import { motionPresetsByScope } from "@/lib/site-motion";
 import { gsapMotionBlockSchema, backgroundEffectsSchema } from "@/lib/giftz/motion-engine";
+import { scene3dBlockSchema } from "@/lib/giftz/scene3d";
 
 // ---------------------------------------------------------------- patch schema
 // Deterministic token patches — every field optional, merged onto the working
@@ -142,6 +143,9 @@ export const designPatchSchema = z
     // GIFTZ Vanta background engine (M16) — full-block replace semantics;
     // null disables the background engine.
     backgroundEffects: backgroundEffectsSchema.nullable().optional(),
+    // GIFTZ structured 3D scene engine (GZ-3) — full-block replace semantics;
+    // null disables the 3D engine.
+    scene3d: scene3dBlockSchema.nullable().optional(),
   })
   .strict();
 
@@ -514,6 +518,24 @@ function sanitizePatch(raw: unknown): Record<string, unknown> | null {
   if (Object.keys(theme).length > 0) out.theme = theme;
   const motion = sanitizeMotionGroup(coerced.motion);
   if (Object.keys(motion).length > 0) out.motion = motion;
+  // Full-block engines (Vanta background, 3D scenes) pass through ONLY when
+  // they parse against their own strict block schemas — an invalid block is
+  // dropped (never guessed into a different engine), and null keeps the
+  // documented "disable" semantics.
+  const parseBlock = (value: unknown, schema: z.ZodType): unknown | undefined => {
+    if (value === null) return null;
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const parsed = schema.safeParse(value);
+    return parsed.success ? parsed.data : undefined;
+  };
+  if ("backgroundEffects" in coerced) {
+    const parsed = parseBlock(coerced.backgroundEffects, backgroundEffectsSchema);
+    if (parsed !== undefined) out.backgroundEffects = parsed;
+  }
+  if ("scene3d" in coerced) {
+    const parsed = parseBlock(coerced.scene3d, scene3dBlockSchema);
+    if (parsed !== undefined) out.scene3d = parsed;
+  }
   return Object.keys(out).length > 0 ? out : null;
 }
 
@@ -703,7 +725,34 @@ export function deriveTokensFromText(text: string, toolId = "theme.tokens"): Rec
     if (named) motion.preset = named;
   }
 
+  // ---- site name / tagline (quoted strings, explicit intent only) ----
+  // "Update site name and tagline to 'Atelier North' / 'Design with heart.'"
+  // — a model-planned rename step that carried its VALUES in the instruction
+  // but forgot the patch. Only QUOTED strings next to explicit rename intent
+  // become patch values — a quoted phrase elsewhere in the text is never a
+  // rename. Bounded by the schema (name ≤ 80, tagline ≤ 160).
+  let nameValue: string | null = null;
+  let taglineValue: string | null = null;
+  const QUOTE_RE = /[“"“”«»]([^“"“”«»]{1,80})[”"“”«»]/g;
+  const quoted = [...text.matchAll(QUOTE_RE)].map((m) => m[1]!.trim()).filter((s) => s.length >= 1);
+  if (quoted.length > 0) {
+    const nameIntent = /\b(site|website)\s+name\b|\brename\b|\bname\s+(the|this)\s+(site|website)\b|\btitled?\b/.test(lower);
+    const taglineIntent = /\btagline\b|\bsubtitle\b|\bslogan\b/.test(lower);
+    if (nameIntent) {
+      // The FIRST quote near the name intent wins (a tagline intent carries
+      // its own quote after it when both are present).
+      const nameQuote = quoted[0]!;
+      if (nameQuote.length <= 80) nameValue = nameQuote;
+    }
+    if (taglineIntent && quoted.length > (nameIntent ? 1 : 0)) {
+      const tagQuote = quoted[nameIntent ? 1 : 0]!;
+      if (tagQuote.length <= 160) taglineValue = tagQuote;
+    }
+  }
+
   const out: Record<string, unknown> = {};
+  if (nameValue !== null) out.name = nameValue;
+  if (taglineValue !== null) out.tagline = taglineValue;
   if (Object.keys(theme).length > 0) out.theme = theme;
   if (Object.keys(motion).length > 0) out.motion = motion;
   return out;
@@ -781,6 +830,41 @@ function remapModelStepsWithPatches(plan: DesignPlan): { plan: DesignPlan; chang
   });
   return changed ? { plan: { ...plan, steps }, changed } : { plan, changed };
 }
+
+/**
+ * Singular/loose constraint-target forms → canonical token groups (mirror of
+ * the resolver in lib/ai-design/constraints.ts, digest-independent subset).
+ */
+const CONSTRAINT_GROUP_ALIASES: Record<string, string> = {
+  color: "colors",
+  colors: "colors",
+  theme: "theme",
+  font: "fonts",
+  fonts: "fonts",
+  typography: "typography",
+  motion: "motion",
+  content: "content",
+  section: "sections",
+  sections: "sections",
+  page: "pages",
+  pages: "pages",
+  name: "name",
+  tagline: "tagline",
+};
+
+/** Tools whose steps MUTATE a token group — the self-contradiction drop
+ * consults this (the site.compose tool replaces the whole draft, so it
+ * contradicts every structural/design group). */
+const CONSTRAINT_GROUP_MUTATORS: Record<string, readonly string[]> = {
+  theme: ["theme.tokens", "palette.apply", "preset.apply", "template.apply", "site.compose"],
+  colors: ["theme.tokens", "palette.apply", "preset.apply", "template.apply", "site.compose"],
+  typography: ["typography.fonts", "preset.apply", "template.apply", "site.compose"],
+  fonts: ["typography.fonts", "preset.apply", "template.apply", "site.compose"],
+  motion: ["motion.configure", "preset.apply", "template.apply", "site.compose"],
+  content: ["section.add", "section.update", "section.remove", "section.reorder", "content.write", "page.add", "page.update", "page.remove", "site.compose"],
+  pages: ["section.add", "section.update", "section.remove", "section.reorder", "content.write", "page.add", "page.update", "page.remove", "site.compose"],
+  sections: ["section.add", "section.update", "section.remove", "section.reorder", "content.write", "page.add", "page.update", "page.remove", "site.compose"],
+};
 
 /**
  * Tool-name aliases — models invent plausible tool names (observed live:
@@ -901,6 +985,44 @@ export function normalizePlanJson(raw: unknown): Record<string, unknown> {
     steps.push(step);
   }
   out.steps = steps;
+
+  // Self-contradiction drop (GZ-1): a model-invented preservation constraint
+  // whose target the plan's OWN steps mutate is noise the model added against
+  // its own request (observed live 2026-11-21: "Create a multi-page website"
+  // produced a "pages untouched" constraint, then page.add steps — the whole
+  // expensive plan died on validator conflicts). Contradicted targets are
+  // removed per-constraint (partial constraints stay as strong as they can
+  // honestly be) and a constraint left with zero targets is dropped entirely;
+  // genuinely user-stated constraints that the plan HONORS keep their full
+  // enforcement (validator conflicts, executor byte-identical restore,
+  // verifier). Constraints with NO targets at all are untouched (their shape
+  // remains the strict schema's business), and section-id/page targets are
+  // resolved against the digest later on the strict validator path.
+  const targetContradicted = (target: unknown): boolean => {
+    const group = String(target).trim().toLowerCase();
+    const canonical = CONSTRAINT_GROUP_ALIASES[group] ?? group;
+    // name/tagline are patched only via theme.tokens' top-level name/tagline
+    // patch keys — checked directly (they have no tool-mapping group).
+    if (canonical === "name" || canonical === "tagline") {
+      return steps.some((s) => {
+        const st = s as { tool?: unknown; patch?: Record<string, unknown> | null };
+        return typeof st.tool === "string" && canonicalizeToolName(st.tool) === "theme.tokens" && typeof st.patch?.[canonical] === "string";
+      });
+    }
+    const tools = CONSTRAINT_GROUP_MUTATORS[canonical];
+    if (!tools) return false;
+    return steps.some((s) => {
+      const st = s as { tool?: unknown };
+      return typeof st.tool === "string" && tools.includes(canonicalizeToolName(st.tool));
+    });
+  };
+  out.constraints = constraints.flatMap((c) => {
+    const cc = c as { text?: unknown; targets?: unknown[] };
+    if (!Array.isArray(cc.targets) || cc.targets.length === 0) return [cc];
+    const keptTargets = cc.targets.filter((t) => !targetContradicted(t));
+    if (keptTargets.length === 0) return []; // fully self-contradicted → dropped
+    return [{ text: cc.text, targets: keptTargets }];
+  });
 
   return out;
 }

@@ -36,6 +36,7 @@ import type { GiftzProjectFile, GiftzSite, User } from "@prisma/client";
 import { aiComplete, AI_DEEP_TIMEOUT_MS, parseJsonFromText, recordAiUsage } from "@/lib/ai";
 import { normalizeConfig, type SiteConfig } from "@/lib/site-config";
 import { GSAP_MOTION_PRESET_IDS, VANTA_EFFECT_IDS } from "@/lib/giftz/motion-engine";
+import { scene3dCapabilityDoc } from "@/lib/giftz/scene3d";
 import { componentSelectionRules } from "@/lib/giftz/component-intelligence";
 import { siteConfigMediaError } from "@/lib/site-media-guard";
 import { log } from "@/lib/logger";
@@ -120,7 +121,7 @@ const CLASSIFY_SYSTEM = [
   "You are the request router of GIFTZ, the website-building agent of BEAN Folio.",
   "Classify the user's request for a GENERATED STATIC WEBSITE PROJECT (real HTML/CSS/JS/JSON files) that also has a visual content model (SiteConfig).",
   'Intent "files" covers: creating new standalone pages or components as real files, custom scripts, custom animation code beyond the motion preset system, forms, route/navigation logic that needs code, build error fixes, and direct file operations (create/rename/delete files).',
-  'Intent "config" covers: colors, fonts, text content, layout, sections, imagery, metadata, design/style changes, and animation/background requests that the motion engine presets express (GSAP animations via motion.gsap, Vanta backgrounds via backgroundEffects) — anything the visual content model expresses.',
+  'Intent "config" covers: colors, fonts, text content, layout, sections, imagery, metadata, design/style changes, and animation/background requests that the motion engine presets express (GSAP animations via motion.gsap, Vanta backgrounds via backgroundEffects, structured 3D scenes via scene3d) — anything the visual content model expresses.',
   "When the request mixes both, pick the intent that covers the BULK of the work; pure questions or tiny content edits are always \"config\".",
   'Reply with ONLY the JSON object: { "intent": "config"|"files", "reason": string (<=200 chars) } — no prose, no code fences.',
 ].join(" ");
@@ -273,19 +274,20 @@ const MOTION_RULES = `Motion/animation rules (GSAP motion engine + Vanta backgro
   * backgroundEffects = { enabled, engine: "vanta", effect, target: { kind: "page"|"hero"|"section", sectionId? }, settings, responsive, accessibility, fallback }
   * vanta effect ids: ${VANTA_EFFECT_IDS.join(", ")}
   The deterministic compiler then generates assets/motion.js (an audited interpreter), bundles local vendor files (assets/vendor/*.js) and wires <script> tags automatically. NEVER write <script src> tags for gsap/three/vanta yourself.
+${scene3dCapabilityDoc()}
 - Custom animation JS is allowed ONLY when the presets cannot express the request: create ONE self-contained file (e.g. assets/custom-motion.js), load it by editing the generated HTML files to add <script src="./assets/custom-motion.js" defer></script> before </head>.
 - Custom animation JS MUST: reference the window.gsap/ScrollTrigger globals (already bundled when motion.gsap is enabled), never use eval/new Function, never reference CDNs, scope DOM selections to its own section, guard against duplicate initialization, include a prefers-reduced-motion guard, and clean up (gsap.context()/revert/kill) — the build validator checks all of these.
 ${componentSelectionRules()}`;
 
 /** Paths the file-level agent may never plan against (compiler-owned). */
 function isCompilerOwnedPath(path: string): boolean {
-  return path === "assets/motion.js" || path.startsWith("assets/vendor/");
+  return path === "assets/motion.js" || path === "assets/scene3d.js" || path.startsWith("assets/vendor/");
 }
 
 const PLAN_SCHEMA_DOC = `{
-  "summary": string (<=600 chars — what you will change and why),
+  "summary": string (<=600 chars — what you will change and why; name the chosen design direction when this is a design task; may end with ONE "QUESTION: ..." when a detail is essential and missing),
   "files": [{ "path": workspace-relative, "action": "create"|"modify"|"delete",
-              "instructions": string (<=800 chars — precise implementation instructions) }]  // 1..12
+              "instructions": string (<=800 chars — precise implementation instructions) }]  // 1..16
 }`;
 
 const PLAN_RULES = `Rules:
@@ -297,7 +299,22 @@ const PLAN_RULES = `Rules:
 - Never create or modify assets/vendor/* files — they are generated from pinned packages by the compiler.
 ${MOTION_RULES}
 - Keep the plan MINIMAL and focused on the request; do not restructure unrelated files.
-- When the last build reported errors, the plan must fix exactly those errors.`;
+- When the last build reported errors, the plan must fix exactly those errors.
+
+DESIGN DIRECTION (GZ-1) — for new pages, new sections, restyles and whole-site builds:
+- Before listing files, choose ONE deliberate visual direction grounded in the request's audience and purpose: editorial-luxury, minimal-typographic, modern-saas, brutalist-experimental, cinematic-product, portfolio-gallery, ecommerce-merchandised, or immersive-interactive. State the direction in the plan summary.
+- Commit to the direction across every page: one restrained palette (a background, a foreground, ONE accent), a real type pairing (display face for headings, quiet body face), generous spacing, and a consistent section rhythm.
+- Compose intentionally — alternate compositions (editorial split, featured one-large-plus-grid, index rows, band-separated chapters); do NOT default to repeated centered gradient heroes with three equal cards.
+- Whitespace, hierarchy and typography do the separating — not borders around everything.
+
+MULTI-PAGE SITES (GZ-1):
+- Every page of a multi-page site shares the same masthead nav with WORKING relative links to the other pages (e.g. href="./about.html"); keep link paths consistent with the actual file names you create.
+- Each page sets its own <title> and <meta name="description"> reflecting its content; index.html remains the entry page.
+- Mobile layout is not optional: every new page carries the same responsive structure (viewport meta is generated for you — keep it) and collapses gracefully at 390px.
+
+HONEST CONTENT (GZ-1):
+- NEVER invent facts: no fake clients, testimonials, quotes, awards, metrics, prices, credentials or dates. Use the site's existing content (site.config.json + the tree), clearly generic copy, or empty containers the user fills later.
+- If a detail is essential and missing, end the "summary" with ONE question prefixed "QUESTION: " and proceed with the most sensible default — never ask more than one question, and never block execution waiting for an answer.`;
 
 const filePlanStepSchema = z.object({
   path: z.string().min(1).max(200),
@@ -305,9 +322,12 @@ const filePlanStepSchema = z.object({
   instructions: z.string().min(1).max(4000),
 });
 
+/** Bounded plan size: 16 files covers a real multi-page site (pages + assets + config bridge) while every write stays inside per-batch and per-file caps. */
+const FILE_PLAN_MAX_FILES = 16;
+
 const filePlanSchema = z.object({
   summary: z.string().min(1).max(2000),
-  files: z.array(filePlanStepSchema).min(1).max(12),
+  files: z.array(filePlanStepSchema).min(1).max(FILE_PLAN_MAX_FILES),
 });
 
 type FilePlan = z.infer<typeof filePlanSchema>;
@@ -319,6 +339,7 @@ function planUserPrompt(input: {
   treeLines: string;
   diagnostics: BuildDiagnostics | null;
   contentsBlock: string;
+  recentActivity: string;
 }): string {
   return [
     "User request (verbatim):",
@@ -331,6 +352,9 @@ function planUserPrompt(input: {
     "",
     "Last build diagnostics:",
     diagnosticsBlock(input.diagnostics),
+    "",
+    "Recent project activity (continuity — what happened in previous turns):",
+    input.recentActivity || "(no recorded activity yet)",
     "",
     "Current file contents:",
     input.contentsBlock,
@@ -921,18 +945,43 @@ export async function runProjectTurn(params: RunProjectTurnParams): Promise<void
     await setFileStage(assistantMessageId, taskId, "reading files");
     const rows = await listProjectFiles(site.id);
     rowsAtPlanTime = rows;
-    const lastBuildRow = await db.giftzBuild.findFirst({
-      where: { siteId: site.id },
-      orderBy: { createdAt: "desc" },
-      select: { diagnosticsJson: true },
-    });
+    const [lastBuildRow, recentActivityRows] = await Promise.all([
+      db.giftzBuild.findFirst({
+        where: { siteId: site.id },
+        orderBy: { createdAt: "desc" },
+        select: { diagnosticsJson: true },
+      }),
+      // Continuity context (GZ-1): the last five recorded operations so a
+      // follow-up turn understands what previous turns did (resumability).
+      db.giftzActivity.findMany({
+        where: { siteId: site.id },
+        orderBy: { createdAt: "desc" },
+        take: 5,
+        select: { kind: true, createdAt: true, detailJson: true },
+      }),
+    ]);
     const lastDiagnostics = lastBuildRow ? parseBuildDiagnostics(lastBuildRow) : null;
+    const recentActivity = recentActivityRows
+      .map((row) => {
+        let detail = "";
+        try {
+          const parsed = JSON.parse(row.detailJson) as Record<string, unknown>;
+          detail = Object.entries(parsed)
+            .slice(0, 3)
+            .map(([k, v]) => `${k}=${String(v).slice(0, 40)}`)
+            .join(" ");
+        } catch {
+          detail = "";
+        }
+        return `- ${row.createdAt.toISOString()} ${row.kind}${detail ? ` (${detail})` : ""}`;
+      })
+      .join("\n");
     const { treeLines, contentsBlock } = buildContextBlocks(rows, CONTEXT_TOTAL_BYTES);
     const existingPaths = new Set(rows.map((r) => r.path));
 
     // ---- 2. PLAN ----------------------------------------------------------
     await setFileStage(assistantMessageId, taskId, "planning");
-    const planInput = { request, site, treeLines, diagnostics: lastDiagnostics, contentsBlock };
+    const planInput = { request, site, treeLines, diagnostics: lastDiagnostics, contentsBlock, recentActivity };
     const planResult = await requestPlan(userId, planInput, existingPaths);
     plan = planResult.plan;
     const ov: Overlay = { map: new Map(), notes: new Map(), problems: [] };
