@@ -417,6 +417,11 @@ export function BuildWorkspace({
                 <p className="flex flex-wrap items-center gap-2">
                   <span className={cn("shrink-0 rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide", statusTone(d.status))}>{d.status}</span>
                   <span className="min-w-0 truncate text-[11px] text-muted-foreground">{d.provider}</span>
+                  {d.buildId && (
+                    <span className="shrink-0 font-mono text-[9px] text-muted-foreground/70" title={`Built by build ${d.buildId}`}>
+                      build {d.buildId.slice(0, 8)}
+                    </span>
+                  )}
                   {d.deployedAt && <span className="shrink-0 text-[10px] text-muted-foreground">{relativeTime(d.deployedAt)}</span>}
                   {d.status === "LIVE" && (
                     <Button

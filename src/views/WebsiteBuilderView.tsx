@@ -88,6 +88,7 @@ import { EmptyState } from "@/components/bean/EmptyState";
 import { BuildWorkspace } from "@/components/bean/site/giftz/BuildWorkspace";
 import { CodeWorkspace } from "@/components/bean/site/giftz/CodeWorkspace";
 import { MotionWorkspace } from "@/components/bean/site/giftz/MotionWorkspace";
+import { InspectorPanel } from "@/components/bean/site/giftz/InspectorPanel";
 import { GiftzVersionDialog } from "@/components/bean/site/giftz/GiftzVersionDialog";
 import { SiteRenderer } from "@/components/bean/site/SiteRenderer";
 import { ChatPanel, type StudioProposal } from "@/components/bean/site/studio/ChatPanel";
@@ -940,6 +941,7 @@ export default function WebsiteBuilderView() {
         await refreshGiftzSiteDetail(id);
         setGiftzPublishedPath(null);
         setProposalPreview(null);
+      setInspectorEditNote(null);
         setGiftzCanvasTab("preview");
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Could not open this generated site");
@@ -953,6 +955,7 @@ export default function WebsiteBuilderView() {
     setGiftzSite(null);
     setGiftzPublishedPath(null);
     setProposalPreview(null);
+      setInspectorEditNote(null);
     setGiftzCanvasTab("preview");
   }
   function setModeSaveStatus(m: StudioSaveMode, next: ModeSaveStatus) {
@@ -1058,6 +1061,8 @@ export default function WebsiteBuilderView() {
   // config while the draft stays untouched. Save routes through the normal
   // PUT; Discard simply stops previewing.
   const [proposalPreview, setProposalPreview] = useState<ProposalPreview | null>(null);
+  /** Honest caption for inspector-produced config proposals (they carry no chat card). */
+  const [inspectorEditNote, setInspectorEditNote] = useState<string | null>(null);
 
   // Library favorites + recents (fonts, palettes, motion presets) — per device.
   const libraryPrefs = useLibraryPrefs();
@@ -1132,6 +1137,7 @@ export default function WebsiteBuilderView() {
       setHistVersion((v) => v + 1);
       setDirty(recovered);
       setProposalPreview(null);
+      setInspectorEditNote(null);
       setActivePageId(restored.pages[0]?.id ?? "home");
       setSelectedSectionId(restored.pages[0]?.sections[0]?.id ?? null);
       if (recovered) toast.info("Recovered your unsaved changes from this device");
@@ -1658,6 +1664,7 @@ export default function WebsiteBuilderView() {
       configRef.current = candidate;
       setConfig(candidate);
       setProposalPreview(null);
+      setInspectorEditNote(null);
       setModeSaveStatus("giftz", { state: "saved", at: Date.now() });
       toast.success("Proposal saved as your draft — publish to update the live site");
     } else {
@@ -1711,6 +1718,7 @@ export default function WebsiteBuilderView() {
         lastBuild: giftzSite?.lastBuild ?? null,
       });
       setProposalPreview(null);
+      setInspectorEditNote(null);
       setModeSaveStatus("giftz", { state: "saved", at: Date.now() });
       setGiftzFilesRefresh((n) => n + 1);
       void refreshGiftzSites();
@@ -1747,6 +1755,7 @@ export default function WebsiteBuilderView() {
     try {
       const r = await applyFileProposal(giftzSite.id, proposalPreview.messageId);
       setProposalPreview(null);
+      setInspectorEditNote(null);
       setModeSaveStatus("giftz", { state: "saved", at: Date.now() });
       setGiftzFilesRefresh((n) => n + 1);
       void refreshGiftzSites();
@@ -1765,6 +1774,7 @@ export default function WebsiteBuilderView() {
   function discardChanges() {
     if (proposalPreview) {
       setProposalPreview(null);
+      setInspectorEditNote(null);
       toast.info(
         mode === "giftz"
           ? "Proposal preview discarded — your generated website is unchanged"
@@ -2029,6 +2039,7 @@ export default function WebsiteBuilderView() {
       setConfig(normalized);
       setDirty(true);
       setProposalPreview(null);
+      setInspectorEditNote(null);
       setRevisionsOpen(false);
       toast.success(`Previous version restored — the version you just left was also saved (label: ${r.label})`);
     } catch (e) {
@@ -2155,7 +2166,23 @@ export default function WebsiteBuilderView() {
     [dirty, savedBase, config]
   );
 
-  const selectedSection = activePage?.sections.find((s) => s.id === selectedSectionId) ?? null;
+  // Section-selection resolution is MODE-AWARE: the Customization canvas
+  // renders the portfolio draft (`config`), while the CODE GIFTZ canvas
+  // renders the GENERATED website (`giftzSite.config`, or the active config
+  // proposal). Clicking an element in CODE GIFTZ sets a section id from the
+  // generated config — looking it up against the portfolio draft would never
+  // match, so the GZ-2 inspector could never mount. The Customization path
+  // is unchanged (page-scoped lookup, exactly as before).
+  const selectedSection = useMemo(() => {
+    if (mode !== "giftz") {
+      return activePage?.sections.find((s) => s.id === selectedSectionId) ?? null;
+    }
+    const source =
+      proposalPreview?.kind === "config" && proposalPreview.config
+        ? proposalPreview.config
+        : giftzSite?.config;
+    return source?.pages.flatMap((p) => p.sections).find((s) => s.id === selectedSectionId) ?? null;
+  }, [mode, activePage, proposalPreview, giftzSite?.config, selectedSectionId]);
   const published = design?.status === "PUBLISHED";
   const deviceMeta = DEVICE_PRESETS[device];
 
@@ -2174,7 +2201,9 @@ export default function WebsiteBuilderView() {
   // One-line canvas status (caption row above the preview).
   const canvasStatusText = previewError
     ? "Preview hit a rendering error — use Reload preview to retry. Your data is safe."
-    : proposalPreview
+    : proposalPreview?.messageId === "inspector-edit" && inspectorEditNote
+      ? inspectorEditNote
+      : proposalPreview
       ? mode === "giftz"
         ? "Isolated proposal preview — the generated website is untouched until you save."
         : "Isolated proposal preview — your draft and published site are untouched until you save."
@@ -2915,9 +2944,68 @@ export default function WebsiteBuilderView() {
                         </div>
                       )
                     ) : (
-                      previewChildren(previewConfig, { interactive: mode === "customization" })
+                      previewChildren(previewConfig, { interactive: mode === "customization" || mode === "giftz" })
                     )}
                   </DeviceStage>
+                  {/* GZ-2 — CODE GIFTZ element inspector: edits the selected
+                      section of the GENERATED WEBSITE (the GiftzSite's own
+                      config — NOT the portfolio draft) and produces a real
+                      kind-"config" proposal, so the existing isolated-preview
+                      / Save-Draft / Discard / staleness machinery governs
+                      exactly as it does for AI turns. Persisted to the
+                      project files on save (sync rule S1). */}
+                  {mode === "giftz" && selectedSection ? (
+                    <div className="max-h-[42%] shrink-0 overflow-y-auto" style={{ scrollbarWidth: "thin" }}>
+                      <InspectorPanel
+                        section={(() => {
+                          const base =
+                            proposalPreview?.kind === "config" && proposalPreview.config
+                              ? proposalPreview.config
+                              : giftzSite?.config ?? null;
+                          const live = base?.pages
+                            .flatMap((p) => p.sections)
+                            .find((s) => s.id === selectedSection.id);
+                          return live ?? selectedSection;
+                        })()}
+                        onPatch={(patch) => {
+                          if (!giftzSite) return;
+                          const base =
+                            proposalPreview?.kind === "config" && proposalPreview.config
+                              ? proposalPreview.config
+                              : giftzSite?.config ?? null;
+                          if (!base) return;
+                          const patched: SiteConfig = {
+                            ...base,
+                            pages: base.pages.map((p) => ({
+                              ...p,
+                              sections: p.sections.map((s) =>
+                                s.id === selectedSection.id ? ({ ...s, ...patch } as typeof s) : s
+                              ),
+                            })),
+                          };
+                          const normalized = normalizeConfig(patched);
+                          if (!normalized) {
+                            toast.error("That edit would produce an invalid website configuration.");
+                            return;
+                          }
+                          setProposalPreview({
+                            messageId: "inspector-edit",
+                            kind: "config",
+                            config: normalized,
+                            baseHash: configFingerprint(giftzSite.config ?? config),
+                          });
+                          setInspectorEditNote(
+                            `Visual edit — the ${selectedSection.type} section was changed in the inspector. Save Draft to keep it, Discard to revert.`
+                          );
+                        }}
+                        onClose={() => setSelectedSectionId(null)}
+                        onOpenSectionEditor={() => {
+                          setMode("customization");
+                          setCustomZone("studio");
+                        }}
+                      />
+                    </div>
+                  ) : null}
                 </>
               ) : giftzCanvasTab === "code" ? (
                 giftzSite ? (

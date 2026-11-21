@@ -36,6 +36,11 @@ import {
   type BackgroundEffects,
   type GsapMotionBlock,
 } from "@/lib/giftz/motion-engine";
+import {
+  scene3dBlockSchema,
+  validateScene3dBlock,
+  type Scene3dBlock,
+} from "@/lib/giftz/scene3d";
 import { resolveFont, fontStack } from "@/lib/site-fonts";
 // v4 profession-template families (see src/lib/site-templates/professions/).
 // Factories are called at read time (never at module init) so the circular
@@ -1003,6 +1008,11 @@ const configShape = z.object({
    * against the motion-engine effect registry in normalizeConfig.
    */
   backgroundEffects: backgroundEffectsSchema.optional(),
+  /**
+   * GIFTZ structured 3D scene engine (GZ-3) — additive, optional. Validated
+   * against the scene3d schema + section registry in normalizeConfig.
+   */
+  scene3d: scene3dBlockSchema.optional(),
   /** Legacy v1 single-page sections. Migrated into `pages` on read. */
   sections: z.array(siteSectionSchema).min(1).max(12).optional(),
   pages: z.array(sitePageSchema).min(1).max(8).optional(),
@@ -1034,6 +1044,8 @@ export interface SiteConfig {
   motion: SiteMotion;
   /** Vanta animated background (optional — absent = no background engine). */
   backgroundEffects?: BackgroundEffects;
+  /** Structured 3D scenes (optional — absent = no 3D engine). */
+  scene3d?: Scene3dBlock;
   pages: SitePage[];
 }
 
@@ -2347,6 +2359,19 @@ export function normalizeConfig(input: unknown): SiteConfig | null {
       return null;
     }
   }
+  // Pre-schema heal (GZ-1): a model-written backgroundEffects block WITHOUT an
+  // effect id (the recurring "3D hero written as a Vanta background" error —
+  // observed live twice) can never pass the schema, so the whole configuration
+  // — and with it the rest of the model step's legitimate work — was rejected.
+  // An unusable block is dropped here instead; the strict schema, registry
+  // validation and the enabled-block healing below all still run on whatever
+  // remains. The 3D engine has its own `scene3d` block — this never touches it.
+  if (candidate && typeof candidate === "object" && !Array.isArray(candidate) && "backgroundEffects" in candidate) {
+    const bg = (candidate as { backgroundEffects?: unknown }).backgroundEffects;
+    if (bg !== null && bg !== undefined && (typeof bg !== "object" || Array.isArray(bg) || typeof (bg as { effect?: unknown }).effect !== "string" || ((bg as { effect: string }).effect as string).trim() === "")) {
+      delete (candidate as { backgroundEffects?: unknown }).backgroundEffects;
+    }
+  }
   const parsed = siteConfigSchema.safeParse(candidate);
   if (!parsed.success) return null;
   const raw = parsed.data as RawSiteConfig;
@@ -2380,6 +2405,19 @@ export function normalizeConfig(input: unknown): SiteConfig | null {
       validation.ok && validation.value ? validation.value : { ...backgroundEffects, enabled: false };
   }
 
+  // GIFTZ structured 3D scenes (GZ-3): registry-validate with real section
+  // ids; invalid scenes are dropped, the block stays inspectable. An enabled
+  // block whose scenes all fail validation normalizes to disabled.
+  const heroSectionIds = new Set(healedPages.flatMap((page) => page.sections).filter((s) => s.type.startsWith("hero")).map((s) => s.id));
+  let scene3d: Scene3dBlock | undefined = raw.scene3d ?? undefined;
+  if (scene3d?.enabled) {
+    const validation = validateScene3dBlock(scene3d, sectionIds);
+    scene3d = validation.value ? { ...scene3d, scenes: validation.value.scenes } : { ...scene3d, scenes: [] };
+    if (!validation.ok && scene3d.scenes.length === 0) {
+      scene3d = { ...scene3d, enabled: false };
+    }
+  }
+
   return {
     version: 2,
     template: raw.template,
@@ -2391,6 +2429,7 @@ export function normalizeConfig(input: unknown): SiteConfig | null {
     theme: deriveTheme(raw.theme),
     motion: gsap !== undefined ? { ...motion, gsap } : motion,
     backgroundEffects,
+    scene3d,
     pages: healedPages,
   };
 }
