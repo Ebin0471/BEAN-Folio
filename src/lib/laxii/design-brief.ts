@@ -53,8 +53,8 @@ export type BriefRevision = z.infer<typeof revisionSchema>;
 
 export const designBriefSchema = z.object({
   schemaVersion: z.literal(BRIEF_SCHEMA_VERSION),
-  /** The user's exact creative request, verbatim. */
-  request: z.string().min(1).max(2000),
+  /** The user's exact creative request, verbatim (16,000-char composer budget). */
+  request: z.string().min(1).max(16000),
   profession: z.string().max(200).nullable().default(null),
   targetAudience: z.string().max(400).nullable().default(null),
 
@@ -126,8 +126,8 @@ export const designBriefSchema = z.object({
   /** Bounded user-driven revisions after reviewing a result (max 3). */
   revisions: z.array(revisionSchema).max(3).default([]),
 
-  /** Provenance. */
-  source: z.literal("RIISHE"),
+  /** Provenance: "RIISHE" = structured handoff, "USER" = compiled from the studio composer. */
+  source: z.union([z.literal("RIISHE"), z.literal("USER")]),
   sourceTaskId: z.string().min(1),
   createdAt: z.string(),
 });

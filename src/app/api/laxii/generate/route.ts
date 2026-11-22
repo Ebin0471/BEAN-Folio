@@ -22,7 +22,7 @@ const ASPECT_SET = new Set<string>(LAXII_ASPECTS);
 
 const bodySchema = z.object({
   conversationId: z.string().min(1).optional(),
-  prompt: z.string().max(4000).default(""),
+  prompt: z.string().max(16000).default(""),
   // "AUTO" = conversational default: the server classifies the intent and
   // normalizes it to a real engine operation below (Phase 3).
   operation: z.enum(["AUTO", "GENERATE", "EDIT", "VARIATIONS", "UPSCALE", "REMOVE_BACKGROUND", "EXPAND", "BANNER"]),
@@ -386,6 +386,9 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
     let bannerCanvas: { width: number; height: number; presetSlug: string } | null = null;
     const extraWarnings: string[] = [];
     let styleSlug: string | null = null;
+    // Quality upgrade: a plain (non-brief) banner request compiled into a
+    // USER-sourced brief — it runs the professional banner pipeline below.
+    let plainBannerBrief: DesignBrief | null = null;
 
     // BANNER composition guidance + exact canvas.
     if (operation === "BANNER" && (body.banner || briefSpec)) {
@@ -418,9 +421,22 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
           : { width: guidance.width, height: guidance.height };
       bannerCanvas = { width: canvas.width, height: canvas.height, presetSlug: guidance.slug };
       aspect = nearestAspect(canvas.width / canvas.height);
-      promptFinal = [prompt, `Banner design for: ${guidance.label} (canvas ${canvas.width}×${canvas.height}px).`, guidance.compositionHint]
-        .filter(Boolean)
-        .join("\n");
+      // Quality upgrade: when the canvas matches the authoritative preset,
+      // the plain composer request runs through the SAME professional
+      // pipeline as the Riishe handoff (composition plan → background
+      // without text → deterministic typography of the EXACT quoted wording
+      // → quality evaluation → bounded refinement → exact-canvas export).
+      // Legacy canvases that no longer match a preset keep the direct path
+      // (cover-fit composite) instead of failing the pipeline's preset check.
+      const { buildPlainBannerBrief, canvasMatchesPreset } = await import("@/lib/laxii/banner-request");
+      if (canvasMatchesPreset(bannerCanvas)) {
+        plainBannerBrief = buildPlainBannerBrief(prompt, guidance.slug);
+        promptFinal = compileBriefPrompt(plainBannerBrief);
+      } else {
+        promptFinal = [prompt, `Banner design for: ${guidance.label} (canvas ${canvas.width}×${canvas.height}px).`, guidance.compositionHint]
+          .filter(Boolean)
+          .join("\n");
+      }
       }
     } else if (
       conversation.kind === "BANNER" &&
@@ -472,6 +488,25 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
       if (!body.aspect) aspect = recipe.aspect;
       if (!body.count) count = recipe.count;
       extraWarnings.push(...recipe.warnings);
+    }
+
+    // Quality upgrade — professional art direction for fresh creations that
+    // carry no explicit style preset. The user's words stay verbatim and
+    // authoritative; a deterministic direction block (photorealism /
+    // cinematic / commercial / luxury / graphic design / 3D / illustration)
+    // plus the honest text rule is appended. Edits and banner/pipeline
+    // prompts are never touched here.
+    if (
+      operation === "GENERATE" &&
+      !body.parentVersionId &&
+      !autoParentVersionId &&
+      !body.avatar &&
+      !body.style &&
+      !bannerCanvas &&
+      prompt
+    ) {
+      const { compileArtDirection } = await import("@/lib/laxii/art-direction");
+      promptFinal = compileArtDirection(prompt);
     }
 
     // Edit operations: aspect inherits the source image's real ratio unless
@@ -574,8 +609,8 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
       conversationContext,
       inputAssetIds: [...effectiveReferenceIds, ...(parentMedia ? [parentMedia.id] : [])],
       briefTaskId: briefSpec?.taskId ?? null,
-      brief: briefSpec?.brief ?? null,
-      promptBriefBase: briefSpec ? promptFinal : null,
+      brief: briefSpec?.brief ?? plainBannerBrief,
+      promptBriefBase: briefSpec || plainBannerBrief ? promptFinal : null,
     });
 
     return ok(

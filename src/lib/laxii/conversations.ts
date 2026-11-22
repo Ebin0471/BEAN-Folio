@@ -272,7 +272,7 @@ export async function planTurn(
   if (!text && !promptless) {
     throw new LaxiiError("Type what you want to create");
   }
-  if (text.length > 2000) throw new LaxiiError("Prompt is too long (2000 characters max)");
+  if (text.length > 16000) throw new LaxiiError("Prompt is too long (16000 characters max)");
 
   const settings = input.settings ?? {};
   const op = (CHAT_OPERATIONS as readonly string[]).includes(input.operation ?? "")

@@ -39,6 +39,8 @@ import {
 import {
   scene3dBlockSchema,
   validateScene3dBlock,
+  SCENE3D_LIGHT_KINDS,
+  SCENE3D_OBJECT_KINDS,
   type Scene3dBlock,
 } from "@/lib/giftz/scene3d";
 import { resolveFont, fontStack } from "@/lib/site-fonts";
@@ -1195,6 +1197,194 @@ export function makeSection(type: SiteSectionType): SiteSection {
     case "logos":
       return { ...base, type: "logos", title: "Clients & collaborators", note: "", items: [] };
   }
+}
+
+/**
+ * Per-section-type allowed `layout` values, derived from the section union at
+ * module load so the heal below can never drift from the real schemas.
+ * Zod enum defaults fill MISSING keys only — an invalid value is fatal, which
+ * is exactly the failure family this map exists to heal.
+ */
+/** String enum values from a zod schema, unwrapping wrapper schemas (ZodDefault / optional / nullable) until the enum itself is reached. */
+function enumOptionsOf(schema: unknown): readonly string[] {
+  let cur = schema as { options?: unknown; _zod?: { def?: { innerType?: unknown } } } | undefined;
+  for (let depth = 0; cur !== undefined && cur !== null && depth < 4; depth += 1) {
+    if (Array.isArray(cur.options) && cur.options.length > 0 && cur.options.every((v) => typeof v === "string")) {
+      return cur.options as string[];
+    }
+    cur = cur._zod?.def?.innerType as typeof cur;
+  }
+  return [];
+}
+
+const SECTION_LAYOUT_OPTIONS: ReadonlyMap<string, readonly string[]> = new Map(
+  siteSectionSchema.options.map((option) => {
+    const shape = option.shape as { type: { value: string }; layout?: unknown };
+    return [shape.type.value, enumOptionsOf(shape.layout)];
+  })
+);
+
+/** Per-section-type default `title` (mirrors the section factory), used to heal model-written sections that omit the required title string. */
+const SECTION_DEFAULT_TITLES: ReadonlyMap<string, string> = new Map(
+  siteSectionSchema.options.map((option) => {
+    const type = (option.shape as { type: { value: SiteSectionType } }).type.value;
+    return [type, makeSection(type).title];
+  })
+);
+
+/** Small strict-schema vocabularies mirrored for the scene3d shape heal. The heal only REMOVES invalid optional values, so a future vocabulary rename degrades to the pre-heal behavior (strict rejection), never to a wrong save. */
+const SCENE3D_MATERIAL_KINDS = ["basic", "standard"] as const;
+const SCENE3D_ANIMATION_KINDS = ["none", "rotate", "float", "pulse", "orbit"] as const;
+const SCENE3D_POINTER_MODES = ["none", "parallax", "rotate"] as const;
+const SCENE3D_HOVER_MODES = ["none", "scale", "spin"] as const;
+const SCENE3D_SCROLL_MODES = ["none", "cameraDolly", "cameraOrbit"] as const;
+const SCENE3D_FALLBACK_KINDS = ["color", "gradient"] as const;
+const HEX_COLOR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return v !== null && v !== undefined && typeof v === "object" && !Array.isArray(v);
+}
+
+/** Remove every key not in the allowlist (strict-object unknown-key heal). */
+function stripUnknownKeys(obj: Record<string, unknown>, allowed: readonly string[]): void {
+  for (const key of Object.keys(obj)) {
+    if (!allowed.includes(key)) delete obj[key];
+  }
+}
+
+/**
+ * Heal ONE model-written scene spec: drop invented strict keys and invalid
+ * optional enum values; drop unrenderable objects (invalid primitive kind);
+ * drop the scene entirely when nothing renderable remains. Returns null when
+ * the scene cannot be healed into a renderable shape.
+ */
+function healScene3dShape(scene: unknown): Record<string, unknown> | null {
+  if (!isRecord(scene)) return scene as Record<string, unknown> | null;
+  let s: Record<string, unknown>;
+  try {
+    s = structuredClone(scene) as Record<string, unknown>;
+  } catch {
+    return scene as Record<string, unknown>;
+  }
+  if (typeof s.id !== "string" || s.id.trim() === "") return null; // identity is not healable
+
+  if (isRecord(s.camera)) stripUnknownKeys(s.camera, ["fov", "position", "lookAt"]);
+
+  if (Array.isArray(s.objects)) {
+    const renderable = s.objects.filter((o) => isRecord(o) && typeof (o as Record<string, unknown>).kind === "string" && (SCENE3D_OBJECT_KINDS as readonly string[]).includes((o as Record<string, unknown>).kind as string));
+    for (const o of renderable as Record<string, unknown>[]) {
+      if (isRecord(o.material)) {
+        const kind = (o.material as Record<string, unknown>).kind;
+        if (typeof kind !== "string" || !(SCENE3D_MATERIAL_KINDS as readonly string[]).includes(kind)) delete o.material;
+        else stripUnknownKeys(o.material, ["kind", "color", "metalness", "roughness", "opacity", "wireframe"]);
+      }
+      if (isRecord(o.animation)) {
+        const kind = (o.animation as Record<string, unknown>).kind;
+        if (typeof kind !== "string" || !(SCENE3D_ANIMATION_KINDS as readonly string[]).includes(kind)) delete o.animation;
+        else stripUnknownKeys(o.animation, ["kind", "speed", "radius", "axis"]);
+      }
+    }
+    if (renderable.length === 0) return null; // schema requires min 1 renderable object
+    s.objects = renderable;
+  } else {
+    return null;
+  }
+
+  if (Array.isArray(s.lights)) {
+    s.lights = s.lights.filter((l) => isRecord(l) && typeof (l as Record<string, unknown>).kind === "string" && (SCENE3D_LIGHT_KINDS as readonly string[]).includes((l as Record<string, unknown>).kind as string));
+  }
+  if (isRecord(s.interactions)) {
+    const i = s.interactions;
+    if ("pointer" in i && (typeof i.pointer !== "string" || !(SCENE3D_POINTER_MODES as readonly string[]).includes(i.pointer))) delete i.pointer;
+    if ("hover" in i && (typeof i.hover !== "string" || !(SCENE3D_HOVER_MODES as readonly string[]).includes(i.hover))) delete i.hover;
+    stripUnknownKeys(i, ["pointer", "hover"]);
+  }
+  if (isRecord(s.scroll)) {
+    const sc = s.scroll;
+    if ("mode" in sc && (typeof sc.mode !== "string" || !(SCENE3D_SCROLL_MODES as readonly string[]).includes(sc.mode))) delete sc.mode;
+    stripUnknownKeys(sc, ["mode", "strength"]);
+  }
+  if (isRecord(s.fallback)) {
+    const f = s.fallback;
+    const kindOk = typeof f.kind === "string" && (SCENE3D_FALLBACK_KINDS as readonly string[]).includes(f.kind);
+    const valueOk = typeof f.value === "string" && HEX_COLOR_RE.test(f.value);
+    if (!kindOk || !valueOk) delete s.fallback;
+  }
+  return s;
+}
+
+/**
+ * Pre-schema shape heal for the three recurring live failure families that
+ * made otherwise-complete compositions fail the strict schema TWICE and
+ * thereby killed the whole design step (GZ-BENCH-1 baseline evidence):
+ *
+ *  1. `scene3d` written with invented keys ("preset", "intensity") — the
+ *     block schema is `.strict()`, so ANY unknown key is fatal. Unknown keys
+ *     are stripped; the remaining block still faces the full schema + the
+ *     scene3d registry validation below.
+ *  2. a section `layout` outside the per-type enum — the key is dropped so
+ *     the schema's own `.default()` applies (the same value the section
+ *     factory would have produced).
+ *  3. a section without the REQUIRED `title` string — the per-type factory
+ *     title is filled in.
+ *
+ * The heal runs on a structured clone (the caller's object is never mutated)
+ * and touches ONLY these three shapes — everything else still faces the
+ * unmodified strict schema, exactly like the GZ-1 backgroundEffects heal.
+ */
+function healConfigShape(candidate: unknown): unknown {
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return candidate;
+  let healed: Record<string, unknown>;
+  try {
+    healed = structuredClone(candidate) as Record<string, unknown>;
+  } catch {
+    return candidate; // non-cloneable input falls through to the strict schema unchanged
+  }
+
+  if (healed.scene3d && typeof healed.scene3d === "object" && !Array.isArray(healed.scene3d)) {
+    const block = healed.scene3d as Record<string, unknown>;
+    for (const key of Object.keys(block)) {
+      if (!(key in scene3dBlockSchema.shape)) delete block[key];
+    }
+    // Scene-level heal (GZ-BENCH-1, benchmark E): invented enum values inside
+    // scene specs (primitive/pointer/scroll/fallback) and unknown strict keys
+    // on camera/interactions/scroll made the whole config — and with it a
+    // files proposal carrying otherwise-good page changes — fail validation.
+    // Unrenderable scenes are dropped; renderable ones keep their valid parts.
+    if (Array.isArray(block.scenes)) {
+      const keptScenes: unknown[] = [];
+      for (const scene of block.scenes) {
+        const healedScene = healScene3dShape(scene);
+        if (healedScene !== null) keptScenes.push(healedScene);
+      }
+      block.scenes = keptScenes;
+    }
+  }
+
+  const sectionLists: unknown[][] = [];
+  if (Array.isArray(healed.sections)) sectionLists.push(healed.sections as unknown[]); // legacy v1 shape
+  if (Array.isArray(healed.pages)) {
+    for (const page of healed.pages) {
+      if (page && typeof page === "object" && !Array.isArray(page) && Array.isArray((page as { sections?: unknown }).sections)) {
+        sectionLists.push((page as { sections: unknown[] }).sections);
+      }
+    }
+  }
+  for (const sections of sectionLists) {
+    for (const section of sections) {
+      if (!section || typeof section !== "object" || Array.isArray(section)) continue;
+      const s = section as Record<string, unknown>;
+      if (typeof s.type !== "string") continue;
+      const allowed = SECTION_LAYOUT_OPTIONS.get(s.type);
+      if (allowed !== undefined && allowed.length > 0 && s.layout !== undefined && (typeof s.layout !== "string" || !allowed.includes(s.layout))) {
+        delete s.layout;
+      }
+      if ((s.title === undefined || typeof s.title !== "string") && SECTION_DEFAULT_TITLES.has(s.type)) {
+        s.title = SECTION_DEFAULT_TITLES.get(s.type);
+      }
+    }
+  }
+  return healed;
 }
 
 // ------------------------------------------------------------------ design presets (full token sets)
@@ -2372,6 +2562,11 @@ export function normalizeConfig(input: unknown): SiteConfig | null {
       delete (candidate as { backgroundEffects?: unknown }).backgroundEffects;
     }
   }
+  // Pre-schema shape heal (GZ-BENCH-1): the three recurring model-written
+  // failure families (unknown scene3d keys / invalid section layout enum /
+  // missing section title) are healed before the strict schema runs — see
+  // healConfigShape. Everything else still faces the unmodified schema.
+  candidate = healConfigShape(candidate);
   const parsed = siteConfigSchema.safeParse(candidate);
   if (!parsed.success) return null;
   const raw = parsed.data as RawSiteConfig;

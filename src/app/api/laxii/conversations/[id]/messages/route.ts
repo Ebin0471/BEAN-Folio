@@ -22,7 +22,7 @@ type Ctx = { params: Promise<{ id: string }> };
  */
 
 const bodySchema = z.object({
-  text: z.string().max(2000).default(""),
+  text: z.string().max(16000).default(""),
   operation: z
     .enum(["AUTO", "GENERATE", "EDIT", "VARIATIONS", "REMOVE_BG", "OUTPAINT", "UPSCALE", "BANNER"])
     .optional(),

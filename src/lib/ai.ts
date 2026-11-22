@@ -161,6 +161,8 @@ export async function aiComplete(
     temperature?: number;
     thinking?: boolean;
     timeoutMs?: number;
+    /** Explicit output budget forwarded to the provider (see GatewayCallParams). */
+    maxTokens?: number;
     agent?: GatewayAgent;
     feature?: string;
     userId?: string;
@@ -174,6 +176,7 @@ export async function aiComplete(
       temperature: opts.temperature,
       thinking: opts.thinking,
       timeoutMs: opts.timeoutMs,
+      maxTokens: opts.maxTokens,
       agent: opts.agent ?? "SYSTEM",
       feature: opts.feature ?? "complete",
       userId: opts.userId,

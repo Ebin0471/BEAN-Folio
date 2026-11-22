@@ -47,6 +47,7 @@ import { cn } from "@/lib/utils";
 import { uploadFile } from "@/lib/client";
 import {
   laxiiApi,
+  LAXII_PROMPT_MAX,
   type LaxiiBriefResponse,
   type LaxiiCapabilities,
   type LaxiiConversationDetail,
@@ -71,6 +72,13 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/co
 import { Textarea } from "@/components/ui/textarea";
 
 const ASPECTS = ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"] as const;
+
+/**
+ * Prompt budget mirror — the server refuses prompts beyond this limit
+ * (src/lib/laxii/service.ts), so the composer blocks early with a clear
+ * message instead of a round-trip 400.
+ */
+const PROMPT_MAX = LAXII_PROMPT_MAX;
 
 /** The single fixed banner canvas — must match BANNER_PRESETS in src/lib/laxii/banner-presets.ts. */
 const BEAN_BANNER_SLUG = "bean-folio-banner";
@@ -496,6 +504,16 @@ export function LaxiiStudio() {
     const isBanner = operation === "BANNER";
     const parent = opts && opts.parentVersion !== undefined ? opts.parentVersion : editParent;
     const text = (opts?.promptOverride ?? prompt).trim();
+    // Client-side prompt budget guard — matches the server schema so an
+    // over-limit prompt fails here with a clear, actionable message instead
+    // of a round-trip 400. A mid-generation edit can never exceed the cap:
+    // the textarea's maxLength clamps input as the user types.
+    if (text.length > PROMPT_MAX) {
+      toast.error(
+        `Prompt is too long — ${text.length.toLocaleString()} characters, the limit is ${PROMPT_MAX.toLocaleString()}. Shorten the prompt and try again.`
+      );
+      return;
+    }
     const activeStyle = styleSlug && styleSlug !== "none" ? styleSlug : "";
     const needsPrompt =
       operation === "EDIT" || isBanner || (operation === "GENERATE" && (isAvatar ? avatarPreset === "custom" : true));
@@ -643,7 +661,9 @@ export function LaxiiStudio() {
         const warnings = m.meta?.warnings ?? [];
         if (warnings.length > 0) toast.warning(warnings[0]);
         else toast.success(successLabel);
-        setPrompt("");
+        // The submitted prompt STAYS in the composer after completion — the
+        // user decides when to clear or edit it. Clearing only the reference
+        // chips keeps the completed turn's inputs readable in the thread.
         setRefs([]);
         reloadConversations();
         return;
@@ -1305,6 +1325,7 @@ export function LaxiiStudio() {
                           sendComposer();
                         }
                       }}
+                      maxLength={PROMPT_MAX}
                       placeholder={
                         cm === "banner"
                           ? "Describe your banner — style, subject, mood, colors…"
@@ -1335,6 +1356,29 @@ export function LaxiiStudio() {
                       </span>
                     </Button>
                   </div>
+
+                  {/* Subtle prompt budget counter — muted normally, amber when
+                      the remaining budget is small, destructive at the limit. */}
+                  {prompt.length > 0 ? (
+                    <div className="flex items-center justify-end px-3 pb-1 sm:px-5">
+                      <span
+                        data-testid="laxii-prompt-counter"
+                        aria-live="polite"
+                        className={`text-[10px] tabular-nums ${
+                          prompt.length >= PROMPT_MAX
+                            ? "font-medium text-destructive"
+                            : PROMPT_MAX - prompt.length <= 1000
+                              ? "text-amber-600 dark:text-amber-400"
+                              : "text-muted-foreground/70"
+                        }`}
+                      >
+                        {prompt.length.toLocaleString()} / {PROMPT_MAX.toLocaleString()}
+                        {PROMPT_MAX - prompt.length <= 1000
+                          ? ` — ${(PROMPT_MAX - prompt.length).toLocaleString()} character${PROMPT_MAX - prompt.length === 1 ? "" : "s"} remaining`
+                          : ""}
+                      </span>
+                    </div>
+                  ) : null}
 
                   {refs.length > 0 ? (
                     <div className="flex flex-wrap items-center gap-2">

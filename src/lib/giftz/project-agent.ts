@@ -325,6 +325,20 @@ const filePlanStepSchema = z.object({
 /** Bounded plan size: 16 files covers a real multi-page site (pages + assets + config bridge) while every write stays inside per-batch and per-file caps. */
 const FILE_PLAN_MAX_FILES = 16;
 
+/**
+ * Output budget for file-CONTENT generation calls (GZ-BENCH-1 fix). The
+ * provider's default output cap truncates long multi-file JSON mid-string
+ * (verified live: "Unterminated string" at ~10.5k chars) and every retry
+ * reproduces the same cut, so a whole batch — e.g. the benchmark's
+ * assets/styles.css — was declared "no usable content". With an explicit
+ * ceiling the identical call returned 31.9k chars of parseable JSON.
+ */
+const AI_FILEGEN_MAX_TOKENS = 32_000;
+/** File-content calls legitimately run longer once the truncation cap is gone. */
+const AI_FILEGEN_TIMEOUT_MS = 240_000;
+/** Plan responses are compact JSON (≤16 steps with short instructions). */
+const AI_PLAN_MAX_TOKENS = 8_000;
+
 const filePlanSchema = z.object({
   summary: z.string().min(1).max(2000),
   files: z.array(filePlanStepSchema).min(1).max(FILE_PLAN_MAX_FILES),
@@ -423,6 +437,7 @@ async function requestPlan(
     temperature: 0.2,
     thinking: true,
     timeoutMs: AI_DEEP_TIMEOUT_MS,
+    maxTokens: AI_PLAN_MAX_TOKENS,
     agent: "CODE_GIFTZ",
     feature: "giftz-project-agent",
     userId,
@@ -446,6 +461,7 @@ async function requestPlan(
     temperature: 0.2,
     thinking: true,
     timeoutMs: AI_DEEP_TIMEOUT_MS,
+    maxTokens: AI_PLAN_MAX_TOKENS,
     agent: "CODE_GIFTZ",
     feature: "giftz-project-agent",
     userId,
@@ -531,6 +547,7 @@ function executeBatchPrompt(input: {
     '- For modify steps return the COMPLETE final file content — never a fragment, never a diff.',
     "- Preserve unrelated code; change only what the instructions require.",
     "- UTF-8 text only — never binary content; keep every file under the 256KB per-file limit.",
+    "- Internal links and asset references must use the EXACT project-relative paths as they exist in the tree (e.g. the stylesheet lives at assets/styles.css — an <img src=\"styles.css\"> or href missing the assets/ prefix is a build-breaking broken reference).",
   ].join("\n");
 }
 
@@ -658,7 +675,8 @@ async function attemptExecuteBatch(
   const { text } = await aiComplete(EXECUTE_SYSTEM, [{ role: "user", content: prompt }], {
     temperature: 0.2,
     thinking: true,
-    timeoutMs: AI_DEEP_TIMEOUT_MS,
+    timeoutMs: AI_FILEGEN_TIMEOUT_MS,
+    maxTokens: AI_FILEGEN_MAX_TOKENS,
     agent: "CODE_GIFTZ",
     feature: "giftz-project-agent",
     userId,
@@ -792,6 +810,7 @@ function repairPrompt(input: {
     "- Fix EXACTLY what the diagnostics report (a broken reference may require creating the missing target file).",
     "- Return the COMPLETE final content of every file you change — never a fragment or diff.",
     "- Only include files that need to change; UTF-8 text only; keep every file under the 256KB per-file limit.",
+    "- Internal links and asset references must use the EXACT project-relative paths as they exist in the tree (e.g. assets/styles.css, never a bare styles.css).",
   ].join("\n");
 }
 
@@ -808,7 +827,8 @@ async function runRepairRound(
       [{ role: "user", content: repairPrompt({ ...input, rows, overlay }) }],
       {
         temperature: 0.2,
-        timeoutMs: AI_DEEP_TIMEOUT_MS,
+        timeoutMs: AI_FILEGEN_TIMEOUT_MS,
+        maxTokens: AI_FILEGEN_MAX_TOKENS,
         agent: "CODE_GIFTZ",
         feature: "giftz-project-agent",
         userId,

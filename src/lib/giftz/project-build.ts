@@ -139,6 +139,55 @@ export function balancedDelimiterError(text: string): string | null {
 const LOCAL_REF_EXCLUDE = /^(https?:|data:|mailto:|tel:|#|\/\/)/i;
 const HTML_REF_RE = /(?:src|href)\s*=\s*["']([^"']+)["']/g;
 
+export interface NavTreeFile {
+  path: string;
+  content: string;
+}
+
+/**
+ * Multi-page navigation check (GZ-BENCH-1, benchmark D failure): a generated
+ * multi-page site whose pages link to none of their siblings is unnavigable —
+ * the GZ-1 plan rules require a shared masthead nav on every page, but a
+ * prompt rule without an enforcement point was ignored by the model in the
+ * live benchmark. Deterministic and honest:
+ *   - the ENTRY page (index.html) of a ≥2-page tree that links to no other
+ *     page is an ERROR (blocks the build and drives the repair round);
+ *   - any other page linking only to itself is a WARNING (surfaced, not
+ *     blocking — secondary pages may be deliberately standalone).
+ */
+export function multiPageNavDiagnostics(files: NavTreeFile[]): BuildDiagnostic[] {
+  const diagnostics: BuildDiagnostic[] = [];
+  const htmlFiles = files.filter((f) => f.path.endsWith(".html"));
+  if (htmlFiles.length < 2) return diagnostics;
+  const htmlPaths = new Set(htmlFiles.map((f) => f.path));
+  for (const file of htmlFiles) {
+    const linkedSiblings = new Set(
+      [...file.content.matchAll(HTML_REF_RE)]
+        .map((m) => resolveLocalRef(m[1], file.path))
+        .filter(
+          (resolved): resolved is string =>
+            resolved !== null && resolved.endsWith(".html") && resolved !== file.path && htmlPaths.has(resolved)
+        )
+    );
+    if (linkedSiblings.size > 0) continue;
+    const siblings = htmlFiles.length - 1;
+    if (file.path === "index.html") {
+      diagnostics.push({
+        path: file.path,
+        severity: "error",
+        message: `navigation: the entry page links to none of the other ${siblings} page${siblings === 1 ? "" : "s"} of this multi-page site — add the shared masthead nav with working relative links to every page (e.g. href="./about.html")`,
+      });
+    } else {
+      diagnostics.push({
+        path: file.path,
+        severity: "warning",
+        message: `navigation: this page links to none of the other ${siblings} pages — every page of a multi-page site should carry the shared masthead nav (e.g. href="./index.html")`,
+      });
+    }
+  }
+  return diagnostics;
+}
+
 /** Resolve one local HTML reference against the referencing file's directory. */
 export function resolveLocalRef(ref: string, fromPath: string): string | null {
   if (LOCAL_REF_EXCLUDE.test(ref)) return null;
@@ -476,6 +525,10 @@ export async function runProjectBuild(
         }
       }
     }
+
+    // --- check 2b: multi-page navigation (GZ-BENCH-1 benchmark D fix)
+    if (htmlFiles.length >= 2) checksRun += 1;
+    checks.push(...multiPageNavDiagnostics(htmlFiles));
 
     // --- check 3: syntax level (JSON.parse / balanced delimiters)
     // assets/vendor/** is EXCLUDED: rows are byte-for-byte copies of pinned

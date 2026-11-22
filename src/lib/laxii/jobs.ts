@@ -159,10 +159,11 @@ async function updateJobStage(messageId: string, stage: BannerPipelineStageUpdat
  */
 async function processGenerationJob(spec: LaxiiJobSpec, messageId: string): Promise<void> {
   try {
-    // Phase 3: brief-driven banners run the professional pipeline (plan →
-    // generate → deterministic typography → evaluate → bounded refinement →
-    // exact-canvas export). Plain generations keep the exact previous path.
-    const usePipeline = Boolean(spec.briefTaskId && spec.brief && spec.promptBriefBase && spec.bannerCanvas);
+    // Phase 3 + quality upgrade: the professional pipeline runs for BOTH
+    // Riishe brief handoffs (briefTaskId set) AND plain banner requests
+    // compiled into a USER-sourced synthetic brief (banner-request.ts).
+    // Plain generations keep the exact previous path.
+    const usePipeline = Boolean(spec.brief && spec.promptBriefBase && spec.bannerCanvas);
     const result = usePipeline
       ? await (async () => {
           const pipelineResult = await runBannerPipeline(
@@ -206,6 +207,22 @@ async function processGenerationJob(spec: LaxiiJobSpec, messageId: string): Prom
 
     const warnings = [...spec.extraWarnings, ...result.warnings];
     const stored: { mediaId: string; width: number; height: number }[] = [];
+    // Quality upgrade: honest deterministic quality evaluation for the plain
+    // (non-pipeline) path — measured visual findings attached to the job's
+    // meta; failures surface as visible warnings, never a silent pass. The
+    // banner pipeline already carries its own full quality loop.
+    let plainQualityReports: import("./quality").QualityReport[] | null = null;
+    if (!usePipeline) {
+      try {
+        const { evaluatePlainOutput } = await import("./quality");
+        plainQualityReports = [];
+        for (const img of result.images) {
+          plainQualityReports.push(await evaluatePlainOutput(img.bytes));
+        }
+      } catch {
+        plainQualityReports = null; // evaluation is best-effort, never fatal
+      }
+    }
 
     for (const img of result.images) {
       // Per-output isolation: the provider SUCCEEDED — a failure while saving
@@ -232,6 +249,18 @@ async function processGenerationJob(spec: LaxiiJobSpec, messageId: string): Prom
             warnings.push(
               `Composited to the exact ${spec.bannerCanvas.width}×${spec.bannerCanvas.height} canvas (center crop, no stretching).`
             );
+          }
+        }
+
+        // Plain-path quality findings: fail-level findings become honest,
+        // visible warnings attached to the turn (the report itself is stored
+        // in the message meta below).
+        const report = plainQualityReports?.[stored.length] ?? null;
+        if (report) {
+          for (const f of report.findings) {
+            if (f.status === "fail") {
+              warnings.push(`Quality check failed: ${f.check}${f.note ? ` — ${f.note}` : ""}`);
+            }
           }
         }
 
@@ -342,6 +371,7 @@ async function processGenerationJob(spec: LaxiiJobSpec, messageId: string): Prom
           // Phase 3: brief lineage + honest quality evaluation + refinement trail.
           briefTaskId: spec.briefTaskId ?? undefined,
           qualityReport: (result as { pipelineQuality?: QualityReport }).pipelineQuality,
+          plainQualityReports: plainQualityReports ?? undefined,
           pipelineAttempts: (result as { pipelineAttempts?: unknown }).pipelineAttempts,
           pipelineDecisions: (result as { pipelineDecisions?: unknown }).pipelineDecisions,
           stage: (result as { pipelineQuality?: unknown }).pipelineQuality ? "done" : undefined,

@@ -46,6 +46,9 @@ yarn-error.log*
 /db/*.db
 /db/*.db-journal
 /db/backups/
+# Isolated QA benchmark databases (GZ-BENCH-1 pins DATABASE_URL here) —
+# runtime data, same protection class as /db/*.db.
+/prisma/db/
 /uploads/
 /backups/
 /data/laxii-tmp/

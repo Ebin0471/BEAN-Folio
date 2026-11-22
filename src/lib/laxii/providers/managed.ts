@@ -29,6 +29,28 @@ import { log } from "@/lib/logger";
 
 const TIMEOUT_MS = 240_000;
 
+/**
+ * Engine prompt ceiling — VERIFIED against the live gateway (2026-11-22):
+ * 2,399 characters accepted, 2,601 rejected in-band (HTTP 200 with an error
+ * payload the SDK crashes on). The LAXII product budget is 16,000 characters
+ * and the user's exact words are always stored verbatim in the conversation;
+ * only the COMPILED prompt sent to the engine is fitted to this ceiling, cut
+ * at a sentence boundary, with an honest warning recorded on the job.
+ */
+const ENGINE_PROMPT_MAX = 2400;
+
+/** Fit a compiled prompt to the engine ceiling (sentence-boundary cut). */
+export function fitEnginePrompt(prompt: string, warnings: string[]): string {
+  if (prompt.length <= ENGINE_PROMPT_MAX) return prompt;
+  const head = prompt.slice(0, ENGINE_PROMPT_MAX);
+  const cut = Math.max(head.lastIndexOf(". "), head.lastIndexOf("\n"), head.lastIndexOf("。 "));
+  const fitted = (cut > ENGINE_PROMPT_MAX * 0.5 ? head.slice(0, cut + 1) : head).trimEnd();
+  warnings.push(
+    `The engine received the first ${fitted.length.toLocaleString()} of ${prompt.length.toLocaleString()} compiled prompt characters (the image gateway rejects longer prompts) — the full prompt is preserved verbatim in the conversation.`
+  );
+  return fitted;
+}
+
 type ManagedSize = "1024x1024" | "768x1344" | "864x1152" | "1344x768" | "1152x864" | "1536x864" | "864x1536" | "2016x864";
 
 const globalForLaxii = globalThis as unknown as { __laxiiZai?: Awaited<ReturnType<typeof ZAI.create>> };
@@ -180,7 +202,7 @@ export async function managedGenerate(req: LaxiiImageRequest): Promise<LaxiiGene
   for (let i = 0; i < req.count; i += 1) {
     const variationNote =
       req.count > 1 ? `\n\nVariant ${i + 1} of ${req.count}: explore a distinct composition while keeping the same brief.` : "";
-    const prompt = req.prompt + variationNote;
+    const prompt = fitEnginePrompt(req.prompt + variationNote, warnings);
     let dataUrl: string | undefined;
     if (req.operation === "GENERATE" && req.references && req.references.length > 0) {
       dataUrl = req.references[0].dataUrl; // reference-guided generation

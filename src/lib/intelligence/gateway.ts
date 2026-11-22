@@ -76,6 +76,14 @@ export interface GatewayCallParams {
   /** Deep-reasoning mode for calls that legitimately need it. */
   thinking?: boolean;
   timeoutMs?: number;
+  /**
+   * Explicit output budget in tokens, forwarded to the provider as
+   * `max_tokens`. Without it the provider's default cap TRUNCATES long
+   * structured responses mid-string (GZ-BENCH-1 evidence: a file-batch JSON
+   * was cut at ~10.5k chars — "Unterminated string" — unrecoverable by any
+   * retry). Only set this for calls that legitimately produce large output.
+   */
+  maxTokens?: number;
   /** Who is calling — for routing logs and usage accounting. */
   agent: GatewayAgent;
   feature: string;
@@ -101,13 +109,18 @@ async function callManagedText(
   system: string,
   messages: GatewayMessage[],
   thinking: boolean,
-  timeoutMs: number
+  timeoutMs: number,
+  maxTokens?: number
 ): Promise<string> {
   // Per the provider contract, the system prompt uses the assistant role.
   const completion = (await Promise.race([
     zai.chat.completions.create({
       messages: [{ role: "assistant", content: system }, ...messages] as never,
       thinking: { type: thinking ? "enabled" : "disabled" },
+      // Explicit output ceiling — verified live: with max_tokens=32000 the
+      // same call that truncated at ~10.5k chars returned 31.9k chars with
+      // parseable JSON (probe-giftz-batch.ts, GZ-BENCH-1).
+      ...(maxTokens !== undefined ? { max_tokens: maxTokens } : {}),
     }),
     new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), timeoutMs)),
   ])) as { choices?: { message?: { content?: string } }[] };
@@ -148,7 +161,15 @@ export async function gatewayComplete(params: GatewayCallParams): Promise<Gatewa
     try {
       const zai = await getGatewayZai();
       const text = await withIntelligenceRetries(
-        () => callManagedText(zai, params.system, params.messages, params.thinking ?? false, timeoutMs),
+        () =>
+          callManagedText(
+            zai,
+            params.system,
+            params.messages,
+            params.thinking ?? false,
+            timeoutMs,
+            params.maxTokens
+          ),
         { label: `${capability}:${params.feature}`, providerId: entry.id, attempts: 2 }
       );
       const durationMs = Date.now() - startedAt;
