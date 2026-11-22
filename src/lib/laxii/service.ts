@@ -16,7 +16,13 @@ import type { LaxiiReferenceImage } from "./types";
 import { LaxiiError } from "./types";
 import { findBannerPreset, type LaxiiBannerPreset } from "./banner-presets";
 
-const MAX_PROMPT_LENGTH = 4000;
+/**
+ * Prompt budget shared by every LAXII entry point (studio composer, API,
+ * retry). 16,000 characters accommodates long art-direction briefs while
+ * staying far below provider payload limits; the studio composer mirrors
+ * this constant client-side (src/lib/laxii-client.ts LAXII_PROMPT_MAX).
+ */
+const MAX_PROMPT_LENGTH = 16000;
 
 export class LaxiiServiceError extends Error {
   status: number;

@@ -380,6 +380,13 @@ export interface ResumeActionResult {
   profession: string | null;
 }
 
+/**
+ * Client mirror of the server prompt budget (src/lib/laxii/service.ts
+ * MAX_PROMPT_LENGTH). 16,000 characters — long art-direction briefs fit;
+ * the composer shows a live counter and blocks submission beyond the limit.
+ */
+export const LAXII_PROMPT_MAX = 16000;
+
 export interface GeneratePayload {
   conversationId?: string;
   prompt: string;

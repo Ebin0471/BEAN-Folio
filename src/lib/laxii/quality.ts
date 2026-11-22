@@ -448,6 +448,34 @@ export function evaluateCompliance(brief: DesignBrief, rec: ComplianceRecord): Q
 // Orchestrator
 // ---------------------------------------------------------------------------
 
+/**
+ * Plain-output quality evaluation (non-pipeline path). Honest deterministic
+ * findings for ANY generation: decode/integrity + measured visual metrics.
+ * No brief is involved, so no compliance findings are claimed — the report
+ * states exactly what was measured and nothing more. Attached to the job
+ * message meta; fail-level findings surface as visible warnings.
+ */
+export async function evaluatePlainOutput(bytes: Buffer): Promise<QualityReport> {
+  const probe = probeImage(bytes);
+  const findings: QualityFinding[] = [];
+  findings.push({
+    id: "tech.decode",
+    area: "technical",
+    status: probe ? "pass" : "fail",
+    check: "Image decodes to a real, complete file",
+    measured: probe ? `${probe.mime}, ${probe.width}×${probe.height}, ${bytes.length} bytes` : "undecodable",
+  });
+  if (probe) {
+    findings.push(...(await evaluateVisual(bytes)));
+  }
+  return {
+    overall: combine(findings),
+    findings,
+    evaluator: "deterministic",
+    evaluatedAt: new Date().toISOString(),
+  };
+}
+
 function combine(findings: QualityFinding[]): FindingStatus {
   if (findings.some((f) => f.status === "fail")) return "fail";
   if (findings.some((f) => f.status === "warn")) return "warn";

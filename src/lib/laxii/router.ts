@@ -225,6 +225,14 @@ export async function runLaxiiOperation(
     );
     baseImage = { dataUrl: prepared.dataUrl, mime: "image/png", label: "canvas to extend" };
     prompt = OPERATION_PROMPTS.EXPAND;
+  } else if (req.operation === "GENERATE" && (providerReq.references?.length ?? 0) > 0) {
+    // Reference-guided generation: tell the model HOW to read the reference
+    // (composition / subject placement / lighting / palette) so the output
+    // preserves the reference's intent without copying proprietary artwork.
+    prompt = [
+      req.prompt,
+      "Use the attached reference image as the creative guide: match its composition, subject placement, lighting direction, colour palette and overall visual style. Preserve the intent of the reference — never reproduce its exact artwork verbatim, and never copy watermarks or logos.",
+    ].filter(Boolean).join("\n\n");
   }
 
   const effectiveReq: LaxiiImageRequest = {
