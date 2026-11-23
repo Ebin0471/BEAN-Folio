@@ -53,6 +53,15 @@ model User {
   // Google". Null for password-only accounts. Linking is explicit and never
   // overwrites a password (docs/google-auth.md).
   googleId          String?   @unique
+  // ---------- Role-aware identity + email verification (M31, additive) ----------
+  // Account identity chosen at registration: the user's PRIMARY purpose.
+  // SEPARATE from `role` above (platform authorization) and from workspace
+  // membership (EmployerMembership). Null = account created before
+  // identity-aware onboarding; legacy accounts are never reclassified.
+  primaryIdentity   String? // CAREER_PROFESSIONAL | INDEPENDENT_PROFESSIONAL | ORGANIZATION | TALENT_PARTNER
+  // First-class email verification state (M31). Null = not yet verified.
+  // Token lifecycle lives in EmailVerificationToken (hashed, single-use).
+  emailVerifiedAt   DateTime?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
@@ -148,6 +157,10 @@ model User {
   interviewsScheduledBy           Interview[]         @relation("interviewsScheduledBy")
   interviewsCancelledBy           Interview[]         @relation("interviewsCancelledBy")
   hiringStageEventActors          HiringStageEvent[]  @relation("hiringStageEventActors")
+  // ---------- Trust onboarding (M31, additive) ----------
+  onboardingProfiles      OnboardingProfile[]
+  emailVerificationTokens EmailVerificationToken[]
+  trustVerifications      TrustVerification[]
 }
 
 model Session {
@@ -1378,6 +1391,73 @@ model PasswordResetToken {
   @@index([expiresAt]) // retention sweep
 }
 
+// ---------- Email verification (M31, additive) ----------
+// Single-use, expiring email verification tokens. Only the SHA-256 hash of
+// the opaque token is stored (same pattern as PasswordResetToken); the
+// plaintext token exists exactly once — in the verification delivery — and
+// is never logged. Consumed tokens are invalidated by consumedAt.
+model EmailVerificationToken {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String    @unique // sha256 hex of the opaque token
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt]) // retention sweep
+}
+
+// ---------- Role-aware onboarding profiles (M31, additive) ----------
+// One row per (user, identity): structured, role-specific onboarding answers
+// (JSON, validated by zod at the API boundary — never trusted from the
+// client raw). Mapped profile fields (headline/bio/location/
+// experienceLevel/availability) continue to live on User. A user may hold
+// several identities over time; `User.primaryIdentity` names the primary
+// one chosen at registration. No government IDs, tax IDs or salary data are
+// ever collected at initial login or stored here.
+model OnboardingProfile {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  identity  String // CAREER_PROFESSIONAL | INDEPENDENT_PROFESSIONAL | ORGANIZATION | TALENT_PARTNER
+  data      String   @default("{}") // JSON role-specific onboarding answers
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, identity])
+}
+
+// ---------- Progressive trust verifications (M31, additive) ----------
+// Human-reviewed personal trust states, kept independent per kind. Email
+// verification is lifecycle-automated (User.emailVerifiedAt) and
+// intentionally NOT recorded here. Organization verification remains in
+// EmployerVerification. Talent Partner authorization requires a verified
+// organization membership or an approved independent/client authorization —
+// never merely a self-selected identity. Evidence is referenced externally
+// (never document contents in ordinary fields or logs).
+model TrustVerification {
+  id                String    @id @default(cuid())
+  userId            String?
+  user              User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organizationId    String?
+  organization      EmployerOrganization? @relation("trustVerifications", fields: [organizationId], references: [id], onDelete: Cascade)
+  kind              String // PHONE | IDENTITY | PROFESSIONAL_CREDENTIALS | TALENT_PARTNER_AUTHORIZED
+  status            String    @default("PENDING") // PENDING | VERIFIED | REJECTED | REVOKED
+  // Secure external evidence reference only — never document contents.
+  evidenceReference String?
+  reviewerUserId    String?
+  reviewedAt        DateTime?
+  rejectionReason   String?
+  notes             String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([userId, kind])
+  @@index([organizationId, kind])
+}
+
 // ---------- Durable background jobs (Phase 2: horizontal scale) ----------
 // DB-backed queue so expensive work (AI generation, media processing,
 // maintenance sweeps) survives restarts, can run on any instance, and reports
@@ -1587,6 +1667,9 @@ model RiisheWorkflow {
   planJson String @default("{}")
   // Traceability: the AiConversation this workflow was planned from.
   conversationId String?
+  // Specialist registry id that owns this plan (M31, additive). Null =
+  // planned before the specialist registry existed or routed generically.
+  specialistId String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1772,6 +1855,7 @@ model EmployerOrganization {
   shortlists    CandidateShortlist[]
   invitations   OpportunityInvitation[] @relation("opportunityInvitations")
   hiringRooms   HiringRoom[]         @relation("hiringRoomOrganizations")
+  trustVerifications TrustVerification[] @relation("trustVerifications")
 
   @@index([verificationStatus])
 }
