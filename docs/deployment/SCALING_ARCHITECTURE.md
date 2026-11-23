@@ -82,6 +82,32 @@ rehash-on-login migration — a separate owner decision.
 
 ## 3. Measured envelope (2026-11-23 campaign — 2 vCPU / 3.9 GiB sandbox, SQLite)
 
+### 3.0 MI-1 single-vs-multi-instance comparison (same box, same QA data)
+
+Closed-model `vu-probe.js` (realistic public read mix, 1s think time),
+production standalone artifact, 45 s per leg, one generator IP, zero hard
+errors (5xx + network) in EVERY leg:
+
+| Metric | 1 instance @ 100 VU | 2 instances @ 50 VU each |
+|---|---|---|
+| Aggregate throughput | 277.6 req/s | **325.2 req/s** (+17 %) |
+| p50 read latency | 55.4 ms | **≈ 22 ms** (−60 %) |
+| p95 read latency | 368 ms | **≈ 181–193 ms** (−50 %) |
+| 429 throttles (shared postgres limiter) | 2 894 | 3 138 aggregate — CONSISTENT fleet-wide enforcement |
+| RSS per instance | 719 MB | 686 / 727 MB |
+| Hard errors | 0 | 0 |
+
+Honest reading: the multi-instance topology MEASURES better under the same
+total concurrency (latency halves because each instance serves half the
+load; aggregate throughput +17 %). The throughput gain is bounded by the
+SHARED SQLite database's single-writer ceiling — exactly the documented next
+bottleneck: Tier B (Postgres + PgBouncer) is where the replica count starts
+paying off multiplicatively. The 429 counts also prove the shared
+`RateLimitBucket` backend enforces ONE limit across both instances (a
+single IP is throttled fleet-wide, not per-instance).
+
+### 3.1 Prior campaign (2026-11-23 — GZ-SCALE, single instance, SQLite)
+
 - Zero 5xx across ~107 k requests incl. **1,000 simultaneous connections**
   (closed-model) and an 800-VU connection spike; RSS stayed < 1 GB.
 - Safe interactive envelope on THAT box: **~100–200 concurrent users**
