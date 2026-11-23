@@ -52,6 +52,16 @@ dev.log
 server.log
 prisma/db
 
+# Publication hygiene (2026-11): engineering worklog, scratch artifacts and
+# local-only deployment assets are not part of any image
+worklog.md
+scripts/tmp
+scratch-*
+download
+deploy
+mini-services
+.zscripts
+
 # OS / editor noise
 .DS_Store
 Thumbs.db
