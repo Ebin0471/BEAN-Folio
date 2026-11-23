@@ -21,7 +21,8 @@ function tpl(type: Parameters<typeof makeSection>[0], overrides: Record<string, 
 /**
  * TemplatePreset with the id widened to string. Every other field (theme
  * tokens, motion, pages/sections) is still fully type-checked; the id itself
- * is validated by scripts/tmp/check-sigs-t2.ts at authoring time and becomes
+ * was validated by a scratch signature checker at authoring time (see
+ * agent-ctx/4-b-templates-technology-engineering.md) and becomes
  * a TemplateId member once registered in site-config.ts.
  */
 type PresetDraft = Omit<TemplatePreset, "id"> & { id: string };

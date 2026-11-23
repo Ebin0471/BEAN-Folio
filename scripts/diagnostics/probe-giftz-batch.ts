@@ -10,7 +10,7 @@
  *   4. Does passing max_tokens through the SDK body change the output length?
  *
  * Read-only diagnostic — no DB writes, no site changes. Run with the same
- * env as the app (bun auto-loads .env):  bun scripts/tmp/probe-giftz-batch.ts
+ * env as the app (bun auto-loads .env):  bun scripts/diagnostics/probe-giftz-batch.ts
  */
 
 import ZAI from "z-ai-web-dev-sdk";

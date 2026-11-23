@@ -1,5 +1,24 @@
 /// <reference types="bun-types" />
 /**
+ * ⚠️ STATUS (2026-11 publication hygiene audit): INTENTIONALLY DISABLED — RETAINED.
+ *
+ * Why it cannot run: this suite pins regressions in
+ * `src/lib/laxii/engine.ts` and `src/lib/laxii/pipeline/segment.ts`
+ * (`backdropSafeInstructions`, `assessPlate`, `analyzeMaskShape`,
+ * `generateCleanBackdrop`, `decidePlatePerson`). That backdrop/segmentation
+ * engine was removed from the codebase in the Phase-6 dead-cluster audit
+ * (commit 9d53574 "dead-cluster removal completed per phase-6 audit … +
+ * stale backdrop test"); the imports no longer resolve, so this file is
+ * kept `.disabled` and is excluded from `bun test` by its suffix.
+ *
+ * Why it is retained: the tests document — with real captured fixtures in
+ * `tests/fixtures/laxii/` — the "every generated scene contained a person"
+ * production incident (job cmvvztd0i…) and the exact gate/prompt-ladder
+ * contract that fixed it (A1–A4 in the header below). If a backdrop or
+ * segmentation engine is ever reintroduced, port these cases against the
+ * new implementation BEFORE enabling it.
+ */
+/**
  * LAXII backdrop-generation regression tests.
  *
  * Each test pins a REAL failure that was fixed — if one of these fails, the

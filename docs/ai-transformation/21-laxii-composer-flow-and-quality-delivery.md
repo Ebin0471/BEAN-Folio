@@ -169,7 +169,8 @@ same prompts instead (honest substitute, documented).
   `src/lib/laxii/quality.ts`, `src/lib/laxii/router.ts`, `src/lib/laxii/providers/managed.ts`
 - Added: `src/lib/laxii/art-direction.ts`, `src/lib/laxii/banner-request.ts`,
   `scripts/laxii/quality-benchmark.ts`, `scripts/tmp/probe-prompt-limit.ts`,
-  `scripts/tmp/probe-messages.ts`, `tests/laxii-prompt-limits.test.ts`,
+  `scripts/tmp/probe-messages.ts` (both relocated 2026-11 to `scripts/diagnostics/` when
+  `scripts/tmp/` was retired), `tests/laxii-prompt-limits.test.ts`,
   `tests/laxii-art-direction.test.ts`, `agent-ctx/shots/laxii-quality/*` (evidence), this document.
 - Untouched on purpose: quota/cooldown logic, provider selection (LAXII V1 = managed gateway
   only), banner/avatar/resume flows, all UI outside the named composer deltas, the dead legacy

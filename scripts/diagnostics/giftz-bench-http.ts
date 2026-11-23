@@ -15,12 +15,12 @@
  * Stepwise commands (each invocation is short; turns keep running in the
  * server process between invocations):
  *
- *   bun scripts/tmp/giftz-bench-http.ts run1 A       # register + site + session + send turn 1
- *   bun scripts/tmp/giftz-bench-http.ts poll A 1 480 # poll turn 1 (exit 2 = still running)
- *   bun scripts/tmp/giftz-bench-http.ts apply A 1    # save config / apply files proposal
- *   bun scripts/tmp/giftz-bench-http.ts turn2 A      # send follow-up prompt
- *   bun scripts/tmp/giftz-bench-http.ts apply A 2
- *   bun scripts/tmp/giftz-bench-http.ts evaluate A   # tree/preview/links/build/publish/public + evidence
+ *   bun scripts/diagnostics/giftz-bench-http.ts run1 A       # register + site + session + send turn 1
+ *   bun scripts/diagnostics/giftz-bench-http.ts poll A 1 480 # poll turn 1 (exit 2 = still running)
+ *   bun scripts/diagnostics/giftz-bench-http.ts apply A 1    # save config / apply files proposal
+ *   bun scripts/diagnostics/giftz-bench-http.ts turn2 A      # send follow-up prompt
+ *   bun scripts/diagnostics/giftz-bench-http.ts apply A 2
+ *   bun scripts/diagnostics/giftz-bench-http.ts evaluate A   # tree/preview/links/build/publish/public + evidence
  *
  * Evidence: /home/z/beanfolio-benchmarks/giftz-benchmark/<RUN_ID>/<letter>/
  */

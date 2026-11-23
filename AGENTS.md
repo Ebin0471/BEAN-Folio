@@ -28,7 +28,8 @@ Non-negotiables (details and rationale in the policies):
    live DB; never restore an older DB without approval (§3).
 6. **GitHub discipline — MANDATORY after every completed task.** Repository
    of record: `https://github.com/Ebin0471/BEAN-Folio.git` (remote `origin`,
-   PRIVATE). GitHub receives **source only** — databases, media, backups,
+   **PUBLIC** — visibility corrected 2026-11; connected as PRIVATE originally).
+   GitHub receives **source only** — databases, media, backups,
    env files and vaults are never pushed; `deploy` and `github-clean` are
    never pushed; no force-push or remote history rewrite, ever.
    Synchronization after every completed task is REQUIRED and runs through
