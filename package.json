@@ -96,6 +96,7 @@
     "zustand": "^5.0.6"
   },
   "devDependencies": {
+    "@langchain/langgraph": "^0.4",
     "@tailwindcss/postcss": "^4",
     "@types/pdfkit": "^0.17.7",
     "@types/react": "^19",
