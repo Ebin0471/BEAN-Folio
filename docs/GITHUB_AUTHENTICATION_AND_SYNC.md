@@ -34,7 +34,7 @@ Evidence gathered during the M18 audit:
 | `.github-auth/` (prior session's vault: vendored `gh` binary, OAuth config, helper script) did not exist, while the repo's tracked files — including ~100 uncommitted work-tree modifications from the prior session — did exist. `git ls-files --others --exclude-standard` returned **zero** untracked files. | The workspace is restored per session from a snapshot that preserves tracked files (and their uncommitted modifications) plus `.git/` wholesale, and **drops untracked files regardless of `.git/info/exclude`**. Credential material stored as untracked working-tree files cannot survive. |
 | `git config --show-origin` showed `credential.https://github.com.helper=/home/z/my-project/.github-auth/gh-credential-helper` still present in `.git/config` — a line written by the *previous* session. | `.git/` **does** persist across the same session boundary that destroyed `.github-auth/`. This is the decisive architectural fact (see §5). |
 | No `gh` binary anywhere (not on PATH, not in the vault), no `~/.config/gh`, no `~/.git-credentials`, no `~/.netrc`, no `~/.ssh`, no credential-related environment variables, no `/run/secrets` or `/mnt/secrets` mounts. | Rules out the "Preferred: existing platform GitHub integration" option and SSH options; the platform provides no built-in Git credential system. |
-| `git ls-remote` without credentials failed at the username prompt (non-TTY). | Repository requires authentication for all remote operations (private repo); OAuth scope `repo` was sufficient in prior sessions. |
+| `git ls-remote` without credentials failed at the username prompt (non-TTY). | Repository requires authentication for all remote operations (private at the time of this audit — **now PUBLIC**; credential-gated pushes remain the rule); OAuth scope `repo` was sufficient in prior sessions. |
 | GitHub REST API unauthenticated call returned `API rate limit exceeded`. | Confirms no platform-provided authenticated GitHub channel exists. |
 
 Not the cause: GitHub authorization revocation (D) — the device-flow
@@ -105,7 +105,7 @@ uses; it is not a secret and was already committed in the legacy
 
 ## 6. GitHub permission requirements
 
-- OAuth scopes: `repo` (full control of the private repository) and
+- OAuth scopes: `repo` (full control of the repository; PRIVATE when this record was written — now PUBLIC) and
   `read:org` (future multi-repo/BEAN-org operations). Nothing broader.
 - The device-flow app id is GitHub CLI's public app; authorizing it grants
   exactly the requested scopes and can be revoked anytime at

@@ -1,15 +1,24 @@
 # BEAN Folio — Testing & Verification
 
-**Summary:** This page separates what was **actually verified in this build** from what is
-**recommended but not yet run**. Verification in the sandbox consisted of static checks
+> **STATUS UPDATE (2026-11 publication-readiness audit):** the sandbox restriction that
+> once forbade test frameworks is long gone. The repository now ships **106 automated
+> suites** (`tests/*.test.ts`, bun test) with a per-file isolated-QA-DB runner
+> (`scripts/ci/run-tests.sh`) and a designed CI contract (`docs/ops/CI.md` — workflow
+> template pending GitHub activation). Sections 1.x below are the HISTORICAL record of
+> the pre-suite manual verification; §"Automated suites" below it is current.
+
+**Summary:** This page separates the **historical manual verification** (this build's early
+phases) from the current automated state. Early verification consisted of static checks
 (`bun run lint`, `bunx tsc --noEmit` scoped to product files) and **live API smoke tests run by
 the build agents against the running dev server** — real HTTP calls, real database, and real LLM
-calls for the AI features. **No automated test suite was executed** — the sandbox explicitly
-disallowed adding test frameworks. The recommended setup (Vitest + integration DB + Playwright)
-and the critical test cases are listed for the first engineer who wires CI.
+calls for the AI features. Today the product runs an automated suite of 106 files (`tests/*.test.ts`, bun test) whose
+regressions pin the real incidents of the build (upload 405 boundary, LAXII prompt limits,
+durable job stores, cross-instance cancellation, schema parity, storage drivers, auth,
+visibility ladder and more) — run per-file against the isolated QA database via
+`scripts/ci/run-tests.sh`.
 
-**Status:** As performed in this repository — manual/static verification only; automated suites
-NOT run.
+**Status:** Automated suites are CURRENT and run green in-repo against the isolated QA
+database; GitHub Actions execution is pending workflow activation (see docs/ops/CI.md).
 
 ---
 
@@ -74,7 +83,11 @@ test users and zero project/save/collection/view rows.
 - **No load/perf testing** — the SQLite single-writer and in-memory rate limiter are untested
   under concurrency.
 
-## 2. Recommended automated setup (not installed here — sandbox forbids adding test runners)
+## 2. Recommended automated setup (HISTORICAL — superseded by the shipped bun-test suite)
+
+> The stack below was the early recommendation. The shipped reality: **bun test** with a
+> per-file isolated-DB runner (`scripts/ci/run-tests.sh`, `docs/ops/CI.md`). The table is kept
+> as design context for future E2E (Playwright) work, which remains open.
 
 | Layer | Tool | Target |
 |---|---|---|

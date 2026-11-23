@@ -1,6 +1,15 @@
 # BEAN Folio — Database (SQLite + Prisma, as built)
 
-**Summary:** The data model is a 27-model Prisma schema on SQLite (`db/custom.db`), covering
+> **STATUS UPDATE (2026-11 publication-readiness audit):** the schema has grown well beyond
+> the 27 models recorded when this document was first written — **both `prisma/schema.prisma`
+> (SQLite, development) and `prisma/schema.postgres.prisma` (production mirror) now define
+> 101 models**, kept identical by the `scripts/check-schema-parity.ts` gate. The numbered
+> model tables below are a HISTORICAL snapshot of the early build; the authoritative current
+> model list is the schema files themselves (`bunx prisma format` / Prisma docs), and the
+> SQLite↔PostgreSQL parity invariant is: **the two schemas must describe the IDENTICAL
+> data model** (exit 1 on drift).
+
+**Summary:** The data model began as a 27-model Prisma schema on SQLite (`db/custom.db`) covering
 identity, taxonomy, media, projects, discovery, connections, insights, AI and governance. SQLite
 has no native enums or arrays, so status/visibility fields are plain strings validated with zod
 at the API boundary, and multi-value fields use join tables or JSON-string columns. Deletes

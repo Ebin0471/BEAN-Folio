@@ -61,6 +61,10 @@ jobs:
       - name: eslint
         run: bun run lint
       - name: prisma validate (both schemas)
+        # The postgres mirror's datasource parses env("DATABASE_URL"); a
+        # placeholder connection string satisfies validation (no DB contact).
+        env:
+          DATABASE_URL: postgresql://ci-placeholder:ci-placeholder@localhost:5432/ci
         run: |
           bunx prisma validate --schema prisma/schema.prisma
           bunx prisma validate --schema prisma/schema.postgres.prisma
