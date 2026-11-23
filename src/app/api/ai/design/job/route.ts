@@ -3,19 +3,13 @@ import { z } from "zod";
 
 import { handler, ok, err, ERR, parseBody } from "@/lib/api-helpers";
 import { getSessionUser } from "@/lib/auth";
-import { aiComplete, aiGate, recordAiUsage, AI_DEEP_TIMEOUT_MS } from "@/lib/ai";
-import { getJob, jobSnapshot, latestJob, prepareRetry, requestCancel } from "@/lib/ai-design/jobs";
-import { runDesignJob, type StepProvider } from "@/lib/ai-design/execute";
+import { aiGate, recordAiUsage } from "@/lib/ai";
+import { getJob, jobSnapshot, latestJob, prepareRetry, requestCancel, persistJob, enqueueDesignJobDrive } from "@/lib/ai-design/jobs";
+import { driveJob, designStepProvider } from "@/lib/ai-design/driver";
 
 export const dynamic = "force-dynamic";
 
 const FINISHED = new Set(["completed", "failed", "cancelled"]);
-
-/** The provider for model-tool steps: deep reasoning, extended deadline. */
-const stepProvider: StepProvider = {
-  complete: (system, messages, opts) =>
-    aiComplete(system, messages, { ...opts, thinking: true, timeoutMs: AI_DEEP_TIMEOUT_MS }),
-};
 
 /**
  * GET /api/ai/design/job[?id=…] — poll a Code Giftz execution job.
@@ -31,7 +25,7 @@ export const GET = handler(async (req: NextRequest): Promise<NextResponse> => {
   if (!user) return ERR.unauthorized();
 
   const id = req.nextUrl.searchParams.get("id");
-  const job = id ? getJob(user.id, id) : latestJob(user.id);
+  const job = id ? await getJob(user.id, id) : await latestJob(user.id);
   if (!job) return err("No GIFTZ execution found for your account.", 404);
 
   return ok({ job: jobSnapshot(job, FINISHED.has(job.status)) });
@@ -44,10 +38,13 @@ const jobActionSchema = z.object({
 
 /**
  * POST /api/ai/design/job — control an owned job.
- *  - cancel: cooperative cancellation at the next step boundary (completed
- *    steps are kept and remain previewable).
+ *  - cancel: durable, cross-instance cancellation — the flag is stamped on
+ *    the job row (status-guarded) and honored by the executor at the next
+ *    step boundary, on whichever instance runs it.
  *  - retry: reset failed/skipped steps and continue the SAME job from where
- *    it stopped — completed steps are never re-run.
+ *    it stopped — completed steps are never re-run. The retry budget and
+ *    exponential backoff gate are enforced durably (MAX_RETRIES,
+ *    nextAttemptAt).
  */
 export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
   const user = await getSessionUser();
@@ -58,20 +55,21 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
   const { jobId, action } = r.data;
 
   if (action === "cancel") {
-    if (!requestCancel(user.id, jobId)) {
+    if (!(await requestCancel(user.id, jobId))) {
       return err("That execution cannot be cancelled (unknown job, or it already finished).", 409);
     }
-    const job = getJob(user.id, jobId);
+    const job = await getJob(user.id, jobId);
     return ok({ jobId, status: job?.status ?? "running", cancelRequested: true });
   }
 
   // retry — model calls cost the same as a fresh execution, so the retry
   // passes the same consent + burst + daily-quota gate as every other AI route.
-  const job = getJob(user.id, jobId);
+  const job = await getJob(user.id, jobId);
   if (!job) return err("That execution no longer exists (expired). Ask GIFTZ to plan again.", 404);
   const preRetryStatuses = job.steps.map((s) => [s.id, s.status] as const);
-  if (!prepareRetry(job)) {
-    return err("That execution is already running or finished successfully.", 409);
+  const retry = await prepareRetry(job);
+  if (!retry.ok) {
+    return err(retry.reason ?? "That execution cannot be retried right now.", retry.code ?? 409);
   }
   const blocked = await aiGate(user);
   if (blocked) {
@@ -82,15 +80,15 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
       if (step) step.status = prev;
     }
     job.status = "failed";
+    job.error = null;
     job.updatedAt = Date.now();
+    await persistJob(job);
     return blocked;
   }
-  const provider: StepProvider = stepProvider;
-  void runDesignJob(job, provider).catch(() => {
-    job.status = "failed";
-    job.error = "The execution stopped unexpectedly. You can retry the remaining steps.";
-    for (const s of job.steps) if (s.status === "running" || s.status === "pending") s.status = "failed";
-  });
+  // Durable execution backbone + immediate same-process kick — the claim
+  // lease arbitrates, so the poll path resumes anything that stalls.
+  await enqueueDesignJobDrive(job.id, user.id);
+  void driveJob(user, job.id, designStepProvider).catch(() => {});
   await recordAiUsage(user.id, "design-retry");
   return ok({ jobId: job.id, status: job.status });
 });

@@ -11,7 +11,7 @@ import { validatePlan, designPlanSchema, dropUngroundedConstraints, dropUnresolv
 import { planSystemPrompt } from "@/lib/ai-design/prompts";
 import { fetchPortfolioBlock } from "@/lib/ai-design/context";
 import { loadMaterialsForRequest, materialsBlock } from "@/lib/ai-design/ingest";
-import { createJob } from "@/lib/ai-design/jobs";
+import { createJob, enqueueDesignJobDrive } from "@/lib/ai-design/jobs";
 import { driveJob, KICK_BUDGET_MS } from "@/lib/ai-design/driver";
 import type { StepContext, StepProvider } from "@/lib/ai-design/execute";
 
@@ -267,7 +267,11 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
           materialIds: mode === "create" ? materialIds : [],
           context: stepContext,
         });
-        // Best-effort background kick; the studio's job poll drives the rest.
+        // The durable queue is the execution backbone (a worker on any
+        // instance continues the job even if this process dies); the
+        // best-effort same-process kick starts it immediately and the
+        // claim lease arbitrates against the worker.
+        await enqueueDesignJobDrive(job.id, user.id);
         void driveJob(user, job.id, stepProvider, { totalBudgetMs: KICK_BUDGET_MS }).catch(() => {});
 
         await recordAiUsage(user.id, "design");
