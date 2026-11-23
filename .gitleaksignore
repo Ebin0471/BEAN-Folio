@@ -1,0 +1,23 @@
+# BEAN Folio — gitleaks allowlist (false positives only).
+#
+# Every entry below was audited by hand (2026-11 publication-readiness
+# audit): the "secrets" are SYNTHETIC test fixtures inside
+# tests/giftz-engine.test.ts that exercise the GIFTZ secret-REDACTION engine
+# itself (redactText / expect(text).toContain("API_KEY=<redacted>")). The
+# flagged strings are obviously fake pattern dummies ("sk-live-abcdef…",
+# "super-secret-value-123", hex-dummy "aaaa1111bbbb…"), never real
+# credentials. Gitleaks' generic-api-key rule cannot know that, so the
+# specific historical fingerprints are ignored here — the rule itself stays
+# fully active for everything else (nothing else in the full history
+# matches).
+#
+# Verification: gitleaks detect --source . --report-format json (v8.24.3,
+# 152 commits) → exactly these 8 findings, zero others.
+010c4b9337bf5b6e8922b0e3979d9cc0dbfe0de1:tests/giftz-engine.test.ts:generic-api-key:354
+010c4b9337bf5b6e8922b0e3979d9cc0dbfe0de1:tests/giftz-engine.test.ts:generic-api-key:613
+010c4b9337bf5b6e8922b0e3979d9cc0dbfe0de1:tests/giftz-engine.test.ts:generic-api-key:618
+010c4b9337bf5b6e8922b0e3979d9cc0dbfe0de1:tests/giftz-engine.test.ts:generic-api-key:634
+e6883a6d98130eb2f6fdefe3a01ffa2a3df4fa04:tests/giftz-engine.test.ts:generic-api-key:354
+e6883a6d98130eb2f6fdefe3a01ffa2a3df4fa04:tests/giftz-engine.test.ts:generic-api-key:619
+e6883a6d98130eb2f6fdefe3a01ffa2a3df4fa04:tests/giftz-engine.test.ts:generic-api-key:624
+e6883a6d98130eb2f6fdefe3a01ffa2a3df4fa04:tests/giftz-engine.test.ts:generic-api-key:640
