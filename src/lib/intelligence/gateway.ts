@@ -27,6 +27,7 @@ import {
 } from "./circuit";
 import { providersFor, type IntelligenceCapability } from "./registry";
 import { logGatewayEvent, type GatewayAgent } from "./observability";
+import { withTimeout } from "./with-timeout";
 
 /** Safe, user-facing gateway failure. Internal details are logged, never leaked. */
 export class GatewayError extends Error {}
@@ -113,7 +114,7 @@ async function callManagedText(
   maxTokens?: number
 ): Promise<string> {
   // Per the provider contract, the system prompt uses the assistant role.
-  const completion = (await Promise.race([
+  const completion = (await withTimeout(
     zai.chat.completions.create({
       messages: [{ role: "assistant", content: system }, ...messages] as never,
       thinking: { type: thinking ? "enabled" : "disabled" },
@@ -122,8 +123,8 @@ async function callManagedText(
       // parseable JSON (probe-giftz-batch.ts, GZ-BENCH-1).
       ...(maxTokens !== undefined ? { max_tokens: maxTokens } : {}),
     }),
-    new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), timeoutMs)),
-  ])) as { choices?: { message?: { content?: string } }[] };
+    timeoutMs,
+  )) as { choices?: { message?: { content?: string } }[] };
   const text = completion?.choices?.[0]?.message?.content?.trim();
   if (!text) throw new Error("empty response");
   return text;
@@ -246,15 +247,15 @@ export async function gatewayStream(
       const zai = await getGatewayZai();
       const stream = await withIntelligenceRetries(
         () =>
-          Promise.race([
+          withTimeout(
             zai.chat.completions.create({
               // Per the provider contract, the system prompt uses the assistant role.
               messages: [{ role: "assistant", content: params.system }, ...params.messages] as never,
               thinking: { type: "disabled" },
               stream: true,
             }),
-            new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), timeoutMs)),
-          ]),
+            timeoutMs,
+          ),
         { label: `stream:${params.feature}`, providerId: entry.id, attempts: 2 }
       );
       logGatewayEvent({
@@ -336,13 +337,13 @@ export async function gatewayVision(params: GatewayVisionParams): Promise<Gatewa
         // The SDK types `model` as required, but the gateway contract resolves
         // the vision model server-side when omitted — model selection stays
         // with the gateway configuration (no id pinned, none invented).
-        const completion = (await Promise.race([
+        const completion = (await withTimeout(
           zai.chat.completions.createVision({
             messages: [{ role: "user", content }] as never,
             thinking: { type: "disabled" },
           } as unknown as Parameters<typeof zai.chat.completions.createVision>[0]),
-          new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), timeoutMs)),
-        ])) as { choices?: { message?: { content?: string } }[] };
+          timeoutMs,
+        )) as { choices?: { message?: { content?: string } }[] };
         const out = completion?.choices?.[0]?.message?.content?.trim();
         if (!out) throw new Error("empty response");
         return out;

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Ensure the Next dev server is up (restarts reaped instances). Waits for 200.
-cd /home/z/my-project
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if ! curl -s -o /dev/null --max-time 4 http://localhost:3000/ 2>/dev/null; then
   setsid nohup env NODE_OPTIONS="--max-old-space-size=1536" bun run dev </dev/null > /dev/null 2>&1 &
   disown

@@ -1,0 +1,230 @@
+{
+    "setup_data": {
+        "mediaPaths": [
+            null
+        ],
+        "usernames": []
+    },
+    "root_group": {
+        "checks": {
+            "professions 200": {
+                "path": "::professions 200",
+                "id": "4126c2789e31469ef0d2241860bfd3e1",
+                "passes": 811,
+                "fails": 0,
+                "name": "professions 200"
+            },
+            "discover 200": {
+                "name": "discover 200",
+                "path": "::discover 200",
+                "id": "fe25974e3d5cfba4366421853e09aa97",
+                "passes": 291,
+                "fails": 2908
+            },
+            "ops 200": {
+                "id": "9e3dc59ed24917c1a64dd328275b1797",
+                "passes": 379,
+                "fails": 0,
+                "name": "ops 200",
+                "path": "::ops 200"
+            }
+        },
+        "name": "",
+        "path": "",
+        "id": "d41d8cd98f00b204e9800998ecf8427e",
+        "groups": {
+            "setup": {
+                "groups": {},
+                "checks": {
+                        "health 200": {
+                            "fails": 0,
+                            "name": "health 200",
+                            "path": "::setup::health 200",
+                            "id": "2e53f0809577cfb38a24601c3672b857",
+                            "passes": 1
+                        }
+                    },
+                "name": "setup",
+                "path": "::setup",
+                "id": "5c0f8025f7e0b6654089e5b00e950f1a"
+            }
+        }
+    },
+    "metrics": {
+        "bean_browse_read_ms": {
+            "max": 56.352626,
+            "p(90)": 2.1656563999999996,
+            "p(95)": 2.424178999999999,
+            "avg": 1.3855662589004956,
+            "min": 0.74511,
+            "med": 1.158268
+        },
+        "bean_browse_hard_errors": {
+            "passes": 0,
+            "fails": 7949,
+            "thresholds": {
+                "rate<0.001": false
+            },
+            "value": 0
+        },
+        "data_received": {
+            "count": 19917303,
+            "rate": 198756.19540044686
+        },
+        "http_req_blocked": {
+            "min": 0.00166,
+            "med": 0.00417,
+            "max": 0.895612,
+            "p(90)": 0.005436700000000002,
+            "p(95)": 0.006453349999999999,
+            "avg": 0.005409433475855126
+        },
+        "http_req_receiving": {
+            "avg": 0.06522029149899385,
+            "min": 0.020568,
+            "med": 0.0525935,
+            "max": 6.320156,
+            "p(90)": 0.08438540000000003,
+            "p(95)": 0.11779734999999998
+        },
+        "http_req_duration{expected_response:true}": {
+            "avg": 1.8686004559151768,
+            "min": 0.807375,
+            "med": 1.66214,
+            "max": 34.989525,
+            "p(90)": 2.5149184,
+            "p(95)": 2.648516699999997
+        },
+        "vus_max": {
+            "value": 50,
+            "min": 50,
+            "max": 50
+        },
+        "http_req_tls_handshaking": {
+            "avg": 0,
+            "min": 0,
+            "med": 0,
+            "max": 0,
+            "p(90)": 0,
+            "p(95)": 0
+        },
+        "checks": {
+            "fails": 2908,
+            "passes": 1482,
+            "value": 0.3375854214123007
+        },
+        "http_req_duration{name:GET /api/media/<id>/raw}": {
+            "min": 0,
+            "med": 0,
+            "max": 0,
+            "p(90)": 0,
+            "p(95)": 0,
+            "avg": 0,
+            "thresholds": {
+                "p(95)<500": false
+            }
+        },
+        "http_req_waiting": {
+            "p(95)": 2.33627685,
+            "avg": 1.303907238556337,
+            "min": 0.707906,
+            "med": 1.0856745,
+            "max": 56.278256,
+            "p(90)": 2.0656347000000017
+        },
+        "data_sent": {
+            "count": 823162,
+            "rate": 8214.392647349023
+        },
+        "http_req_duration{name:GET /api/discover}": {
+            "min": 0.74511,
+            "med": 1.144939,
+            "max": 56.352626,
+            "p(90)": 2.2161811000000005,
+            "p(95)": 2.4413952999999995,
+            "avg": 1.361877186982245,
+            "thresholds": {
+                "p(95)<500": false
+            }
+        },
+        "vus": {
+            "value": 25,
+            "min": 1,
+            "max": 30
+        },
+        "http_req_sending": {
+            "med": 0.0135975,
+            "max": 19.788242,
+            "p(90)": 0.017452,
+            "p(95)": 0.019858349999999997,
+            "avg": 0.016779857017102613,
+            "min": 0.002905
+        },
+        "http_req_connecting": {
+            "p(95)": 0,
+            "avg": 0.0007265514336016098,
+            "min": 0,
+            "med": 0,
+            "max": 0.693739,
+            "p(90)": 0
+        },
+        "http_req_failed": {
+            "passes": 6160,
+            "fails": 1792,
+            "value": 0.7746478873239436
+        },
+        "iterations": {
+            "count": 7949,
+            "rate": 79.32364121980531
+        },
+        "http_req_duration{name:GET /u/<username>}": {
+            "min": 0,
+            "med": 0,
+            "max": 0,
+            "p(90)": 0,
+            "p(95)": 0,
+            "avg": 0,
+            "thresholds": {
+                "p(95)<800": false
+            }
+        },
+        "http_reqs": {
+            "count": 7952,
+            "rate": 79.35357843500967
+        },
+        "bean_browse_429": {
+            "count": 6159,
+            "rate": 61.46110281454031
+        },
+        "iteration_duration": {
+            "avg": 154.04251383054455,
+            "min": 1.787986,
+            "med": 155.589049,
+            "max": 303.498897,
+            "p(90)": 271.82743959999993,
+            "p(95)": 286.8129594
+        },
+        "http_req_duration": {
+            "max": 56.352626,
+            "p(90)": 2.1670985000000007,
+            "p(95)": 2.42528695,
+            "avg": 1.3859073870724394,
+            "min": 0.74511,
+            "med": 1.1583035,
+            "thresholds": {
+                "p(95)<500": false
+            }
+        },
+        "http_req_duration{name:GET /api/profiles/<username>}": {
+            "avg": 0,
+            "min": 0,
+            "med": 0,
+            "max": 0,
+            "p(90)": 0,
+            "p(95)": 0,
+            "thresholds": {
+                "p(95)<500": false
+            }
+        }
+    }
+}

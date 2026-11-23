@@ -1,0 +1,230 @@
+{
+    "metrics": {
+        "data_received": {
+            "rate": 63892.2036347488,
+            "count": 12153365
+        },
+        "http_req_duration{name:GET /api/profiles/<username>}": {
+            "min": 0,
+            "med": 0,
+            "max": 0,
+            "p(90)": 0,
+            "p(95)": 0,
+            "avg": 0,
+            "thresholds": {
+                "p(95)<500": false
+            }
+        },
+        "http_reqs": {
+            "count": 4727,
+            "rate": 24.85060282328866
+        },
+        "iteration_duration": {
+            "min": 1.345349,
+            "med": 148.73249149999998,
+            "max": 305.494617,
+            "p(90)": 274.08355459999996,
+            "p(95)": 288.15513315000004,
+            "avg": 151.6176630237091
+        },
+        "bean_browse_hard_errors": {
+            "passes": 0,
+            "fails": 4724,
+            "thresholds": {
+                "rate<0.001": false
+            },
+            "value": 0
+        },
+        "http_req_duration{name:GET /u/<username>}": {
+            "med": 0,
+            "max": 0,
+            "p(90)": 0,
+            "p(95)": 0,
+            "avg": 0,
+            "min": 0,
+            "thresholds": {
+                "p(95)<800": false
+            }
+        },
+        "http_req_connecting": {
+            "avg": 0.0007094842394753543,
+            "min": 0,
+            "med": 0,
+            "max": 0.407927,
+            "p(90)": 0,
+            "p(95)": 0
+        },
+        "http_req_waiting": {
+            "avg": 1.5102335108948581,
+            "min": 0.828072,
+            "med": 1.152442,
+            "max": 20.6122,
+            "p(90)": 2.4167234000000004,
+            "p(95)": 2.633241
+        },
+        "http_req_receiving": {
+            "max": 2.79026,
+            "p(90)": 0.09105560000000001,
+            "p(95)": 0.11095949999999997,
+            "avg": 0.07026568013539264,
+            "min": 0.028563,
+            "med": 0.062068
+        },
+        "iterations": {
+            "rate": 24.834831338526683,
+            "count": 4724
+        },
+        "bean_browse_read_ms": {
+            "max": 20.935093,
+            "p(90)": 2.5071763,
+            "p(95)": 2.7289753500000002,
+            "avg": 1.5953593729889965,
+            "min": 0.877775,
+            "med": 1.2350065
+        },
+        "vus_max": {
+            "min": 20,
+            "max": 20,
+            "value": 20
+        },
+        "vus": {
+            "value": 7,
+            "min": 0,
+            "max": 11
+        },
+        "http_req_duration{name:GET /api/media/<id>/raw}": {
+            "avg": 0,
+            "min": 0,
+            "med": 0,
+            "max": 0,
+            "p(90)": 0,
+            "p(95)": 0,
+            "thresholds": {
+                "p(95)<500": false
+            }
+        },
+        "http_req_failed": {
+            "passes": 2798,
+            "fails": 1929,
+            "value": 0.5919187645441083
+        },
+        "bean_browse_429": {
+            "count": 2798,
+            "rate": 14.709538121337355
+        },
+        "http_req_duration{name:GET /api/discover}": {
+            "p(90)": 2.5469404,
+            "p(95)": 2.7849902499999994,
+            "avg": 1.6052381230615342,
+            "min": 0.877775,
+            "med": 1.208675,
+            "max": 20.935093,
+            "thresholds": {
+                "p(95)<500": false
+            }
+        },
+        "http_req_blocked": {
+            "avg": 0.006035321768563604,
+            "min": 0.00243,
+            "med": 0.004747,
+            "max": 0.492627,
+            "p(90)": 0.006138,
+            "p(95)": 0.0072057999999999975
+        },
+        "http_req_duration{expected_response:true}": {
+            "p(90)": 2.7914642,
+            "p(95)": 3.0943569999999996,
+            "avg": 2.198424535510626,
+            "min": 0.980514,
+            "med": 2.326455,
+            "max": 20.935093
+        },
+        "http_req_tls_handshaking": {
+            "p(90)": 0,
+            "p(95)": 0,
+            "avg": 0,
+            "min": 0,
+            "med": 0,
+            "max": 0
+        },
+        "http_req_sending": {
+            "min": 0.007796,
+            "med": 0.014979,
+            "max": 0.222903,
+            "p(90)": 0.018828,
+            "p(95)": 0.021514499999999992,
+            "avg": 0.015928897609477487
+        },
+        "checks": {
+            "passes": 1281,
+            "fails": 1375,
+            "value": 0.4823042168674699
+        },
+        "http_req_duration": {
+            "avg": 1.5964280886397333,
+            "min": 0.877775,
+            "med": 1.235147,
+            "max": 20.935093,
+            "p(90)": 2.5078682000000003,
+            "p(95)": 2.7322402999999995,
+            "thresholds": {
+                "p(95)<500": false
+            }
+        },
+        "data_sent": {
+            "count": 489487,
+            "rate": 2573.312253895303
+        }
+    },
+    "setup_data": {
+        "mediaPaths": [
+            null
+        ],
+        "usernames": []
+    },
+    "root_group": {
+        "path": "",
+        "id": "d41d8cd98f00b204e9800998ecf8427e",
+        "groups": {
+            "setup": {
+                "groups": {},
+                "checks": {
+                        "health 200": {
+                            "name": "health 200",
+                            "path": "::setup::health 200",
+                            "id": "2e53f0809577cfb38a24601c3672b857",
+                            "passes": 1,
+                            "fails": 0
+                        }
+                    },
+                "name": "setup",
+                "path": "::setup",
+                "id": "5c0f8025f7e0b6654089e5b00e950f1a"
+            }
+        },
+        "checks": {
+            "discover 200": {
+                "name": "discover 200",
+                "path": "::discover 200",
+                "id": "fe25974e3d5cfba4366421853e09aa97",
+                "passes": 553,
+                "fails": 1375
+            },
+            "professions 200": {
+                "passes": 502,
+                "fails": 0,
+                "name": "professions 200",
+                "path": "::professions 200",
+                "id": "4126c2789e31469ef0d2241860bfd3e1"
+            },
+            "ops 200": {
+                "name": "ops 200",
+                "path": "::ops 200",
+                "id": "9e3dc59ed24917c1a64dd328275b1797",
+                "passes": 225,
+                "fails": 0
+            }
+        },
+        "name": ""
+    }
+}

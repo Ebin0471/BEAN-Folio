@@ -1,6 +1,6 @@
 #!/bin/bash
 # Ensure the dev server is up; (re)start if needed. Fast when already running.
-cd /home/z/my-project
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 if curl -s -o /dev/null --max-time 2 http://localhost:3000/; then
   exit 0
 fi

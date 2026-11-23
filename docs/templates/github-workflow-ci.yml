@@ -1,0 +1,156 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# ACTIVATION (why this lives here instead of .github/workflows/ci.yml):
+# the repository credential vault token carries scopes `repo, read:org` and
+# GitHub refuses OAuth-app pushes that CREATE OR UPDATE paths under
+# .github/workflows/ without the `workflow` scope. The complete workflow is
+# versioned HERE so nothing is lost; activate it with a workflow-scoped
+# credential (owner action, one command from the repo root):
+#
+#   mkdir -p .github/workflows
+#   git mv docs/templates/github-workflow-ci.yml .github/workflows/ci.yml
+#   git commit -m "ci: activate workflow (workflow-scoped credential)"
+#   scripts/ops/bean-sync.sh push
+#
+# Until activated, CI enforcement exists only as this reviewed definition
+# (docs/ops/CI.md documents the intended contract; the same gates ran green
+# locally in the GZ-SCALE milestone: tsc, lint, both schema validates,
+# parity, per-file suite 104 files green, production build, secret/runtime-
+# data scans).
+# ═══════════════════════════════════════════════════════════════════════════
+# BEAN Folio — CI quality gates (GZ-SCALE Phase 7).
+#
+# Implements the documented contract in docs/ops/CI.md (quality / tests /
+# build / security) plus the scale-program additions: schema-parity enforcement,
+# compose configuration validation for BOTH stacks, a real production image
+# build, and a Trivy vulnerability scan of the built image + filesystem.
+#
+# Checks are never weakened to achieve green: TypeScript, ESLint and the
+# schema parity gate run at their strict settings; baseline failures are
+# tracked in docs/ops/MILESTONE_EXECUTION_PROTOCOL.md §6, not absorbed here.
+#
+# Permissions: contents: read only. No artifacts are uploaded (databases,
+# media and backups can never leak through CI artifacts).
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: types / lint / schema parity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - name: install
+        run: bun install --frozen-lockfile
+      - name: typescript (FULL repository incl. tests)
+        run: bunx tsc --noEmit
+      - name: eslint
+        run: bun run lint
+      - name: prisma validate (both schemas)
+        run: |
+          bunx prisma validate --schema prisma/schema.prisma
+          bunx prisma validate --schema prisma/schema.postgres.prisma
+      - name: postgres mirror parity (fail on drift)
+        run: bun run scripts/check-schema-parity.ts
+      - name: runtime-data guard (tracked tree)
+        run: bash scripts/ci/guard-runtime-data.sh
+
+  tests:
+    name: test suite (per-file, isolated DB)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - name: install
+        run: bun install --frozen-lockfile
+      - name: isolated test database
+        run: |
+          mkdir -p /tmp/ci-db
+          DATABASE_URL="file:/tmp/ci-db/custom.db" bunx prisma db push --skip-generate
+      - name: seed isolated fixtures (taxonomy → demo)
+        env:
+          DATABASE_URL: file:/tmp/ci-db/custom.db
+        run: |
+          bun run scripts/seed-professions.ts
+          bun run scripts/seed.ts
+          bun run scripts/restore-qa-fixtures.ts
+      - name: per-file test run (cross-file isolation documented in scripts/ci/run-tests.sh)
+        env:
+          DATABASE_URL: file:/tmp/ci-db/custom.db
+        run: bash scripts/ci/run-tests.sh
+
+  build:
+    name: production build (standalone)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - name: install
+        run: bun install --frozen-lockfile
+      - name: generate sqlite client
+        run: bunx prisma generate --schema prisma/schema.prisma
+      - name: build (heap-capped; tsconfig.build.json — see next.config.ts)
+        env:
+          NODE_OPTIONS: --max-old-space-size=3072
+        run: bun run build
+
+  security:
+    name: secrets + runtime-data history
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks (full history)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: runtime-data guard (recent history)
+        run: bash scripts/ci/guard-runtime-data.sh --history 50
+
+  docker:
+    name: containers (compose validation + image build + scan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: validate production compose (structure + variable wiring)
+        run: docker compose -f docker-compose.yml --env-file .env.compose.example config -q
+      - name: validate development compose
+        run: docker compose -f docker-compose.dev.yml config -q
+      - name: build production image (multi-stage, no push)
+        run: |
+          docker build \
+            --build-arg NEXT_PUBLIC_APP_URL=http://localhost:3000 \
+            -t bean-folio:ci .
+      - name: Trivy image scan (HIGH+CRITICAL, unfixed-ignored, fails the job)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: bean-folio:ci
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true

@@ -2,7 +2,7 @@
 # BEAN Folio — social network API smoke test.
 # Boots the dev server, runs golden-path API checks, reports PASS/FAIL.
 # Usage: bash scripts/ops/smoke-social.sh
-cd /home/z/my-project
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BASE=http://localhost:3000
 
 pkill -f "next dev" 2>/dev/null; pkill -f "bun run dev" 2>/dev/null; sleep 1

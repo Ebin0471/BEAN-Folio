@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { AsyncLocalStorage } from "node:async_hooks";
 import type { ZodType } from "zod";
 import { memoryBackend, hitRateLimit } from "@/lib/rate-limit-backend";
 import { reportError } from "@/lib/monitoring";
@@ -31,22 +30,11 @@ export const ERR = {
  */
 const REQUEST_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 
-interface RequestContext {
-  requestId: string;
-  method: string;
-  path: string;
-}
-
-const requestStorage = new AsyncLocalStorage<RequestContext>();
-
-/**
- * The current request's ID (or null outside a request handled through
- * `handler()`). Use it to correlate log lines across helper modules without
- * threading a logger through every call.
- */
-export function getRequestId(): string | null {
-  return requestStorage.getStore()?.requestId ?? null;
-}
+// Request context moved to its own cycle-free module (request-context.ts) so
+// the structured logger can attach request IDs to every line. This module
+// re-exports the accessor for compatibility with existing importers.
+import { runWithRequestContext, getRequestId } from "@/lib/request-context";
+export { getRequestId };
 
 /** Thrown by parseBodySized when the payload exceeds the byte budget; mapped to 413 by handler(). */
 export class PayloadTooLargeError extends Error {
@@ -226,7 +214,7 @@ export function handler<A extends unknown[]>(
     const requestId = incoming && REQUEST_ID_RE.test(incoming) ? incoming : crypto.randomUUID();
     const method = req?.method ?? "-";
     const path = req ? new URL(req.url).pathname : "-";
-    return requestStorage.run({ requestId, method, path }, async () => {
+    return runWithRequestContext({ requestId, method, path }, async () => {
       try {
         const res = await fn(...args);
         res.headers.set("x-request-id", requestId);

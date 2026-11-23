@@ -13,6 +13,7 @@
  */
 
 import { redactText } from "@/lib/giftz/redact";
+import { getRequestId } from "@/lib/request-context";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -45,10 +46,15 @@ function redactFields(fields: Record<string, unknown> | undefined): Record<strin
 
 function emit(level: LogLevel, event: string, fields?: Record<string, unknown>): void {
   if (LEVELS[level] < THRESHOLD) return;
+  const requestId = getRequestId();
   const line = JSON.stringify({
     ts: new Date().toISOString(),
     level,
     event,
+    // Correlation: request ID of the API request this line belongs to (set
+    // by the handler() wrapper). Absent outside request scope — background
+    // jobs, recurring sweeps and startup lines carry none by design.
+    ...(requestId ? { requestId } : {}),
     ...redactFields(fields),
   });
   // warn/error to stderr (mirrors the previous console.error destinations so

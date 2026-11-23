@@ -1,0 +1,52 @@
+# BEAN Folio — local DEVELOPMENT stack.
+#
+# Hot-reload Next.js dev server with an ISOLATED runtime (own database file,
+# own media root) so container development can never touch host runtime data.
+# The production stack (docker-compose.yml) uses PostgreSQL + Caddy TLS; the
+# dev stack mirrors the repo's default SQLite dev convention instead — no
+# database service is needed.
+#
+# Usage (identical on Windows PowerShell [Docker Desktop/WSL2], Linux, macOS):
+#   docker compose -f docker-compose.dev.yml up --build
+#   # app ready on http://localhost:3000 (hot reload on save)
+#   docker compose -f docker-compose.dev.yml down            # stop
+#   docker compose -f docker-compose.dev.yml down -v         # stop + wipe dev data
+#
+# The repo bind-mount is read/write for Next.js caching; node_modules lives in
+# a named volume so the host's dependency tree cannot shadow the container's.
+
+services:
+  app:
+    image: oven/bun:1
+    working_dir: /app
+    command: sh -c "bun install --frozen-lockfile && bunx prisma db push && bunx --bun next dev -p 3000 -H 0.0.0.0"
+    restart: unless-stopped
+    environment:
+      NODE_ENV: development
+      NEXT_TELEMETRY_DISABLED: "1"
+      # Isolated runtime data: dev DB file + media + GIFTZ workspaces all live
+      # in the named `dev_data` volume — nothing writes into the bind-mounted
+      # repo except source code caches.
+      DATABASE_URL: file:/data/dev.db
+      MEDIA_LOCAL_ROOT: /data
+      CODE_GIFTZ_WORKSPACE_ROOT: /app/data/giftz-workspaces
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/app
+      - dev_node_modules:/app/node_modules
+      - dev_data:/data
+    mem_limit: 3g
+    cpus: 2.0
+    pids_limit: 1024
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  dev_node_modules:
+  dev_data:

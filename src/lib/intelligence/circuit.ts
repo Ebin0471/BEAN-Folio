@@ -113,7 +113,18 @@ export function recordProviderFailure(providerId: string, message: string, trans
   const s = stateFor(providerId);
   s.consecutiveFailures += 1;
   s.lastError = message.slice(0, 200);
-  if (s.openedAt === null && s.consecutiveFailures >= CIRCUIT_FAILURE_THRESHOLD) {
+  if (s.openedAt !== null) {
+    // HALF-OPEN: the probe failed. Re-open the circuit with a FRESH cooldown
+    // and release the probe slot — the documented contract is "success closes
+    // the circuit, failure re-opens it". Without this branch the probe slot
+    // was never released and the breaker deadlocked forever (no request could
+    // ever be admitted to produce the success that would close it).
+    s.openedAt = Date.now();
+    s.probeInFlight = false;
+    logGatewayEvent({ event: "gateway.circuit", provider: providerId, outcome: "failure", error: `half-open probe failed, circuit re-opened: ${s.lastError}` });
+    return;
+  }
+  if (s.consecutiveFailures >= CIRCUIT_FAILURE_THRESHOLD) {
     s.openedAt = Date.now();
     s.probeInFlight = false;
     logGatewayEvent({ event: "gateway.circuit", provider: providerId, outcome: "failure", error: `circuit opened after ${s.consecutiveFailures} consecutive failures: ${s.lastError}` });

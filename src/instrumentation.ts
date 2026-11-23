@@ -36,6 +36,36 @@ export async function register(): Promise<void> {
     process.exit(1);
   }
 
+  // ---- Fatal-signal logging (D6 reliability hardening) ----
+  // Node's defaults already terminate the process on an uncaught exception /
+  // unhandled rejection; registering a handler SUPPRESSES that default, so we
+  // re-implement it explicitly: log one structured, value-free line, then
+  // exit non-zero. In dev we log without exiting so HMR cycles don't kill the
+  // server on a stray rejection inside a module being replaced.
+  const logFatal = (kind: string, reason: unknown) => {
+    console.error(
+      JSON.stringify({
+        event: `process.fatal.${kind}`,
+        message: reason instanceof Error ? reason.message : String(reason),
+        // Stack only in dev — production stacks can carry internal paths.
+        ...(process.env.NODE_ENV === "production" ? {} : { stack: reason instanceof Error ? reason.stack : undefined }),
+      })
+    );
+  };
+  if (process.env.NODE_ENV === "production") {
+    process.on("uncaughtException", (error) => {
+      logFatal("uncaught_exception", error);
+      process.exit(1);
+    });
+    process.on("unhandledRejection", (reason) => {
+      logFatal("unhandled_rejection", reason);
+      process.exit(1);
+    });
+  } else {
+    process.on("uncaughtException", (error) => logFatal("uncaught_exception", error));
+    process.on("unhandledRejection", (reason) => logFatal("unhandled_rejection", reason));
+  }
+
   // ---- Durable background-job worker (durable queue infrastructure) ----
   // Disabled explicitly with QUEUE_ENABLED=false (e.g. when a dedicated
   // `bun scripts/queue-drain.ts` worker owns the queue instead).
