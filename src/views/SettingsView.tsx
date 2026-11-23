@@ -36,6 +36,7 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 
 import { EmptyState } from "@/components/bean/EmptyState";
+import { IdentityWorkspaceSection } from "@/components/bean/settings/IdentityWorkspaceSection";
 import { SectionHeader } from "@/components/bean/SectionHeader";
 
 import { api, ApiError, formatDate } from "@/lib/client";
@@ -624,6 +625,9 @@ export default function SettingsView() {
             </p>
           </CardContent>
         </Card>
+
+        {/* 1b — Identities & Workspaces (M31) */}
+        <IdentityWorkspaceSection />
 
         {/* 2 — Privacy */}
         <Card>

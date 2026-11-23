@@ -16,6 +16,7 @@ import { Wordmark } from "@/components/bean/Wordmark";
 import { api } from "@/lib/client";
 import { navigate, takeReturnTo } from "@/lib/hash-router";
 import { useSession } from "@/lib/session";
+import { BEAN_IDENTITIES, IDENTITY_META, BeanIdentity } from "@/lib/identity";
 
 type Mode = "signin" | "register";
 
@@ -73,6 +74,9 @@ export default function AuthView() {
   const { user, loading, refresh } = useSession();
 
   const [mode, setMode] = useState<Mode>("signin");
+  // M31: identity chosen at registration (primary purpose). Required in the
+  // new UI; the API stays backwards-compatible without it.
+  const [identity, setIdentity] = useState<BeanIdentity | null>(null);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -201,9 +205,14 @@ export default function AuthView() {
           json: { email: email.trim(), password },
         });
       } else {
+        if (!identity) {
+          setServerError("Choose the identity that best describes your primary purpose — you can add more later in Settings.");
+          setBusy(false);
+          return;
+        }
         const res = await api<{ recoveryKey?: string }>("/api/auth/register", {
           method: "POST",
-          json: { email: email.trim(), password, name: name.trim() },
+          json: { email: email.trim(), password, name: name.trim(), identity },
         });
         if (res.recoveryKey) newRecoveryKey = res.recoveryKey;
       }
@@ -454,6 +463,44 @@ export default function AuthView() {
             {/* ------------------------------------------------- register */}
             <TabsContent value="register">
               <form onSubmit={onSubmit} className="mt-2 space-y-4" noValidate>
+                {/* M31: role-aware identity selection — which choice best
+                    describes the user's PRIMARY purpose. Additional
+                    identities and organization workspaces can be added later
+                    in Settings; nobody is locked into one role. */}
+                <fieldset className="space-y-2">
+                  <legend className="text-sm font-medium">What brings you to BEAN Folio?</legend>
+                  <p className="text-xs text-muted-foreground">
+                    Pick what best describes your primary purpose — you can add more profiles and workspaces later.
+                  </p>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    {BEAN_IDENTITIES.map((id) => {
+                      const meta = IDENTITY_META[id];
+                      const active = identity === id;
+                      return (
+                        <button
+                          key={id}
+                          type="button"
+                          aria-pressed={active}
+                          onClick={() => setIdentity(active ? null : id)}
+                          className={`rounded-xl border p-3 text-left transition-colors ${
+                            active
+                              ? "border-primary/60 bg-gold-soft/60"
+                              : "border-border/60 bg-background/40 hover:border-primary/40"
+                          }`}
+                        >
+                          <span className="block text-sm font-medium">{meta.label}</span>
+                          <span className="mt-0.5 block text-xs text-primary">{meta.tagline}</span>
+                          <span className="mt-1 block text-xs text-muted-foreground">{meta.examples}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {identity && (
+                    <p className="text-xs text-muted-foreground">
+                      {IDENTITY_META[identity].description}
+                    </p>
+                  )}
+                </fieldset>
                 <div className="space-y-1.5">
                   <Label htmlFor="register-name">Name</Label>
                   <Input
