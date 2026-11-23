@@ -70,6 +70,7 @@ jobs:
         run: |
           bun run scripts/seed-professions.ts
           bun run scripts/seed.ts
+          bun run scripts/restore-qa-fixtures.ts
       - name: per-file test run (cross-file isolation documented in scripts/ci/run-tests.sh)
         env:
           DATABASE_URL: file:/tmp/ci-db/custom.db

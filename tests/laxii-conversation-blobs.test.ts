@@ -26,21 +26,30 @@ const mediaRoot = mkdtempSync(join(tmpdir(), "bean-laxii-blobs-"));
 process.env.MEDIA_LOCAL_ROOT = mediaRoot;
 
 import { db } from "@/lib/db";
+import { hashPassword } from "@/lib/auth";
 import { putObject } from "@/lib/storage";
 import { deleteConversation } from "@/lib/laxii/conversations";
 
 const suffix = Date.now().toString(36);
-let userId: string;
-let otherUserId: string;
-const assetIds: string[] = [];
-const conversationIds: string[] = [];
+const createdUserIds: string[] = [];
 
 afterAll(async () => {
   // Cascades wipe conversations/messages/versions/assets created here.
-  if (userId) await db.user.delete({ where: { id: userId } }).catch(() => undefined);
-  if (otherUserId) await db.user.delete({ where: { id: otherUserId } }).catch(() => undefined);
+  // EVERY user created in this suite is removed — the repo-wide invariant
+  // test (auth.test.ts) requires zero malformed hash rows among live users.
+  for (const id of createdUserIds) {
+    await db.user.delete({ where: { id } }).catch(() => undefined);
+  }
   rmSync(mediaRoot, { recursive: true, force: true });
 });
+
+async function createFixtureUser(email: string): Promise<{ id: string }> {
+  const user = await db.user.create({
+    data: { email, passwordHash: await hashPassword("fixture-password"), name: "Blob Hygiene" },
+  });
+  createdUserIds.push(user.id);
+  return user;
+}
 
 async function seedConversationWithAsset(ownerId: string): Promise<{ conversationId: string; assetId: string; storagePath: string }> {
   const conversation = await db.laxiiConversation.create({ data: { userId: ownerId, title: "blob test" } });
@@ -65,17 +74,12 @@ async function seedConversationWithAsset(ownerId: string): Promise<{ conversatio
   await db.laxiiImageVersion.create({
     data: { messageId: message.id, conversationId: conversation.id, mediaId: asset.id },
   });
-  conversationIds.push(conversation.id);
-  assetIds.push(asset.id);
   return { conversationId: conversation.id, assetId: asset.id, storagePath };
 }
 
 describe("deleteConversation blob hygiene", () => {
   test("deleting a conversation removes orphaned asset rows AND the storage bytes", async () => {
-    const user = await db.user.create({
-      data: { email: `blob-hygiene-${suffix}@test.local`, passwordHash: "test", name: "Blob Hygiene" },
-    });
-    userId = user.id;
+    const user = await createFixtureUser(`blob-hygiene-${suffix}@test.local`);
     const { conversationId, storagePath } = await seedConversationWithAsset(user.id);
 
     // Blob exists before deletion.
@@ -93,10 +97,7 @@ describe("deleteConversation blob hygiene", () => {
   });
 
   test("an asset still referenced by another aggregate is KEPT (rows + bytes)", async () => {
-    const user = await db.user.create({
-      data: { email: `blob-keep-${suffix}@test.local`, passwordHash: "test", name: "Blob Keep" },
-    });
-    userId = user.id;
+    const user = await createFixtureUser(`blob-keep-${suffix}@test.local`);
     const project = await db.project.create({ data: { ownerId: user.id, title: "Keeper" } });
     const { conversationId, assetId, storagePath } = await seedConversationWithAsset(user.id);
     await db.projectMedia.create({ data: { projectId: project.id, mediaId: assetId } });
@@ -114,10 +115,7 @@ describe("deleteConversation blob hygiene", () => {
   });
 
   test("an asset shared with ANOTHER conversation is kept (cross-conversation reference)", async () => {
-    const user = await db.user.create({
-      data: { email: `blob-share-${suffix}@test.local`, passwordHash: "test", name: "Blob Share" },
-    });
-    userId = user.id;
+    const user = await createFixtureUser(`blob-share-${suffix}@test.local`);
     const first = await seedConversationWithAsset(user.id);
     const secondConversation = await db.laxiiConversation.create({
       data: { userId: user.id, title: "second" },
@@ -128,7 +126,6 @@ describe("deleteConversation blob hygiene", () => {
     await db.laxiiImageVersion.create({
       data: { messageId: secondMessage.id, conversationId: secondConversation.id, mediaId: first.assetId },
     });
-    conversationIds.push(secondConversation.id);
 
     await deleteConversation(user.id, first.conversationId);
 
@@ -139,14 +136,8 @@ describe("deleteConversation blob hygiene", () => {
   });
 
   test("ownership guard: another user cannot delete a conversation", async () => {
-    const owner = await db.user.create({
-      data: { email: `blob-owner-${suffix}@test.local`, passwordHash: "test", name: "Owner" },
-    });
-    const attacker = await db.user.create({
-      data: { email: `blob-attacker-${suffix}@test.local`, passwordHash: "test", name: "Attacker" },
-    });
-    userId = owner.id;
-    otherUserId = attacker.id;
+    const owner = await createFixtureUser(`blob-owner-${suffix}@test.local`);
+    const attacker = await createFixtureUser(`blob-attacker-${suffix}@test.local`);
     const { conversationId } = await seedConversationWithAsset(owner.id);
 
     const result = await deleteConversation(attacker.id, conversationId);
