@@ -30,6 +30,7 @@
 import { afterAll, afterEach, describe, expect, test } from "bun:test";
 
 import { db } from "../src/lib/db";
+import { hashPassword } from "../src/lib/auth";
 import { defaultConfig, normalizeConfig } from "../src/lib/site-config";
 import type { SiteConfig } from "../src/lib/site-config";
 import type { DesignPlan, PlanStep } from "../src/lib/ai-design/plan";
@@ -89,7 +90,7 @@ const EMAIL_B = `dgj-durable-b-${stamp}@test.beanfolio.local`;
 
 async function makeUser(email: string): Promise<User> {
   return db.user.create({
-    data: { email, passwordHash: "test-only-not-a-real-hash", name: "DesignJob Durable Test" },
+    data: { email, passwordHash: await hashPassword("mi1-fixture-password"), name: "DesignJob Durable Test" },
   });
 }
 
@@ -292,7 +293,7 @@ describe("durable job store — resume & stale recovery", () => {
     const fresh = await getJob(userA.id, job.id);
     expect(fresh!.status).toBe("completed");
     expect(fresh!.steps.map((s) => s.status)).toEqual(["done", "done"]);
-    expect(fresh!.events.some((e) => e.message.includes("Resumed after an interruption"))).toBe(true);
+    expect((fresh!.events ?? []).some((e) => e.message.includes("Resumed after an interruption"))).toBe(true);
   });
 
   test("a STALE active job (crashed worker) is recovered as failed on the next create — single-flight never dead-locks", async () => {
@@ -335,14 +336,14 @@ describe("durable job store — retry limits & backoff", () => {
 
     // A queued/completed job cannot be retried — only failed/cancelled ones.
     expect((await prepareRetry(job)).ok).toBe(false);
-    applyFailure(job, "boom", { backoff: false });
+    await applyFailure(job, "boom", { backoff: false });
 
     // First retry: allowed (no backoff recorded yet).
     expect((await prepareRetry(job)).ok).toBe(true);
     expect(job.attempt).toBe(1);
 
     // Simulate a second failure → backoff gate appears.
-    applyFailure(job, "boom", { backoff: true });
+    await applyFailure(job, "boom", { backoff: true });
     const gated = await prepareRetry(job);
     expect(gated.ok).toBe(false);
     expect(gated.code).toBe(429);
@@ -437,10 +438,10 @@ describe("durable job store — cancellation & events", () => {
     await runDesignJob(claimed, providerAlwaysOk, {}, { persist: persistJob });
 
     const fresh = await getJob(userA.id, job.id);
-    const messages = fresh!.events.map((e) => e.message);
+    const messages = (fresh!.events ?? []).map((e) => e.message);
     expect(messages).toContain("custom event before run");
-    expect(fresh!.events.some((e) => e.message.includes("Logged") && e.level === "info")).toBe(true);
-    expect(fresh!.events.every((e) => typeof e.ts === "number")).toBe(true);
+    expect((fresh!.events ?? []).some((e) => e.message.includes("Logged") && e.level === "info")).toBe(true);
+    expect((fresh!.events ?? []).every((e) => typeof e.ts === "number")).toBe(true);
   });
 });
 
