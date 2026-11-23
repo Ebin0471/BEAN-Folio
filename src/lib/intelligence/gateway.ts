@@ -393,3 +393,50 @@ export function gatewayStatus() {
     embedding: { available: false, note: "No embedding provider is configured on this deployment." },
   };
 }
+
+/**
+ * M31 — source-grounded web search through the same gateway client.
+ *
+ * Uses the platform SDK's web_search function (real results with URLs,
+ * titles, snippets and hosts). Server-side only, like every gateway call.
+ * Results are NEVER fabricated by this layer: what comes back from the
+ * search function is what the caller receives — an empty result set is
+ * reported as empty, not invented.
+ */
+export interface GatewaySearchResultItem {
+  url: string;
+  name: string;
+  snippet: string;
+  hostName: string;
+  rank: number;
+  date: string;
+}
+
+export async function gatewayWebSearch(params: {
+  query: string;
+  num?: number;
+  recencyDays?: number;
+  timeoutMs?: number;
+}): Promise<GatewaySearchResultItem[]> {
+  const zai = await getGatewayZai();
+  const results = (await withTimeout(
+    zai.functions.invoke("web_search", {
+      query: params.query,
+      ...(params.num !== undefined ? { num: params.num } : {}),
+      ...(params.recencyDays !== undefined ? { recency_days: params.recencyDays } : {}),
+    }) as unknown as Promise<{ url: string; name: string; snippet: string; host_name: string; rank: number; date: string }[]>,
+    params.timeoutMs ?? 15_000
+  )) as { url: string; name: string; snippet: string; host_name: string; rank: number; date: string }[];
+
+  return (Array.isArray(results) ? results : [])
+    .filter((r) => r && typeof r.url === "string" && typeof r.name === "string")
+    .slice(0, params.num ?? 8)
+    .map((r) => ({
+      url: r.url,
+      name: r.name,
+      snippet: typeof r.snippet === "string" ? r.snippet.slice(0, 500) : "",
+      hostName: typeof r.host_name === "string" ? r.host_name : "",
+      rank: typeof r.rank === "number" ? r.rank : 0,
+      date: typeof r.date === "string" ? r.date.slice(0, 40) : "",
+    }));
+}
