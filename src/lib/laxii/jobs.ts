@@ -75,8 +75,15 @@ export interface LaxiiJobSpec {
   promptBriefBase: string | null;
 }
 
-/** Messages currently being processed in this server instance. */
-const inFlight = new Set<string>();
+/**
+ * MI-1: the process-local in-flight Set is GONE. The durable RUNNING status
+ * on the LaxiiMessage row IS the claim (created before the worker starts,
+ * guarded before every terminal write) — it is visible to every instance and
+ * sweeps, so duplicate execution is prevented by the database, not by a Set
+ * only one process could see. Terminal writes below are status-guarded: a
+ * user cancellation can never be overwritten by a late DONE, and a finished
+ * job can never be re-failed.
+ */
 
 /** RUNNING messages older than this are considered dead (server restart). */
 const STALE_JOB_MS = 30 * 60 * 1000;
@@ -100,38 +107,67 @@ export function safeGenerationError(e: unknown): string {
 /**
  * Record the pending turn and start the in-process worker. Returns the
  * ASSISTANT message id — the job id the studio polls for.
+ *
+ * MI-1: the RUNNING-row claim is TRANSACTIONAL (check + create in one
+ * transaction), so two instances racing the same conversation cannot both
+ * start a generation — the database serializes the writers (SQLite) and the
+ * second caller sees the first caller's RUNNING row (PostgreSQL narrows the
+ * race to the read-committed window; the route's pre-check remains the
+ * user-facing fast path). Duplicate execution is prevented by the database,
+ * not by process-local coordination.
  */
-export async function startGenerationJob(spec: LaxiiJobSpec): Promise<{ messageId: string }> {
-  await db.laxiiMessage.create({
-    data: { conversationId: spec.conversationId, role: "USER", text: spec.userText },
+export async function startGenerationJob(
+  spec: LaxiiJobSpec,
+  opts: { /** Test seam: skip firing the in-process worker (coordination tests). */ launch?: boolean } = {}
+): Promise<{ messageId: string; duplicate: boolean }> {
+  const claimed = await db.$transaction(async (tx) => {
+    const running = await tx.laxiiMessage.findFirst({
+      where: { conversationId: spec.conversationId, status: "RUNNING" },
+      select: { id: true },
+    });
+    if (running) return { messageId: running.id, duplicate: true };
+
+    await tx.laxiiMessage.create({
+      data: { conversationId: spec.conversationId, role: "USER", text: spec.userText },
+    });
+
+    const pending = await tx.laxiiMessage.create({
+      data: {
+        conversationId: spec.conversationId,
+        role: "ASSISTANT",
+        text: "",
+        operation: spec.requestOperation,
+        status: "RUNNING",
+        metaJson: JSON.stringify({
+          aspect: spec.aspect,
+          refs: spec.referenceMediaIds,
+          pending: true,
+          startedAt: new Date().toISOString(),
+          intent: spec.intentKind ? { kind: spec.intentKind, source: spec.intentSource } : undefined,
+          style: spec.styleSlug ?? undefined,
+          briefTaskId: spec.briefTaskId ?? undefined,
+          banner: spec.bannerCanvas
+            ? { bannerKind: spec.bannerCanvas.presetSlug, width: spec.bannerCanvas.width, height: spec.bannerCanvas.height }
+            : undefined,
+        }),
+      },
+    });
+    return { messageId: pending.id, duplicate: false };
   });
 
-  const pending = await db.laxiiMessage.create({
-    data: {
-      conversationId: spec.conversationId,
-      role: "ASSISTANT",
-      text: "",
-      operation: spec.requestOperation,
-      status: "RUNNING",
-      metaJson: JSON.stringify({
-        aspect: spec.aspect,
-        refs: spec.referenceMediaIds,
-        pending: true,
-        startedAt: new Date().toISOString(),
-        intent: spec.intentKind ? { kind: spec.intentKind, source: spec.intentSource } : undefined,
-        style: spec.styleSlug ?? undefined,
-        briefTaskId: spec.briefTaskId ?? undefined,
-        banner: spec.bannerCanvas
-          ? { bannerKind: spec.bannerCanvas.presetSlug, width: spec.bannerCanvas.width, height: spec.bannerCanvas.height }
-          : undefined,
-      }),
-    },
-  });
+  if (claimed.duplicate) {
+    // The conversation's real generation is already running (another
+    // instance's worker owns it). Never fire a second engine for the same
+    // message — the caller sees the existing job id with duplicate: true.
+    return claimed;
+  }
 
-  inFlight.add(pending.id);
-  void processGenerationJob(spec, pending.id).finally(() => inFlight.delete(pending.id));
+  // The RUNNING row IS the durable claim: it exists before the worker starts
+  // (any instance's 409 duplicate guard sees it) and every terminal write
+  // below is status-guarded on it.
+  if (opts.launch !== false) void processGenerationJob(spec, claimed.messageId);
 
-  return { messageId: pending.id };
+  return claimed;
 }
 
 /**
@@ -346,8 +382,12 @@ async function processGenerationJob(spec: LaxiiJobSpec, messageId: string): Prom
       }
     }
 
-    await db.laxiiMessage.update({
-      where: { id: messageId },
+    // Terminal write, status-guarded (MI-1): a user cancellation that landed
+    // while the engine was still running is FINAL — the late DONE matches 0
+    // rows. The saved versions (already attached above) still surface in the
+    // thread; the user's cancel decision is never silently reversed.
+    const finalized = await db.laxiiMessage.updateMany({
+      where: { id: messageId, status: "RUNNING" },
       data: {
         status: "DONE",
         provider: result.provider,
@@ -378,6 +418,9 @@ async function processGenerationJob(spec: LaxiiJobSpec, messageId: string): Prom
         }),
       },
     });
+    if (finalized.count !== 1) {
+      log.info("laxii.job.final_skipped_cancelled", { messageId, message: "job was cancelled or swept while the engine ran; outputs remain attached" });
+    }
 
     // Non-critical bookkeeping (usage metering, title auto-naming, updatedAt):
     // the turn already committed as DONE with its versions — a failure here
@@ -425,9 +468,12 @@ async function processGenerationJob(spec: LaxiiJobSpec, messageId: string): Prom
     } else {
       log.error("laxii.job.unexpected_failure", { messageId, message: String(e instanceof Error ? e.message : e).slice(0, 300) });
     }
+    // Terminal failure write, status-guarded (MI-1): never re-fail a job that
+    // already reached DONE (or was cancelled) — a late engine error must not
+    // overwrite the truth.
     await db.laxiiMessage
-      .update({
-        where: { id: messageId },
+      .updateMany({
+        where: { id: messageId, status: "RUNNING" },
         data: { status: "FAILED", error: message.slice(0, 500) },
       })
       .catch(() => undefined);
