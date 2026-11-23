@@ -31,7 +31,18 @@ import { claimJob, getJob, persistJob, releaseLease, applyFailure, appendEvent, 
 import { runDesignJob, type StepProvider, type StepContext } from "@/lib/ai-design/execute";
 import { fetchPortfolioBlock } from "@/lib/ai-design/context";
 import { loadMaterialsForRequest, materialsBlock } from "@/lib/ai-design/ingest";
+import { aiComplete, AI_DEEP_TIMEOUT_MS } from "@/lib/ai";
 import { log } from "@/lib/logger";
+
+/**
+ * The provider for model-tool steps: deep reasoning, extended deadline. One
+ * shared instance for the routes AND the queue worker (identical behavior no
+ * matter which executor drives a chunk).
+ */
+export const designStepProvider: StepProvider = {
+  complete: (system, messages, opts) =>
+    aiComplete(system, messages, { ...opts, thinking: true, timeoutMs: AI_DEEP_TIMEOUT_MS }),
+};
 
 /** Wall-clock budget for ONE poll-driven chunk (stays under request deadlines). */
 export const TICK_BUDGET_MS = 40_000;
@@ -75,6 +86,9 @@ export async function resolveStepContext(user: User, job: DesignJob): Promise<St
   return ctx;
 }
 
+/** Wall-clock budget for ONE worker-driven pass over a design job. */
+export const DESIGN_DRIVE_BUDGET_MS = 3 * 60_000;
+
 export interface DriveResult {
   /** Terminal outcome, "yielded" (budget), or "unclaimable" (finished/leased). */
   status: "completed" | "failed" | "cancelled" | "yielded" | "unclaimable";
@@ -113,7 +127,7 @@ export async function driveJob(
       // Context loading or persistence failed — leave an honest failed state
       // with completed steps kept, never a phantom "queued" orphan.
       log.error("ai_design.job_crashed", { message: String(e instanceof Error ? e.message : e).slice(0, 300) });
-      applyFailure(job, "The execution stopped unexpectedly. You can retry the remaining steps.", { backoff: false });
+      await applyFailure(job, "The execution stopped unexpectedly. You can retry the remaining steps.", { backoff: false });
       appendEvent(job, "error", "Driver crashed while loading context or persisting progress.");
       await persistJob(job).catch(() => {});
       return { status: "failed" };

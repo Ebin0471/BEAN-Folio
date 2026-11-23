@@ -77,6 +77,40 @@ Schema migration on upgrade (additive-only policy — never destructive):
 docker compose --env-file .env.compose exec app bunx prisma db push --schema prisma/schema.postgres.prisma
 ```
 
+## 2.1 Multi-instance topology (MI-1 overlay)
+
+MI-1 closed the instance-local state gaps, so the app is CORRECT at N>1
+replicas for job state, cancellation, duplicate-execution prevention and
+restart recovery. The overlay ships reviewed, activation is explicit:
+
+```bash
+docker compose --env-file .env.compose \
+  -f docker-compose.yml -f docker-compose.multi.yml up -d --build
+```
+
+What it gives you (see `docker-compose.multi.yml` for the annotated file):
+
+- 3 app replicas sharing Postgres + the media/app-data volumes; Caddy
+  balances across all replicas via Docker DNS (`reverse_proxy app:3000`) —
+  no sticky sessions needed (SSE is plain HTTP).
+- Every replica runs the durable queue worker; status-guarded claims mean N
+  workers never double-execute a job (`BackgroundJob` + MI-1's
+  `ai.design-job` handler).
+- Health checks on every replica; the multi-instance env contract
+  (`RATE_LIMIT_BACKEND=postgres`, `CACHE_BACKEND=postgres`) is enforced by
+  the compose files and observable per-instance via `/api/metrics`.
+
+**Known single-writer exception (documented, not hidden):** CODE GIFTZ
+editing workspaces live on the shared `/app/data` volume — a task executed
+by replica B must be approved/reverted through the same replica until the
+workspace root moves to object storage. Either pin `/api/giftz/*` to one
+replica (LB cookie) or run the single-app compose. Details:
+`SCALING_ARCHITECTURE.md` §2 (register row 5).
+
+Live cross-instance proof (what MI-1 demonstrated): two real instances
+sharing one database — a job created on A observed and cancelled through B
+(`scripts/multi-instance-verify.ts`).
+
 ## 3. Multi-platform images (amd64 + arm64)
 
 Dependencies are pure-JS + Prisma engines (both arches published upstream), so

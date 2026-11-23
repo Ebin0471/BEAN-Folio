@@ -54,6 +54,32 @@ import {
 } from "../src/lib/ai-design/constraints";
 import { materialsBlock, MATERIAL_LIMITS } from "../src/lib/ai-design/ingest";
 
+// ---------------------------------------------------------------- fixtures
+// MI-1: the design-job store is the DURABLE DesignJob table — every job row
+// needs a real owner (FK). Each tag gets its own throwaway user (unique
+// email), created lazily and fully removed afterwards (cascade deletes the
+// job rows). Single-flight is per account, so each test keeps its own tag.
+import { afterAll } from "bun:test";
+import { db } from "../src/lib/db";
+import { hashPassword } from "../src/lib/auth";
+
+const __mi1Users = new Map<string, string>();
+async function uid(tag: string): Promise<string> {
+  const hit = __mi1Users.get(tag);
+  if (hit) return hit;
+  const email = `mi1-${tag.replace(/[^a-zA-Z0-9-]/g, "-")}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}@test.beanfolio.local`;
+  const user = await db.user.create({
+    data: { email, passwordHash: await hashPassword("mi1-fixture-password"), name: "MI-1 store test" },
+  });
+  __mi1Users.set(tag, user.id);
+  return user.id;
+}
+
+afterAll(async () => {
+  await db.user.deleteMany({ where: { id: { in: [...__mi1Users.values()] } } });
+});
+
+
 // ---------------------------------------------------------------- helpers
 
 function clone(c: SiteConfig): SiteConfig {
@@ -305,7 +331,7 @@ describe("execution pipeline", () => {
       step({ id: "s2", title: "Fill services", tool: "section.update", kind: "content", targets: [servicesId], summary: "Adds the service items.", instruction: "add two services", dependsOn: ["s1"] }),
     ]);
 
-    const job = createJob({ userId: "user-exec-1", plan: p, baseConfig: startNorm });
+    const job = await createJob({ userId: await uid("user-exec-1"), plan: p, baseConfig: startNorm });
     const outcome = await runDesignJob(job, provider);
 
     expect(outcome.status).toBe("completed");
@@ -328,7 +354,7 @@ describe("execution pipeline", () => {
     const p = plan([
       step({ id: "s1", title: "Rewrite hero", tool: "section.update", kind: "content", targets: [hero], summary: "Rewrites the hero.", instruction: "rewrite" }),
     ]);
-    const job = createJob({ userId: "user-exec-2", plan: p, baseConfig: cfg });
+    const job = await createJob({ userId: await uid("user-exec-2"), plan: p, baseConfig: cfg });
     const outcome = await runDesignJob(job, provider);
     expect(outcome.status).toBe("failed");
     expect(job.steps[0].status).toBe("failed");
@@ -354,7 +380,7 @@ describe("execution pipeline", () => {
       [step({ id: "s1", title: "Add flair", tool: "section.update", kind: "content", targets: [hero], summary: "Edits the hero.", instruction: "make it pop" })],
       [{ text: "leave the project grid untouched", targets: ["projects"] }]
     );
-    const job = createJob({ userId: "user-prompt-constraints-1", plan: p, baseConfig: cfg });
+    const job = await createJob({ userId: await uid("user-prompt-constraints-1"), plan: p, baseConfig: cfg });
     const outcome = await runDesignJob(job, provider);
     expect(outcome.status).toBe("completed");
     expect(seenSystems).toHaveLength(1);
@@ -370,7 +396,7 @@ describe("execution pipeline", () => {
         return { text: JSON.stringify({ changes: ["ok"], config: goodConfig }) };
       },
     };
-    const job2 = createJob({ userId: "user-prompt-constraints-2", plan: p2, baseConfig: cfg });
+    const job2 = await createJob({ userId: await uid("user-prompt-constraints-2"), plan: p2, baseConfig: cfg });
     await runDesignJob(job2, provider2);
     expect(seen2[0]).toContain("No explicit preservation constraints");
   });
@@ -392,7 +418,7 @@ describe("preservation constraints", () => {
       [{ text: "leave the project grid untouched", targets: ["projects"] }]
     );
 
-    const job = createJob({ userId: "user-constraints-1", plan: p, baseConfig: cfg });
+    const job = await createJob({ userId: await uid("user-constraints-1"), plan: p, baseConfig: cfg });
     const outcome = await runDesignJob(job, provider);
     expect(outcome.status).toBe("completed");
     expect(job.steps[0].status).toBe("repaired");
@@ -434,7 +460,7 @@ describe("failure, skip and retry", () => {
       step({ id: "s1", title: "Model step", tool: "section.update", kind: "content", targets: [hero], summary: "Will fail first.", instruction: "rewrite" }),
       step({ id: "s2", title: "Dependent step", tool: "theme.tokens", summary: "Depends on s1.", patch: { theme: { radius: "full" } }, dependsOn: ["s1"] }),
     ]);
-    const job = createJob({ userId: "user-retry-1", plan: p, baseConfig: cfg });
+    const job = await createJob({ userId: await uid("user-retry-1"), plan: p, baseConfig: cfg });
 
     const first = await runDesignJob(job, provider);
     expect(first.status).toBe("failed");
@@ -444,7 +470,13 @@ describe("failure, skip and retry", () => {
     expect(job.error).toContain("Model step");
     expect(job.error).toContain("section.update");
     expect(job.error).toContain("not a single JSON object");
-    expect(prepareRetry(job)).toBe(true);
+    // MI-1: a failed run stamps the exponential retry gate (retry
+    // backpressure — pinned by design-jobs-durable.test.ts). The test rewinds
+    // the gate to exercise the retry path itself; a real user either waits
+    // out the short window (the retry route reports retryAfterSeconds) or
+    // retries once it has passed.
+    job.nextAttemptAt = Date.now() - 1;
+    expect((await prepareRetry(job)).ok).toBe(true);
     expect(job.steps[0].status).toBe("pending");
     expect(job.steps[1].status).toBe("pending");
 
@@ -466,7 +498,7 @@ describe("cancellation", () => {
       step({ id: "s1", title: "First", tool: "theme.tokens", summary: "Runs.", patch: { theme: { accent: "#f2d076" } } }),
       step({ id: "s2", title: "Second", tool: "theme.tokens", summary: "Cancelled.", patch: { theme: { radius: "full" } } }),
     ]);
-    const job = createJob({ userId: "user-cancel-1", plan: p, baseConfig: cfg });
+    const job = await createJob({ userId: await uid("user-cancel-1"), plan: p, baseConfig: cfg });
     job.steps[0].status = "done"; // simulate the first step having completed
     job.cancelRequested = true;
     const outcome = await runDesignJob(job, providerNeverUsed);
@@ -483,17 +515,17 @@ describe("job ownership isolation", () => {
   test("another user can neither read nor control a job; single-flight is enforced", async () => {
     const cfg = base();
     const p = plan([step({ id: "s1", title: "T", tool: "theme.tokens", summary: "s", patch: { theme: { accent: "#f2d076" } } })]);
-    const job = createJob({ userId: "user-iso-A", plan: p, baseConfig: cfg });
+    const job = await createJob({ userId: await uid("user-iso-A"), plan: p, baseConfig: cfg });
 
-    expect(getJob("user-iso-B", job.id)).toBeNull();
-    expect(latestJob("user-iso-B")).toBeNull();
-    expect(requestCancel("user-iso-B", job.id)).toBe(false);
-    expect(latestJob("user-iso-A")?.id).toBe(job.id);
+    expect(await getJob(await uid("user-iso-B"), job.id)).toBeNull();
+    expect(((await latestJob(await uid("user-iso-B"))))).toBeNull();
+    expect(await requestCancel(await uid("user-iso-B"), job.id)).toBe(false);
+    expect(((await latestJob(await uid("user-iso-A"))))?.id).toBe(job.id);
 
     // still queued → a second create for the SAME user conflicts
-    expect(() => createJob({ userId: "user-iso-A", plan: p, baseConfig: cfg })).toThrow(JobConflictError);
+    await expect(createJob({ userId: await uid("user-iso-A"), plan: p, baseConfig: cfg })).rejects.toThrow(JobConflictError);
     // ...but a DIFFERENT user is unaffected
-    const other = createJob({ userId: "user-iso-B", plan: p, baseConfig: cfg });
+    const other = await createJob({ userId: await uid("user-iso-B"), plan: p, baseConfig: cfg });
     expect(other.id).not.toBe(job.id);
   });
 });
@@ -694,7 +726,7 @@ describe("create workflow — site.compose + materials", () => {
       step({ id: "s1", title: "Compose my custom website", tool: "site.compose", kind: "architecture", summary: "Builds the site.", instruction: "Minimal dark one-page site." }),
       step({ id: "s2", title: "Set the accent", tool: "theme.tokens", summary: "Applies the requested accent.", patch: { theme: { accent: "#b45309" } }, dependsOn: ["s1"] }),
     ]);
-    const job = createJob({ userId: "user-create-1", plan: p, baseConfig: cfg, materialIds: ["media-1", "media-2"] });
+    const job = await createJob({ userId: await uid("user-create-1"), plan: p, baseConfig: cfg, materialIds: ["media-1", "media-2"] });
     expect(job.materialIds).toEqual(["media-1", "media-2"]);
     const outcome = await runDesignJob(job, provider, {});
     expect(outcome.status).toBe("completed");

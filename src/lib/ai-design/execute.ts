@@ -18,7 +18,7 @@ import { getPalette } from "@/lib/site-palettes";
 import { parseJsonFromText, type AiMessage } from "@/lib/ai";
 import type { DesignPatch, PlanStep } from "@/lib/ai-design/plan";
 import type { DesignJob } from "@/lib/ai-design/jobs";
-import { touch } from "@/lib/ai-design/jobs";
+import { touch, appendEvent, nextRetryBackoffMs } from "@/lib/ai-design/jobs";
 import { resolvedConstraintTargets, checkConstraints, restorePreserved, type ResolvedConstraintTarget } from "@/lib/ai-design/constraints";
 import { buildVerificationReport, type VerificationReport } from "@/lib/ai-design/verify";
 import { summarizeChanges } from "@/lib/ai-design/diff";
@@ -410,7 +410,7 @@ export interface RunOutcome {
  */
 export interface RunOptions {
   budgetMs?: number;
-  persist?: (job: DesignJob) => Promise<void> | void;
+  persist?: (job: DesignJob) => void | Promise<unknown>;
   recheckCancel?: () => Promise<boolean>;
 }
 
@@ -444,8 +444,18 @@ export function describeFailedSteps(job: DesignJob): string {
 export async function runDesignJob(job: DesignJob, provider: StepProvider, stepContext: StepContext = {}, opts: RunOptions = {}): Promise<RunOutcome> {
   job.status = "running";
   touch(job);
+  // Crash recovery (durable store): a step left "running" by a dead executor
+  // is reset and re-run from its start on the next claim — never silently
+  // lost, never double-applied (steps are idempotent by construction).
+  if (job.steps.some((s) => s.status === "running")) {
+    for (const s of job.steps) if (s.status === "running") s.status = "pending";
+    appendEvent(job, "warn", "Resumed after an interruption — the interrupted step re-runs from its start.");
+    touch(job);
+  }
   const constraintTargets = resolvedConstraintTargets(job.plan, digestShape(job.baseConfig));
-  const budgetDeadline = opts.budgetMs ? Date.now() + opts.budgetMs : null;
+  // `budgetMs: 0` is a legitimate "yield before the first step" budget —
+  // check explicitly instead of by truthiness.
+  const budgetDeadline = opts.budgetMs !== undefined ? Date.now() + opts.budgetMs : null;
 
   for (const step of job.steps) {
     const cancelFlagged = job.cancelRequested || (opts.recheckCancel ? await opts.recheckCancel().catch(() => false) : false);
@@ -454,6 +464,10 @@ export async function runDesignJob(job: DesignJob, provider: StepProvider, stepC
       job.status = "cancelled";
       job.error = "Cancelled at your request — completed steps are kept in the preview.";
       touch(job);
+      // Terminal state is persisted through the SAME durable store the driver
+      // uses (the job may be executed by a worker on another instance) plus
+      // the additive AgentTask shadow for history.
+      if (opts.persist) await Promise.resolve(opts.persist(job)).catch(() => {});
       void persistDesignJobTerminalState(job);
       return { status: "cancelled", failedSteps: 0 };
     }
@@ -504,6 +518,14 @@ export async function runDesignJob(job: DesignJob, provider: StepProvider, stepC
       step.error = e instanceof StepError ? e.message : "The step failed while applying changes. You can retry from here.";
       touch(job);
     }
+    // Structured execution log, persisted per step with the job (bounded).
+    appendEvent(
+      job,
+      step.status === "failed" ? "error" : "info",
+      step.status === "failed"
+        ? `Step "${step.title}" failed: ${step.error ?? "unknown error"}`
+        : `Step "${step.title}" ${step.status}.`
+    );
     // Per-step progress persistence (driver lease model: whoever can execute
     // drives progress; a vanished poll never loses completed work).
     if (opts.persist) await Promise.resolve(opts.persist(job)).catch(() => {});
@@ -516,7 +538,11 @@ export async function runDesignJob(job: DesignJob, provider: StepProvider, stepC
     job.status = "failed";
     job.error = describeFailedSteps(job);
     job.verification = buildVerificationReport(job.baseConfig, job.working, constraintTargets);
+    // Retry backpressure: a failed run stamps the exponential gate so a
+    // failing job cannot hammer the provider via immediate retries.
+    job.nextAttemptAt = Date.now() + nextRetryBackoffMs(job.attempt ?? 0);
     touch(job);
+    if (opts.persist) await Promise.resolve(opts.persist(job)).catch(() => {});
     void persistDesignJobTerminalState(job);
     return { status: "failed", failedSteps: failed };
   }
@@ -525,6 +551,7 @@ export async function runDesignJob(job: DesignJob, provider: StepProvider, stepC
   job.verification = buildVerificationReport(job.baseConfig, job.working, constraintTargets);
   if (skipped > 0) job.error = `${skipped} step${skipped === 1 ? " was" : "s were"} skipped because an earlier step failed previously.`;
   touch(job);
+  if (opts.persist) await Promise.resolve(opts.persist(job)).catch(() => {});
   void persistDesignJobTerminalState(job);
   return { status: "completed", failedSteps: 0 };
 }
