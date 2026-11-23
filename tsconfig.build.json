@@ -1,0 +1,50 @@
+{
+  "//": "BUILD type-check config — used by `next build` via next.config.ts typescript.tsconfigPath. IDENTICAL to tsconfig.json except: tests/ and scripts/ are excluded from the BUILD type-check (they are never part of the server artifact, and type-checking them inside `next build` pushed builds past 4 GB on modest container hosts — measured: the build worker was SIGKILLed three times at ~2 GB heap on a 4 GB cgroup). The FULL repository (tests included) is type-checked by `bunx tsc --noEmit` on tsconfig.json as its own gate — CI runs it on every push, so this relocation is a memory fix, not a check removal.",
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext"
+    ],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "noImplicitAny": false,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "paths": {
+      "@/*": [
+        "./src/*"
+      ]
+    }
+  },
+  "include": [
+    "next-env.d.ts",
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "*.ts",
+    "*.tsx",
+    ".next/types/**/*.ts",
+    ".next/dev/types/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "skills",
+    "examples",
+    "data",
+    "scripts",
+    "tests"
+  ]
+}
