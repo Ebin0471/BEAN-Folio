@@ -25,7 +25,7 @@ browser ──HTTPS──▶ reverse proxy (TLS termination, e.g. Caddy/nginx)
 ```
 
 - Single instance is the supported default (in-memory rate limiting).
-- Multiple instances: set `RATE_LIMIT_BACKEND=db` so every instance counts
+- Multiple instances: set `RATE_LIMIT_BACKEND=postgres` so every instance counts
   against the same fixed-window buckets (`RateLimitBucket` table).
 
 ## 2. PostgreSQL
@@ -46,7 +46,7 @@ browser ──HTTPS──▶ reverse proxy (TLS termination, e.g. Caddy/nginx)
      (M22 verified it: integrity ok, 0 FK violations, 15/15 query-shape
      smoke tests).
 3. Verify: `bun run scripts/check-postgres-schema-readiness.ts` must **exit 0**
-   (expected inventory: the parity-verified 85-model schema incl. `AgentTask`, `GiftzRepository`,
+   (expected inventory: the parity-verified 100-model schema incl. `AgentTask`, `GiftzRepository`,
    `AgentArtifact`, `RateLimitBucket`, their indexes and FKs).
 4. `DATABASE_URL="postgresql://user:pass@host:5432/beanfolio?sslmode=require"`.
    Never hand-type the URL — copy it from the provider dashboard (see
