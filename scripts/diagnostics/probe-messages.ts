@@ -12,7 +12,7 @@ const req = (p: string, init?: any) => new NextRequest(`http://localhost:3000${p
 const conv = await conversationsRoute(req("/api/laxii/conversations", { method: "POST", json: {} }));
 const body = await conv.json();
 console.log("conv:", conv.status, body?.conversation?.id);
-const r = await messagesRoute(req(`/api/laxii/conversations/${body.conversation.id}/messages`, { method: "POST", json: { text: "x".repeat(16000), operation: "GENERATE" } }));
+const r = await messagesRoute(req(`/api/laxii/conversations/${body.conversation.id}/messages`, { method: "POST", json: { text: "x".repeat(16000), operation: "GENERATE" } }), { params: Promise.resolve({ id: body.conversation.id }) });
 console.log("messages:", r.status, JSON.stringify(await r.json()).slice(0, 500));
 await db.user.deleteMany({ where: { id: u.id } });
 process.exit(0);
