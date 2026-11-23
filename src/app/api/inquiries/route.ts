@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth";
+import { requiresEmailVerification } from "@/lib/identity";
 import { handler, ok, err, ERR, parseBody, rateLimit } from "@/lib/api-helpers";
 import { toPublicPerson } from "@/lib/serialize";
 import type { InquiryDTO } from "@/lib/types";
@@ -58,6 +59,14 @@ function toInquiryDTO(row: InquiryRow, meId: string): InquiryDTO {
 export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
   const user = await getSessionUser();
   if (!user) return ERR.unauthorized();
+
+  // M31 trust gate: identity-aware accounts must verify their email before
+  // trust-sensitive actions (external outreach / invitations / candidate
+  // contact). Legacy accounts (primaryIdentity = null) and demo fixtures are
+  // outside the gate — existing behavior is exactly preserved.
+  if (requiresEmailVerification(user)) {
+    return err("Verify your email address before performing this action", 403, "EMAIL_VERIFICATION_REQUIRED");
+  }
 
   if (!rateLimit(`inq:${user.id}`, 10, 3_600_000)) return ERR.rateLimited();
 
