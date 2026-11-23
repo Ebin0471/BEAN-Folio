@@ -4,6 +4,12 @@ Status: **architecture defined, Tier A/B proven locally, Tier C (100k) NOT
 measured — requires the topology in §6.** This document separates what is
 MEASURED (with evidence) from what is DESIGNED (with exact activation steps).
 
+> **MI-1 update (multi-instance state readiness):** the three load-bearing
+> instance-local state gaps (AI design jobs, GIFTZ cancel/in-flight sets,
+> LAXII in-flight coordination) are CLOSED — see §2. The application is now
+> correct at N>1 replicas for job state, cancellation, duplicate-execution
+> prevention and restart recovery. §2 keeps the register with its evidence.
+
 ## 1. What is already multi-instance-safe (measured / code-verified)
 
 | Concern | Mechanism | Evidence |
@@ -16,19 +22,63 @@ MEASURED (with evidence) from what is DESIGNED (with exact activation steps).
 | Published GIFTZ sites | DB JSON artifacts (not instance-local files) | `public/[...path]/route.ts` |
 | Realtime | SSE (stateless HTTP) — LB-friendly; no sticky sessions needed | `api/ai/chat-stream/route.ts` |
 | Graceful shutdown | SIGTERM → queue drain, 27 s hard cap | `src/instrumentation.ts` |
+| **Design-job state (MI-1)** | Durable `DesignJob` table: shared store, claim lease, durable cancel, retry budget, per-step persistence, queue-driven execution (`ai.design-job` handler) | `src/lib/ai-design/jobs.ts`, `tests/design-jobs-durable.test.ts` |
+| **GIFTZ task coordination (MI-1)** | Durable `AgentTask.cancelRequestedAt` + status-guarded transitions + guarded launch claims (no process-local Sets) | `src/lib/giftz/jobs.ts`, `tests/giftz-cross-instance.test.ts` |
+| **LAXII job coordination (MI-1)** | RUNNING row IS the claim (transactional check+create); all terminal writes status-guarded (cancel is final, DONE never overwrites cancel) | `src/lib/laxii/jobs.ts`, `src/lib/laxii/service.ts`, `tests/laxii-job-state.test.ts` |
 
-## 2. Known instance-local state (the load-bearing gaps for >1 replica)
+## 2. Instance-local state register (post-MI-1)
 
-| Gap | Location | Effect at N>1 | Remediation plan |
+| Gap | Location | Status | Evidence / remaining note |
 |---|---|---|---|
-| AI design jobs in-memory Map | `src/lib/ai-design/jobs.ts:61-62` | Poll lands on another instance → job not found | Move execution onto the durable `BackgroundJob` queue (handler + idempotency by `AgentTask.id`); terminal-state shadow already persists |
-| GIFTZ task cancel/in-flight sets | `src/lib/giftz/jobs.ts:60-71` | Cancel hits instance B; task runs to completion on A | Persist `cancelRequestedAt` on the task row; workers poll the flag instead of a local Set |
-| LAXII in-flight set | `src/lib/laxii/jobs.ts:79` | Duplicate execution risk on retry storms | Claim the message row (status-guarded update) like the queue does |
-| Circuit breakers per-instance | `src/lib/intelligence/circuit.ts:34-43` | N× provider burst before each instance trips | Acceptable first (per-user quotas bound spend); optional shared breaker in Postgres later |
-| Editing workspaces on local disk | `src/lib/giftz/workspace.ts:27` | Workspace only exists on the instance that created it | Single-writer tier: sticky route via LB, or move workspaces to S3 driver (same `storage.ts` seam) |
+| AI design jobs in-memory Map | `src/lib/ai-design/jobs.ts` | **CLOSED (MI-1)** — job state is the durable `DesignJob` table; execution moved onto the durable `BackgroundJob` queue (`ai.design-job` handler); claim lease + heartbeat + stale recovery + retry budget | `tests/design-jobs-durable.test.ts` (14 tests); live two-instance HTTP proof in `scripts/multi-instance-verify.ts` |
+| GIFTZ task cancel/in-flight sets | `src/lib/giftz/jobs.ts` | **CLOSED (MI-1)** — `cancelRequestedAt` on the task row; runners poll it at step boundaries; every runner transition active-guarded; approve/retry claims via guarded update | `tests/giftz-cross-instance.test.ts` (5 tests) |
+| LAXII in-flight set | `src/lib/laxii/jobs.ts` | **CLOSED (MI-1)** — the write-only Set removed; RUNNING row is the transactional claim; terminal writes status-guarded (cancel final; DONE never resurrects) | `tests/laxii-job-state.test.ts` (6 tests) |
+| Circuit breakers per-instance | `src/lib/intelligence/circuit.ts` | ACCEPTED (per-user quotas bound spend) | Optional shared breaker in Postgres later — evidence-driven |
+| Editing workspaces on local disk | `src/lib/giftz/workspace.ts` | ACCEPTED for Tier A/B | Single-writer tier: sticky route via LB for `/api/giftz/*`, or move workspaces to the S3 driver (`storage.ts` seam) before replicas>1 serve GIFTZ editing |
 
-**Until these land, run exactly ONE app replica** (the shipped compose does)
-and scale vertically. Nothing above is hypothetical: each row names its file.
+**Multi-instance run rule after MI-1:** job/state coordination is safe at
+N>1 replicas with `RATE_LIMIT_BACKEND=postgres` + `CACHE_BACKEND=postgres`
+(the shipped compose sets both). The ONLY remaining single-writer surface is
+the GIFTZ editing workspace on disk (row 5) — keep GIFTZ editing traffic on
+one replica or activate the S3 workspace driver before serving it from >1.
+
+### 2.1 Rate limiting — distributed enforcement recommendation (OWNER DECISION REQUIRED)
+
+**Evidence (read from code, not assumed):**
+
+- `src/lib/rate-limit-backend.ts` ships TWO interchangeable backends with
+  IDENTICAL fixed-window semantics: the default `memory` backend
+  (per-instance, 5,000-bucket cap with prune) and the `postgres` shared
+  backend (`RateLimitBucket` upsert, PII-hashed keys, opportunistic prune).
+- `hitRateLimit()` is resilient: if the shared backend fails, the call falls
+  back to memory for that request and logs `ratelimit.backend_fallback` —
+  limits are enforced per-instance rather than disabled.
+- `/api/metrics` exposes the ACTIVE backend identity per instance
+  (`bean_rate_limit_backend`) — the fleet-wide scaling tell is already
+  observable.
+- The shipped production compose sets `RATE_LIMIT_BACKEND: postgres` (and
+  `CACHE_BACKEND: postgres`) — the verified multi-instance configuration is
+  already the default in the reviewed deployment artifact.
+- `docker-compose.multi.yml` (MI-1) repeats both — a replica set that forgot
+  them would still be caught by the metrics tell and by the documented
+  startup validation (invalid values refuse to boot).
+
+**Recommendation (requires explicit owner approval — security-sensitive
+default, MILESTONE_EXECUTION_PROTOCOL §3.4):** at N>1 instances the memory
+backend is UNSUITABLE for consistent enforcement (each instance counts
+separately, so the effective limit multiplies by N). The evidence supports
+flipping the DEFAULT to `postgres` once Postgres is the primary database —
+the per-request cost is one indexed upsert and the fallback keeps requests
+flowing if the shared bucket write ever fails. This milestone deliberately
+DOES NOT make that change: it is a security-sensitive default change and
+stays behind the approval gate. Until approved, multi-instance deployments
+MUST set `RATE_LIMIT_BACKEND=postgres` explicitly (the compose artifacts
+already do), and `docker-compose.multi.yml` ships with it.
+
+**Deliberately NOT changed here (owner-gated):** scrypt parameters
+(N=16384 — below OWASP 2024 guidance, a documented M-7 finding) remain
+untouched; changing them re-locks every existing account or requires a
+rehash-on-login migration — a separate owner decision.
 
 ## 3. Measured envelope (2026-11-23 campaign — 2 vCPU / 3.9 GiB sandbox, SQLite)
 
