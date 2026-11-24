@@ -30,6 +30,7 @@ import { killTaskChildren, runCommand, validateCommand } from "./commands";
 import { readArtifactBytes } from "@/lib/intelligence/artifacts";
 import {
   ACTIVE_STATUSES,
+  isActiveStatus,
   isTerminalStatus,
   type CommandRun,
   type EngineeringPlan,
@@ -53,29 +54,37 @@ export const MAX_ATTEMPTS = 3;
 export const MAX_REPAIRS = 1;
 
 // ---------------------------------------------------------------------------
-// In-flight runner registry (this process only) + cancel flags
+// Cross-instance coordination (MI-1) — NO process-local state.
+//
+// The previous in-flight registry + cancel-flag Sets lived in this process
+// only: a cancellation issued through instance B never reached the runner on
+// instance A (and A's unguarded writes could resurrect a CANCELLED task).
+// Coordination now lives entirely on the durable AgentTask row:
+//
+//  - Cancellation: `cancelRequestedAt` (additive column) is stamped by ANY
+//    instance's cancel endpoint; every runner polls it at step boundaries
+//    and hard-kills its own command children there.
+//  - Execution exclusion: launch/retry CLAIM the row with a status-guarded
+//    updateMany (exactly one concurrent caller wins — same pattern as the
+//    durable queue).
+//  - Terminal honesty: every runner transition is guarded to ACTIVE
+//    statuses, so a cancelled/completed/failed task can never be
+//    resurrected by a stale or cross-instance runner.
+//  - `runningChildren` (commands.ts) remains instance-local BY DESIGN: it
+//    holds live child process handles, which only exist where they were
+//    spawned; the durable flag routes the kill to the owning runner.
 // ---------------------------------------------------------------------------
 
-const g = globalThis as unknown as {
-  __giftzInFlight?: Set<string>;
-  __giftzCancelRequested?: Set<string>;
-};
-g.__giftzInFlight ??= new Set<string>();
-g.__giftzCancelRequested ??= new Set<string>();
+/** Statuses a user cancel/reject may still act on (runner states + approval). */
+const CANCELLABLE_STATUSES: string[] = [...ACTIVE_STATUSES, "AWAITING_APPROVAL"];
 
-function inFlight(): Set<string> {
-  return g.__giftzInFlight!;
-}
-function cancelFlags(): Set<string> {
-  return g.__giftzCancelRequested!;
-}
-
-export function isTaskInFlight(taskId: string): boolean {
-  return inFlight().has(taskId);
-}
-
-export function isCancelRequested(taskId: string): boolean {
-  return cancelFlags().has(taskId);
+/** Durable, cross-instance cancellation check (polled at every boundary). */
+async function isCancelRequested(taskId: string): Promise<boolean> {
+  const row = await db.agentTask.findUnique({
+    where: { id: taskId },
+    select: { cancelRequestedAt: true },
+  });
+  return Boolean(row?.cancelRequestedAt);
 }
 
 // ---------------------------------------------------------------------------
@@ -115,13 +124,20 @@ function parseResult(raw: string | null): TaskResult | null {
   }
 }
 
+/**
+ * Runner-owned lifecycle transition — GUARDED: only a task still in an
+ * active runner status can be written. A user cancellation (or any terminal
+ * outcome) that landed meanwhile can never be overwritten: the runner's
+ * stale write matches 0 rows and is dropped. Returns true when this caller
+ * won the transition.
+ */
 async function transition(
   taskId: string,
   status: string,
   patch: { steps?: LifecycleStep[]; result?: TaskResult; error?: string } = {},
-): Promise<void> {
-  await db.agentTask.update({
-    where: { id: taskId },
+): Promise<boolean> {
+  const res = await db.agentTask.updateMany({
+    where: { id: taskId, status: { in: [...ACTIVE_STATUSES] } },
     data: {
       status,
       ...(patch.steps ? { stepsJson: JSON.stringify(patch.steps) } : {}),
@@ -129,6 +145,7 @@ async function transition(
       ...(patch.error !== undefined && patch.error !== null ? { error: patch.error.slice(0, 300) } : {}),
     },
   });
+  return res.count === 1;
 }
 
 function upsertStep(steps: LifecycleStep[], step: string, status: LifecycleStep["status"], note?: string): LifecycleStep[] {
@@ -201,7 +218,8 @@ export async function createEngineeringTask(input: CreateTaskInput): Promise<Cre
     },
   });
 
-  // Fire-and-forget the analysis+planning phase; every transition is durable.
+  // Fire-and-forget the analysis+planning phase; every transition is durable
+  // AND guarded (a cancelled task can never be resurrected by this runner).
   void runPlanningPhase(task.id, userId, repoId, request.trim(), input.provider ?? createGatewayGiftzProvider(userId))
     .catch(async (error) => {
       const steps = parseSteps((await db.agentTask.findUnique({ where: { id: task.id }, select: { stepsJson: true } }))?.stepsJson ?? "[]");
@@ -209,22 +227,18 @@ export async function createEngineeringTask(input: CreateTaskInput): Promise<Cre
         steps: upsertStep(steps, "plan", "failed", error instanceof Error ? error.message : "planning failed"),
         error: error instanceof Error ? error.message : "planning failed",
       }).catch(() => undefined);
-    })
-    .finally(() => inFlight().delete(task.id));
+    });
 
   return { taskId: task.id, status: "QUEUED" };
 }
 
 async function runPlanningPhase(taskId: string, userId: string, repoId: string, request: string, provider: GiftzStepProvider): Promise<void> {
-  inFlight().add(taskId);
-  cancelFlags().delete(taskId);
-
   let steps = await loadSteps(taskId);
   const result = loadResultSync(await loadResultRaw(taskId)) ?? emptyResult(request);
 
   // ANALYZING — deterministic repository inspection.
   await transition(taskId, "ANALYZING", { steps: upsertStep(steps, "inspect", "running") });
-  if (isCancelRequested(taskId)) return finishCancelled(taskId, steps, result);
+  if (await isCancelRequested(taskId)) return finishCancelled(taskId, steps, result);
   const digest = inspectRepository(repoId);
   result.inspection = digest;
   steps = upsertStep(steps, "inspect", "done", `${digest.fileCount} files`);
@@ -232,7 +246,7 @@ async function runPlanningPhase(taskId: string, userId: string, repoId: string, 
 
   // PLANNING — schema-validated with one bounded structured repair.
   await transition(taskId, "PLANNING", { steps: upsertStep(steps, "plan", "running") });
-  if (isCancelRequested(taskId)) return finishCancelled(taskId, steps, result);
+  if (await isCancelRequested(taskId)) return finishCancelled(taskId, steps, result);
 
   const planRaw = await provider.plan({ request, digest });
   const outcome = await parsePlanWithRepair(planRaw, { digest, requiredCreates: result.linkedArtifact?.assetTargets }, async (issues, previousRaw) => {
@@ -275,7 +289,11 @@ function safeJson(raw: string): unknown {
 }
 
 async function finishCancelled(taskId: string, steps: LifecycleStep[], result: TaskResult): Promise<void> {
-  cancelFlags().delete(taskId);
+  // Hard kill of any command children spawned by THIS instance (a runner on
+  // another instance observes the same durable flag and kills its own).
+  killTaskChildren(taskId);
+  // Guarded: if the user's cancel already terminal-stamped the row, this
+  // cooperative boundary is a no-op — never a resurrection.
   await transition(taskId, "CANCELLED", { steps: upsertStep(steps, "plan", "skipped", "cancelled"), result }).catch(() => undefined);
 }
 
@@ -291,7 +309,8 @@ export async function approveAndExecuteTask(input: { userId: string; taskId: str
   await launchExecution(task, input.userId, input.provider ?? createGatewayGiftzProvider(input.userId));
 }
 
-/** Shared launcher for approve AND retry: validates state, stamps EXECUTING, fires the runner. */
+/** Shared launcher for approve AND retry: CLAIMS the row (one winner across
+ * all instances and racing double-clicks), stamps EXECUTING, fires the runner. */
 async function launchExecution(task: AgentTask, userId: string, provider: GiftzStepProvider): Promise<void> {
   const result = parseResult(task.resultJson);
   if (!result?.plan) throw new GiftzTaskError("Task has no validated plan to execute", 409, task.id);
@@ -303,20 +322,39 @@ async function launchExecution(task: AgentTask, userId: string, provider: GiftzS
   }
 
   const steps = parseSteps(task.stepsJson);
-  await transition(task.id, "EXECUTING", {
-    steps: upsertStep(steps, "execute", "running"),
-    result: { ...result, attempts: (result.attempts ?? 0) + 1 },
+  const nextSteps = upsertStep(steps, "execute", "running");
+  const nextResult: TaskResult = { ...result, attempts: (result.attempts ?? 0) + 1 };
+  // THE CLAIM — one status-guarded update. Exactly one caller (instance or
+  // racing double-click) flips the row from its pre-execution status to
+  // EXECUTING; every other caller matches 0 rows and is refused. A fresh
+  // attempt never inherits a stale cancellation stamp.
+  const won = await db.agentTask.updateMany({
+    where: { id: task.id, userId, status: task.status },
+    data: {
+      status: "EXECUTING",
+      stepsJson: JSON.stringify(nextSteps),
+      resultJson: JSON.stringify(nextResult),
+      cancelRequestedAt: null,
+      error: null,
+    },
   });
+  if (won.count !== 1) {
+    const fresh = await db.agentTask.findUnique({ where: { id: task.id }, select: { status: true } });
+    throw new GiftzTaskError(
+      `Task is ${fresh?.status ?? task.status}; only ${task.status} tasks can start execution`,
+      409,
+      task.id
+    );
+  }
 
-  void runExecutionPhase(task.id, userId, task.repoId, result.request, provider)
+  void runExecutionPhase(task.id, userId, task.repoId, nextResult.request, provider)
     .catch(async (error) => {
       const cur = parseSteps((await db.agentTask.findUnique({ where: { id: task.id }, select: { stepsJson: true } }))?.stepsJson ?? "[]");
       await transition(task.id, "FAILED", {
         steps: upsertStep(cur, "execute", "failed", error instanceof Error ? error.message : "execution crashed"),
         error: error instanceof Error ? error.message : "execution crashed",
       }).catch(() => undefined);
-    })
-    .finally(() => inFlight().delete(task.id));
+    });
 }
 
 function workspaceDirExists(repoId: string): boolean {
@@ -328,7 +366,6 @@ function workspaceDirExists(repoId: string): boolean {
 }
 
 async function runExecutionPhase(taskId: string, userId: string, repoId: string, request: string, provider: GiftzStepProvider): Promise<void> {
-  inFlight().add(taskId);
   const task = await db.agentTask.findUnique({ where: { id: taskId } });
   if (!task) return;
   const result = parseResult(task.resultJson) ?? emptyResult(request);
@@ -344,7 +381,7 @@ async function runExecutionPhase(taskId: string, userId: string, repoId: string,
 
   // 1) File steps — validated, plan-scoped writes only.
   for (const step of plan.steps) {
-    if (isCancelRequested(taskId)) return finishCancelled(taskId, steps, result);
+    if (await isCancelRequested(taskId)) return finishCancelled(taskId, steps, result);
     if (step.kind === "inspect") continue;
     if (step.kind === "run_command") continue;
 
@@ -399,7 +436,7 @@ async function runExecutionPhase(taskId: string, userId: string, repoId: string,
   const testRuns: CommandRun[] = [];
   let sawFailure = false;
   for (const command of commands) {
-    if (isCancelRequested(taskId)) return finishCancelled(taskId, steps, result);
+    if (await isCancelRequested(taskId)) return finishCancelled(taskId, steps, result);
     let validated;
     try {
       validated = validateCommand({ label: command.label, argv: command.argv }, packageScripts);
@@ -504,7 +541,16 @@ export async function rejectTask(userId: string, taskId: string, reason?: string
     throw new GiftzTaskError(`Task is ${task.status}; only plans awaiting approval can be rejected`, 409, task.id);
   }
   const steps = upsertStep(parseSteps(task.stepsJson), "approve", "failed", "rejected by the user");
-  await transition(task.id, "CANCELLED", { steps, error: reason?.slice(0, 300) ?? "Rejected by the user" });
+  // Guarded: only a row still AWAITING_APPROVAL can be rejected (a racing
+  // approve/cancel on another instance wins, this matches 0 rows).
+  const won = await db.agentTask.updateMany({
+    where: { id: task.id, userId, status: "AWAITING_APPROVAL" },
+    data: { status: "CANCELLED", stepsJson: JSON.stringify(steps), error: reason?.slice(0, 300) ?? "Rejected by the user" },
+  });
+  if (won.count !== 1) {
+    const fresh = await db.agentTask.findUnique({ where: { id: task.id }, select: { status: true } });
+    throw new GiftzTaskError(`Task is ${fresh?.status ?? task.status}; only plans awaiting approval can be rejected`, 409, task.id);
+  }
 }
 
 export async function cancelTask(userId: string, taskId: string): Promise<void> {
@@ -512,11 +558,31 @@ export async function cancelTask(userId: string, taskId: string): Promise<void> 
   if (isTerminalStatus(task.status)) {
     throw new GiftzTaskError(`Task is already ${task.status}`, 409, task.id);
   }
-  cancelFlags().add(task.id);
+  // 1) Durable cross-instance cancel stamp (MI-1): the runner executing this
+  //    task — WHEREVER it lives — polls this flag at every step boundary,
+  //    stops at the next one and hard-kills its own command children. One
+  //    guarded write: racing cancels and racing terminal outcomes are
+  //    serialized by the database (duplicate cancellation is idempotent-safe).
+  const stamped = await db.agentTask.updateMany({
+    where: { id: task.id, userId, status: { in: CANCELLABLE_STATUSES } },
+    data: { cancelRequestedAt: new Date() },
+  });
+  if (stamped.count !== 1) {
+    const fresh = await db.agentTask.findUnique({ where: { id: task.id }, select: { status: true } });
+    throw new GiftzTaskError(`Task is already ${fresh?.status ?? "finished"}`, 409, task.id);
+  }
+  // 2) Hard kill of command children ON THIS INSTANCE (handles only exist
+  //    where they were spawned; the owning runner kills its own via the flag).
   killTaskChildren(task.id);
-  inFlight().delete(task.id); // the runner will observe the flag; a dead runner cannot object
+  // 3) Terminal CANCELLED — guarded so a concurrent finisher (approve
+  //    completing, validation passing on the owning instance) cannot land
+  //    AFTER the cancel, and the runner's later writes can never resurrect
+  //    the cancelled task (every runner transition is active-guarded).
   const steps = upsertStep(parseSteps(task.stepsJson), "report", "skipped", "cancelled by the user");
-  await transition(task.id, "CANCELLED", { steps, error: "Cancelled by the user" });
+  await db.agentTask.updateMany({
+    where: { id: task.id, userId, status: { in: CANCELLABLE_STATUSES } },
+    data: { status: "CANCELLED", stepsJson: JSON.stringify(steps), error: "Cancelled by the user" },
+  });
 }
 
 export async function retryTask(userId: string, taskId: string, provider?: GiftzStepProvider): Promise<void> {
@@ -527,7 +593,8 @@ export async function retryTask(userId: string, taskId: string, provider?: Giftz
   if ((result.attempts ?? 0) >= MAX_ATTEMPTS) {
     throw new GiftzTaskError(`Execution attempts exhausted (${MAX_ATTEMPTS})`, 409, task.id);
   }
-  // The plan was already approved once — retry goes straight to execution.
+  // The plan was already approved once — retry goes straight to execution
+  // (launchExecution CLAIMS the FAILED row: one winner across instances).
   await launchExecution(task, userId, provider ?? createGatewayGiftzProvider(userId));
 }
 
@@ -627,8 +694,11 @@ export async function loadTaskDetail(userId: string, taskId: string): Promise<Ta
     error: task.error,
     createdAt: task.createdAt,
     updatedAt: task.updatedAt,
-    inFlight: isTaskInFlight(task.id),
-    cancelRequested: isCancelRequested(task.id),
+    // MI-1: derived from the DURABLE status — honest on every instance (the
+    // previous process-local registry reported "not in flight" for a task
+    // actively running on another instance).
+    inFlight: isActiveStatus(task.status),
+    cancelRequested: task.cancelRequestedAt !== null,
   };
 }
 
@@ -674,17 +744,22 @@ export async function sweepStaleGiftzTasks(
       take: 50,
     });
     for (const row of rows) {
-      if (isTaskInFlight(row.id)) continue; // genuinely running in this process
+      // MI-1: the process-local in-flight guard is gone — the guarded write
+      // below IS the race resolution. A runner that transitioned between the
+      // find and this write bumps updatedAt past staleBefore and matches 0
+      // rows (its task is genuinely alive); with N instances sweeping, the
+      // database serializes them and exactly one sweep wins per row.
       if (kind === "SITE_STUDIO_TURN") {
         // Studio turns: honest FAILED on the durable task + the linked chat
         // message, with a user-safe retryable error. Meta is left untouched
         // (updateMany cannot clobber stage info it does not know about).
-        await db.agentTask
-          .update({
-            where: { id: row.id },
-            data: { status: "FAILED", error: "Generation interrupted — please retry" },
+        const won = await db.agentTask
+          .updateMany({
+            where: { id: row.id, status: { in: statuses }, updatedAt: { lt: staleBefore } },
+            data: { status: "FAILED", error: "Generation interrupted — please retry", cancelRequestedAt: null },
           })
-          .catch(() => undefined);
+          .catch(() => ({ count: 0 }));
+        if (won.count !== 1) continue; // someone else (another instance's sweep or a live runner) owns this row now
         await db.siteStudioMessage
           .updateMany({
             where: { taskId: row.id, status: { in: ["PENDING", "RUNNING"] } },
@@ -694,16 +769,24 @@ export async function sweepStaleGiftzTasks(
         swept += 1;
         continue;
       }
-      // Engineering tasks: existing behavior preserved verbatim.
+      // Engineering tasks: existing behavior preserved verbatim (wording,
+      // step bookkeeping), now race-safe and clearing any stale cancel stamp
+      // (a fresh retry must not inherit it).
       const steps = parseSteps(row.stepsJson);
       const result = parseResult(row.resultJson) ?? emptyResult(row.title);
-      await transition(row.id, "FAILED", {
-        steps: upsertStep(steps, "report", "failed", "interrupted — the server restarted or the runner died"),
-        result,
-        error: "The task was interrupted before completion (server restart or crash). You can retry it.",
-      }).catch(() => undefined);
-      cancelFlags().delete(row.id);
-      swept += 1;
+      const won = await db.agentTask
+        .updateMany({
+          where: { id: row.id, status: { in: statuses }, updatedAt: { lt: staleBefore } },
+          data: {
+            status: "FAILED",
+            stepsJson: JSON.stringify(upsertStep(steps, "report", "failed", "interrupted — the server restarted or the runner died")),
+            resultJson: JSON.stringify(result),
+            error: "The task was interrupted before completion (server restart or crash). You can retry it.",
+            cancelRequestedAt: null,
+          },
+        })
+        .catch(() => ({ count: 0 }));
+      if (won.count === 1) swept += 1;
     }
   }
   return swept;

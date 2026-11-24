@@ -1,8 +1,30 @@
 # BEAN FOLIO — CI (GitHub Actions)
 
-Introduced M0.5 (2026-11-15). Workflow: [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml).
-Runs on every push to `main` and every pull request. Four independent jobs
-(fail-one = CI red; nothing auto-cancels unrelated work except same-ref
+> **⚠️ ACTIVATION STATUS (2026-11 publication-readiness audit): NOT YET ACTIVE.**
+> The reviewed workflow exists as a TEMPLATE at
+> [`docs/templates/github-workflow-ci.yml`](../templates/github-workflow-ci.yml);
+> `.github/workflows/ci.yml` is NOT on `main`, and GitHub reports **zero Actions
+> runs** for this repository. Every job description below is the DESIGNED contract
+> of that template, verified locally (typecheck, lint, parity, per-file tests,
+> build, guards all run green in-repo) — it is not GitHub-verified execution until
+> the workflow file lands on `main` and the first run appears in the Actions tab.
+>
+> **Exact permission limitation (verified twice):** the repository credential
+> vault token carries scopes `repo, read:org` — no `workflow` scope. GitHub
+> refuses OAuth-app pushes that create or update `.github/workflows/` paths
+> with this token; the verbatim remote rejection is preserved in commit
+> `28af577`'s message ("refusing to allow an OAuth App to create or update
+> workflow `.github/workflows/ci.yml` without workflow scope"), and the
+> 2026-11 audit re-verified the token scopes via the GitHub API
+> (`x-oauth-scopes: read:org, repo`). Activation therefore requires an OWNER
+> action: issue a workflow-scoped credential (fine-grained PAT with
+> `workflows: read & write`, or GitHub App), then run the one-command
+> activation documented in the template header. This cannot be bypassed with
+> the current credential and was not.
+Designed 2026-11-15 (M0.5). Workflow template:
+[`docs/templates/github-workflow-ci.yml`](../templates/github-workflow-ci.yml).
+Intended to run on every push to `main` and every pull request. Four independent
+jobs (fail-one = CI red; nothing auto-cancels unrelated work except same-ref
 supersession via the concurrency group).
 
 ## Jobs

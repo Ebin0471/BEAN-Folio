@@ -147,6 +147,57 @@ PUBLISH_ENABLED=true k6 run -e BASE_URL=https://staging.example.com scripts/load
 - [ ] T3–T5 validation (multi-box + CDN): **not yet performed — see results/**.
 - [ ] CDN offload share at edge (target ~70%): **not measured — no CDN in sandbox**.
 
+### 6.4 GZ-SCALE measured campaign (2026-11-23, commit {SHA}, production standalone server)
+
+Environment: 2 vCPU / 3.9 GiB sandbox, app + k6 on the SAME box (indicative,
+not capacity sign-off). Server = `node .next/standalone/server.js` (the
+Dockerfile's runtime), SQLite (`custom.db`), 8 seeded demo users + 13
+published projects, queue worker on. Traffic generator: k6 v0.54.0.
+Per-IP rate limits were LEFT AT PRODUCTION VALUES (429s are a measured,
+intended response — never disabled for a test).
+
+**Open-model workload mix (browse.js — 40% discover / 20% profile / 15% media
+/ 10% shell / 10% professions / 5% ops):**
+
+| Run | Target RPS | Achieved (admitted+429) | p50 | p95 | Hard-err (5xx+net) | 429 share | Evidence |
+|---|---|---|---|---|---|---|---|
+| R1 | 20 | 8.0 RPS | 3 ms | 5.4 ms | **0.00 %** (0/794) | 30 % | `gz-scale-browse-r1-vu100.json` |
+| R2 | 100 | 40 RPS | 1.3 ms | 2.9 ms | **0.00 %** (0/3975) | 69 % | `gz-scale-browse-r2-rps100.json` |
+| R3 | 200 | 80 RPS | 1.2 ms | 2.4 ms | **0.00 %** (0/4390) | 77 % | `gz-scale-browse-r3-rps200.json` |
+| Soak ≈4.3 min | 60 | ~32 RPS | 1.2 ms | 2.7 ms | **0.00 %** (0/4724) | 59 % | `gz-scale-soak-60rps.json` |
+
+**Closed-model concurrency probe (vu-probe.js — every VU is a simultaneous
+connection doing feed → taxonomy → SPA shell → health with 1 s think time):**
+
+| Simultaneous VUs | Total reqs | Req rate | p50 | p95 | max | Hard-err | Server RSS after | Evidence |
+|---|---|---|---|---|---|---|---|---|
+| 100 | 16,988 | 280/s | 56 ms | 359 ms | 1.7 s | 0 | 721 MB | `gz-scale-vu-probe-100.json` |
+| 500 | 33,420 | 528/s | 419 ms | 2.14 s | 7.8 s | 0 | 807 MB | `gz-scale-vu-probe-500.json` |
+| 1,000 | 35,590 | 547/s | 756 ms | 4.6 s | 7.9 s | 0 | 994 MB | `gz-scale-vu-probe-1000.json` |
+| Spike 0→800 (45 s) | 19,149+ | — | 700 ms | 3.95 s | 6.4 s | 0 | healthy 8 ms post-spike | `gz-scale-spike-vu800.json` |
+
+**Auth flow (auth.js — health → login → /api/auth/me):** login p95 = 90.7 ms
+(scrypt KDF is the deliberate dominant cost), 100 % checks pass
+(`gz-scale-auth.json`).
+
+**Honest verdict for this box (2 vCPU, SQLite, no CDN):**
+
+1. The service **survived 1,000 simultaneous connections and an 800-VU
+   connection spike with ZERO 5xx, zero error-log lines, and bounded memory
+   (< 1 GB RSS, no leak signature across ~107 k requests)**. Degradation under
+   saturation is graceful queueing (p95 grows, nothing collapses), plus
+   intended per-IP 429 throttling.
+2. This is NOT a 100 k-concurrent-user claim. On this hardware the measured
+   safe operating envelope is roughly **≤ 100–200 concurrent users at
+   interactive latency** (p95 ≤ 400 ms closed-model), with the origin
+   admitting ~30–80 effective RPS of the open-model mix under production rate
+   limits. Beyond that, latency growth is connection queueing on 2 cores +
+   SQLite single-writer contention.
+3. Every listed M-audit/M22 gate stays green while rate limiting is ACTIVE:
+   the 429 shares above are the limiter doing its job from a single IP; a
+   distributed generator (see §6.3) with per-source IPs is required before
+   rate limits stop dominating the mix.
+
 ### 6.3 Known limitations of current measurements
 
 - The sandbox dev box (2 vCPU / 3.9 GiB) hosts **both** the app and the load

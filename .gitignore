@@ -30,9 +30,17 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
+# process/runtime ID files (e.g. .zscripts/dev.pid)
+*.pid
+
+# local scratch artifacts (one-off helper scripts belong in scripts/tmp/, deleted after use)
+/scratch-*
+/scripts/tmp/
+
 # env files (can opt-in for committing if needed)
 .env*
 !.env.example
+!.env.compose.example
 
 # BEAN Folio — runtime data
 # POLICY (2026-11-11, supersedes the historical note below): runtime data is

@@ -114,8 +114,71 @@ export async function renameConversation(userId: string, id: string, title: stri
 export async function deleteConversation(userId: string, id: string) {
   const conv = await db.laxiiConversation.findUnique({ where: { id } });
   if (!conv || conv.userId !== userId) return null;
+
+  // Blob hygiene (reliability fix): deleting the conversation rows used to
+  // leak every generated object FOREVER — LaxiiMessage/LaxiiImageVersion rows
+  // cascade, but the underlying MediaAsset rows and their storage bytes
+  // (multi-MB PNGs per generation) were never removed. Collect the assets
+  // reachable from THIS conversation first, keep anything still referenced by
+  // another aggregate, then cascade the rows and clean up rows + bytes.
+  const orphaned = await collectConversationOrphanMedia(id);
+
   await db.laxiiConversation.delete({ where: { id } });
+
+  if (orphaned.length > 0) {
+    // Rows first (cascade is a no-op: nothing external references them —
+    // verified in collectConversationOrphanMedia), then bytes best-effort.
+    await db.mediaAsset.deleteMany({ where: { id: { in: orphaned.map((m) => m.id) } } });
+    const { deleteObject } = await import("@/lib/storage");
+    for (const asset of orphaned) {
+      await deleteObject(asset.storagePath);
+    }
+  }
   return true;
+}
+
+/**
+ * Media assets referenced ONLY by this conversation's image versions — safe to
+ * delete once the conversation goes. Assets shared with other conversations,
+ * posts, project media/covers, site materials or agent artifacts are KEPT.
+ */
+async function collectConversationOrphanMedia(
+  conversationId: string
+): Promise<{ id: string; storagePath: string }[]> {
+  const versions = await db.laxiiImageVersion.findMany({
+    where: { conversationId },
+    select: { mediaId: true, media: { select: { id: true, storagePath: true } } },
+  });
+  const mediaIds = [...new Set(versions.map((v) => v.mediaId))];
+  if (mediaIds.length === 0) return [];
+
+  // A version in ANOTHER conversation referencing the same asset keeps it.
+  const externallyReferenced = new Set(
+    (
+      await db.laxiiImageVersion.findMany({
+        where: { mediaId: { in: mediaIds }, conversationId: { not: conversationId } },
+        select: { mediaId: true },
+      })
+    ).map((r) => r.mediaId)
+  );
+  const candidates = mediaIds.filter((mid) => !externallyReferenced.has(mid));
+  if (candidates.length === 0) return [];
+
+  const [projectMedia, projectCovers, postMedia, postPosters, siteMaterials, agentArtifacts] =
+    await Promise.all([
+      db.projectMedia.count({ where: { mediaId: { in: candidates } } }),
+      db.project.count({ where: { coverMediaId: { in: candidates } } }),
+      db.postMedia.count({ where: { mediaAssetId: { in: candidates } } }),
+      db.postMedia.count({ where: { posterMediaAssetId: { in: candidates } } }),
+      db.siteMaterial.count({ where: { mediaId: { in: candidates } } }),
+      db.agentArtifact.count({ where: { mediaId: { in: candidates } } }),
+    ]);
+  if (projectMedia + projectCovers + postMedia + postPosters + siteMaterials + agentArtifacts > 0) {
+    return []; // at least one candidate is referenced elsewhere — keep ALL (conservative)
+  }
+  return versions
+    .filter((v) => candidates.includes(v.mediaId))
+    .map((v) => ({ id: v.media.id, storagePath: v.media.storagePath }));
 }
 
 // ------------------------------------------------------------------ message serialization

@@ -5,7 +5,7 @@ import { aiComplete, AI_DEEP_TIMEOUT_MS } from "@/lib/ai";
 import { planDesignChange } from "@/lib/ai-design/plan-core";
 import { fetchPortfolioBlock } from "@/lib/ai-design/context";
 import { buildSiteDigest, digestSummaryLine } from "@/lib/ai-design/digest";
-import { createJob, getJob, latestFailedJob, prepareRetry, JobConflictError } from "@/lib/ai-design/jobs";
+import { createJob, getJob, latestFailedJob, prepareRetry, persistJob, JobConflictError } from "@/lib/ai-design/jobs";
 import { describeFailedSteps, runDesignJob, type StepProvider, type StepContext } from "@/lib/ai-design/execute";
 import type { DesignPlan } from "@/lib/ai-design/plan";
 import { resolvedConstraintTargets } from "@/lib/ai-design/constraints";
@@ -484,7 +484,10 @@ async function executeTurn(p: ExecuteTurnParams): Promise<void> {
 
   let job;
   try {
-    job = createJob({ userId: p.userId, plan, baseConfig: p.base, materialIds: p.materialIds });
+    // The durable design-job row IS the shared state — the turn drives it
+    // inline (same pipeline as before) but every step persists, so any
+    // instance's job poll sees true progress.
+    job = await createJob({ userId: p.userId, plan, baseConfig: p.base, materialIds: p.materialIds });
   } catch (e) {
     if (e instanceof JobConflictError) {
       await failTurn(
@@ -502,7 +505,7 @@ async function executeTurn(p: ExecuteTurnParams): Promise<void> {
   if (materialsText) stepContext.materialsText = materialsText;
   if (directionBlock) stepContext.directionText = directionBlock;
 
-  const result = await runDesignJob(job, stepProvider, stepContext).catch(() => null);
+  const result = await runDesignJob(job, stepProvider, stepContext, { persist: persistJob }).catch(() => null);
   const effective = result ?? { status: "failed" as const, failedSteps: 1 };
   if (!result && job.status === "running") {
     // The runner crashed before reaching its own terminal-state handling —
@@ -510,6 +513,7 @@ async function executeTurn(p: ExecuteTurnParams): Promise<void> {
     // retryable) instead of an eternal "running".
     job.status = "failed";
     for (const s of job.steps) if (s.status === "running" || s.status === "pending") s.status = "failed";
+    await persistJob(job).catch(() => undefined);
   }
 
   // Cancelled runs keep their completed steps — same as the review-card flow.
@@ -638,8 +642,8 @@ async function executeTurn(p: ExecuteTurnParams): Promise<void> {
           directionBlock,
         });
         if (repairOutcome.kind === "plan") {
-          const repairJob = createJob({ userId: p.userId, plan: repairOutcome.plan, baseConfig: working });
-          const repairResult = await runDesignJob(repairJob, stepProvider, stepContext).catch(() => null);
+          const repairJob = await createJob({ userId: p.userId, plan: repairOutcome.plan, baseConfig: working });
+          const repairResult = await runDesignJob(repairJob, stepProvider, stepContext, { persist: persistJob }).catch(() => null);
           const repairCompleted =
             repairResult?.status === "completed" && repairJob.steps.every((s) => s.status === "done" || s.status === "repaired");
           if (repairCompleted && repairJob.changes.length > 0) {
@@ -808,13 +812,13 @@ export async function retryStudioTurnStep(
   // account's most recent FAILED job otherwise (turns persisted before
   // linkage existed). Ownership is structural — getJob refuses foreign jobs.
   const jobId = typeof meta.jobId === "string" ? meta.jobId : null;
-  const job = (jobId ? getJob(params.userId, jobId) : null) ?? latestFailedJob(params.userId);
+  const job = (jobId ? await getJob(params.userId, jobId) : null) ?? (await latestFailedJob(params.userId));
   if (!job) {
     return {
       ok: false,
       status: 410,
       error:
-        "The failed execution is no longer in memory (it expired or the service restarted). Use “Retry request” to re-run the original prompt instead — your website is unchanged.",
+        "The failed execution has expired and is no longer stored. Use “Retry request” to re-run the original prompt instead — your website is unchanged.",
     };
   }
   if (job.status !== "failed") {
@@ -840,9 +844,16 @@ export async function retryStudioTurnStep(
   }
 
   // Single-flight: resets ONLY failed/skipped steps to pending; done steps
-  // are never touched. False = another run already (re)started.
-  if (!prepareRetry(job)) {
-    return { ok: false, status: 409, error: "That execution is already running or finished successfully." };
+  // are never touched. ok: false = another run already (re)started, the
+  // retry budget is exhausted, or the backoff gate is still active.
+  const retryDecision = await prepareRetry(job);
+  if (!retryDecision.ok) {
+    return {
+      ok: false,
+      status: retryDecision.code ?? 409,
+      error:
+        retryDecision.reason ?? "That execution is already running or finished successfully.",
+    };
   }
   const retryingTitles = job.steps
     .filter((s) => s.status === "pending")
@@ -895,11 +906,12 @@ export async function retryStudioTurnStep(
         if (materials.length > 0) stepContext.materialsText = materialsBlock(materials);
       }
 
-      const result = await runDesignJob(job, stepProvider, stepContext).catch(() => null);
+      const result = await runDesignJob(job, stepProvider, stepContext, { persist: persistJob }).catch(() => null);
       const effective = result ?? { status: "failed" as const, failedSteps: 1 };
       if (!result && job.status === "running") {
         job.status = "failed";
         for (const s of job.steps) if (s.status === "running" || s.status === "pending") s.status = "failed";
+        await persistJob(job).catch(() => undefined);
       }
 
       if (effective.status === "failed") {

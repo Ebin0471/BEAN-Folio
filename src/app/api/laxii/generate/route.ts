@@ -585,7 +585,7 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
       ) ?? null;
     }
 
-    const { messageId } = await startGenerationJob({
+    const { messageId, duplicate } = await startGenerationJob({
       userId: user.id,
       conversationId: conversation.id,
       requestOperation: operation,
@@ -612,6 +612,21 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
       brief: briefSpec?.brief ?? plainBannerBrief,
       promptBriefBase: briefSpec || plainBannerBrief ? promptFinal : null,
     });
+
+    // MI-1: the service-level transactional claim may report a duplicate (a
+    // racing request on another instance claimed the conversation first) —
+    // same honest 202 shape, flagged, and no second engine was started.
+    if (duplicate) {
+      return ok(
+        {
+          conversationId: conversation.id,
+          messageId,
+          status: "RUNNING",
+          duplicate: true,
+        },
+        202
+      );
+    }
 
     return ok(
       {

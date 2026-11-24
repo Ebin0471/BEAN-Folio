@@ -6,6 +6,7 @@ import { getSessionUser } from "@/lib/auth";
 import { handler, ok, err, ERR, parseBody } from "@/lib/api-helpers";
 
 import { conversationDetail, LaxiiServiceError } from "@/lib/laxii/service";
+import { deleteConversation } from "@/lib/laxii/conversations";
 import { sweepStaleLaxiiJobs } from "@/lib/laxii/jobs";
 
 export const dynamic = "force-dynamic";
@@ -50,15 +51,16 @@ export const PATCH = handler(async (req: NextRequest, { params }: Ctx): Promise<
   return ok({ ok: true });
 });
 
-/** DELETE /api/laxii/conversations/[id] — delete the thread (cascades). */
+/** DELETE /api/laxii/conversations/[id] — delete the thread (cascades + blob cleanup). */
 export const DELETE = handler(async (_req: NextRequest, { params }: Ctx): Promise<NextResponse> => {
   const { id } = await params;
   const user = await getSessionUser();
   if (!user) return ERR.unauthorized();
 
-  const conversation = await db.laxiiConversation.findFirst({ where: { id, userId: user.id } });
-  if (!conversation) return ERR.notFound();
-
-  await db.laxiiConversation.delete({ where: { id } });
+  // Service layer owns deletion: row cascade AND the storage bytes of media
+  // objects that are no longer referenced anywhere (reliability fix — the
+  // inline delete previously leaked multi-MB generated blobs forever).
+  const deleted = await deleteConversation(user.id, id);
+  if (!deleted) return ERR.notFound();
   return ok({ ok: true });
 });

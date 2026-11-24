@@ -31,8 +31,15 @@ COPY . .
 # NEXT_PUBLIC_APP_URL is inlined into the client bundle at build time.
 ARG NEXT_PUBLIC_APP_URL=""
 ENV NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL} NEXT_TELEMETRY_DISABLED=1
+# Cap the V8 heap explicitly: without it the TypeScript build worker grows
+# unbounded and gets OOM-SIGKILLed on ~4 GB hosts (reproduced 3/3 in the
+# GZ-SCALE milestone). The build runs under NODE — NOT `bunx --bun` — because
+# bun-runtime forks ignore NODE_OPTIONS entirely, leaving the worker with no
+# ceiling at all. Same artifact as the repo's `bun run build` (next's bin
+# shebang is node).
+ENV NODE_OPTIONS=--max-old-space-size=1536
 # Same output the repo's build script produces: standalone + static + public copies.
-RUN bunx --bun next build \
+RUN node node_modules/next/dist/bin/next build \
   && cp -r .next/static .next/standalone/.next/ \
   && cp -r public .next/standalone/
 

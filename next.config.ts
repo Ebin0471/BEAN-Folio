@@ -16,8 +16,18 @@ const nextConfig: NextConfig = {
   // bundling it breaks pdfjs-dist's dynamic pdf.worker.mjs resolution
   // ("Setting up fake worker failed" under Turbopack).
   serverExternalPackages: ["pdf-parse"],
-  // TypeScript errors fail the production build again. Keep `bunx tsc
-  // --noEmit` clean whenever application code changes.
+
+  // BUILD type-check scope: `next build` type-checks via tsconfig.build.json
+  // (src only — tests are excluded). Rationale (GZ-SCALE, measured): including
+  // tests/** in the build worker pushed the type-check past 4 GB on modest
+  // hosts and the worker was SIGKILLed (reproducible 3/3 here). The full
+  // repository INCLUDING tests is still type-checked by `bunx tsc --noEmit`
+  // (tsconfig.json) as an independent gate — CI runs it on every push, and
+  // TypeScript errors still fail this build for ALL application code.
+  typescript: { tsconfigPath: "./tsconfig.build.json" },
+  // TypeScript errors still fail the production build. Keep `bunx tsc
+  // --noEmit` (full tsconfig.json, tests included) clean whenever application
+  // code changes.
   reactStrictMode: false,
   // Don't advertise the framework/runtime version (X-Powered-By header).
   poweredByHeader: false,

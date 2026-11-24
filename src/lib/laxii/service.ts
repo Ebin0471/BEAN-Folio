@@ -370,9 +370,14 @@ export async function retryJob(userId: string, id: string): Promise<LaxiiJobRowV
 }
 
 /**
- * Cancel a RUNNING job. The current worker is not interruptible mid-call, so
- * the job is marked FAILED honestly — if the engine still completes in the
- * background its outputs surface in the thread as saved versions.
+ * Cancel a RUNNING job. MI-1: the cancel is STATUS-GUARDED — a generation
+ * that finishes between the read and this write matches 0 rows and can never
+ * be cancelled after the fact (completed results belong to the user), and a
+ * duplicate cancel can never re-fail a job. The current worker is not
+ * interruptible mid-call, so the job is marked FAILED honestly — if the
+ * engine still completes in the background its outputs surface in the thread
+ * as saved versions (the guarded terminal write in jobs.ts keeps the cancel
+ * final unless the user's request never landed).
  */
 export async function cancelJob(userId: string, id: string): Promise<LaxiiJobRowView | null> {
   const row = await db.laxiiMessage.findFirst({
@@ -382,11 +387,18 @@ export async function cancelJob(userId: string, id: string): Promise<LaxiiJobRow
   if (!row) return null;
   if (row.status === "DONE") throw new LaxiiError("A finished generation cannot be cancelled — its results belong to you");
   if (row.status !== "RUNNING") throw new LaxiiError(`This job is ${row.status.toLowerCase()} and cannot be cancelled`);
-  const updated = await db.laxiiMessage.update({
-    where: { id: row.id },
-    data: { status: "FAILED", error: "Cancelled by the user — the engine may still finish in the background; its result would appear in the thread." },
+  const cancelledMessage = "Cancelled by the user — the engine may still finish in the background; its result would appear in the thread.";
+  const cancelled = await db.laxiiMessage.updateMany({
+    where: { id: row.id, status: "RUNNING" },
+    data: { status: "FAILED", error: cancelledMessage },
   });
-  return toJobView({ ...updated, versions: row.versions });
+  if (cancelled.count !== 1) {
+    // Lost a race with the worker's terminal write — report the truth.
+    const fresh = await db.laxiiMessage.findUnique({ where: { id: row.id }, select: { status: true } });
+    if (fresh?.status === "DONE") throw new LaxiiError("A finished generation cannot be cancelled — its results belong to you");
+    throw new LaxiiError(`This job is ${fresh?.status?.toLowerCase() ?? "finished"} and cannot be cancelled`);
+  }
+  return toJobView({ ...row, status: "FAILED", error: cancelledMessage });
 }
 
 /**

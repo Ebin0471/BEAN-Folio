@@ -27,6 +27,8 @@ import {
   WORKFLOW_JOB_KIND,
   WORKFLOW_SWEEP_KEY,
 } from "@/lib/riishe/workflow-engine";
+import { AI_DESIGN_JOB_KIND, getJob as getDesignJob, enqueueDesignJobDrive, sweepStaleDesignJobs } from "@/lib/ai-design/jobs";
+import { driveJob, designStepProvider, DESIGN_DRIVE_BUDGET_MS } from "@/lib/ai-design/driver";
 import type { BackgroundJob } from "@prisma/client";
 import type { InvitationExpirySweepCounts } from "@/lib/ox/invitation";
 
@@ -42,6 +44,7 @@ export const MAINTENANCE_SWEEP_KEY = "maintenance.sweep";
 export const SITE_STUDIO_SWEEP_KEY = "site.studio-sweep";
 export const RIISHE_AUTOMATION_KEY = "riishe.automation";
 export { WORKFLOW_JOB_KIND, WORKFLOW_SWEEP_KEY } from "@/lib/riishe/workflow-engine";
+export { AI_DESIGN_JOB_KIND } from "@/lib/ai-design/jobs";
 
 /** maintenance.sweep cadence (retention purge). */
 export const SWEEP_EVERY_MS = 10 * 60_000;
@@ -93,6 +96,7 @@ export function registerBuiltInHandlers(): void {
   registerHandler(WORKFLOW_SWEEP_KEY, runRiisheWorkflowSweepHandler);
   registerHandler(OX_MATCH_EXPIRY_KEY, runOxMatchExpirySweepHandler);
   registerHandler(OX_INVITATION_EXPIRY_KEY, runOxInvitationExpirySweepHandler);
+  registerHandler(AI_DESIGN_JOB_KIND, runAiDesignJobHandler);
 }
 
 /**
@@ -146,6 +150,46 @@ async function runRiisheWorkflowSweepHandler(_job: BackgroundJob): Promise<{ rec
     console.log(JSON.stringify({ event: "riishe.workflow.sweep", ...counts }));
   }
   return counts;
+}
+
+// ---------------------------------------------------------------------------
+// ai.design-job — durable design-job execution (MI-1 multi-instance)
+// ---------------------------------------------------------------------------
+
+/**
+ * Drive one Code Giftz design job under the durable claim lease (MI-1). The
+ * BackgroundJob row is the execution backbone: a worker on ANY instance can
+ * claim it; a worker death requeues it (recoverStuck) and the resumed pass
+ * continues from the persisted step state (completed steps never re-run).
+ * A yield (chunk budget spent) re-enqueues the successor — each pass makes
+ * real progress, so the chain always terminates. A durable cancellation is
+ * honored at the first step boundary via the driver's fresh flag re-read.
+ */
+async function runAiDesignJobHandler(job: BackgroundJob): Promise<{ outcome: string }> {
+  let jobId: string | null = null;
+  try {
+    const payload = JSON.parse(job.payload ?? "{}") as { jobId?: unknown };
+    if (typeof payload.jobId === "string") jobId = payload.jobId;
+  } catch {
+    jobId = null;
+  }
+  if (!jobId || !job.userId) return { outcome: "ignored" };
+
+  const user = await db.user.findUnique({ where: { id: job.userId } });
+  const current = user ? await getDesignJob(user.id, jobId) : null;
+  // Owner or job row gone (cascaded) / already terminal — nothing to drive.
+  if (!user || !current || ["completed", "failed", "cancelled"].includes(current.status)) {
+    return { outcome: "noop" };
+  }
+
+  const result = await driveJob(user, jobId, designStepProvider, { totalBudgetMs: DESIGN_DRIVE_BUDGET_MS });
+  if (result.status === "yielded") {
+    // Budget spent mid-job: complete() released the dedupeKey, so the
+    // successor enqueue is clean and the next pass resumes from persisted
+    // progress.
+    await enqueueDesignJobDrive(jobId, job.userId);
+  }
+  return { outcome: result.status };
 }
 
 // ---------------------------------------------------------------------------
@@ -303,12 +347,15 @@ export interface StudioSweepCounts {
  * ENGINEERING_TASK and SITE_STUDIO_TURN) — engineering keeps its existing
  * failure wording; studio turns get a user-safe error and their linked
  * SiteStudioMessage flips PENDING/RUNNING → FAILED so no chat spinner hangs
- * forever after a restart.
+ * forever after a restart. Also recovers abandoned durable DESIGN jobs
+ * (executor died: lease expired + heartbeat cold) so single-flight can
+ * never dead-lock an account across restarts.
  */
 async function runStudioSweepHandler(_job: BackgroundJob): Promise<StudioSweepCounts> {
   const swept = await sweepStaleGiftzTasks();
-  if (swept > 0) {
-    console.log(JSON.stringify({ event: "site.studio-sweep", swept }));
+  const designJobsRecovered = await sweepStaleDesignJobs().catch(() => 0);
+  if (swept > 0 || designJobsRecovered > 0) {
+    console.log(JSON.stringify({ event: "site.studio-sweep", swept, designJobsRecovered }));
   }
   return { swept };
 }

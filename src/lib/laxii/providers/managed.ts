@@ -53,13 +53,49 @@ export function fitEnginePrompt(prompt: string, warnings: string[]): string {
 
 type ManagedSize = "1024x1024" | "768x1344" | "864x1152" | "1344x768" | "1152x864" | "1536x864" | "864x1536" | "2016x864";
 
-const globalForLaxii = globalThis as unknown as { __laxiiZai?: Awaited<ReturnType<typeof ZAI.create>> };
+const globalForLaxii = globalThis as unknown as {
+  __laxiiZai?: Awaited<ReturnType<typeof ZAI.create>>;
+  __laxiiZaiInit?: Promise<Awaited<ReturnType<typeof ZAI.create>>>;
+};
 
-async function getZai() {
-  if (!globalForLaxii.__laxiiZai) {
-    globalForLaxii.__laxiiZai = await ZAI.create();
+/** Init deadline for the managed SDK client — an SDK bootstrap hang must not
+ *  hold a generation job (and its user's loading state) until the 30-min stale
+ *  sweep. Failure clears the memo so the NEXT call retries a fresh create. */
+const ZAI_INIT_TIMEOUT_MS = 15_000;
+
+function getZai(): Promise<Awaited<ReturnType<typeof ZAI.create>>> {
+  const existing = globalForLaxii.__laxiiZai;
+  if (existing) return Promise.resolve(existing);
+  if (!globalForLaxii.__laxiiZaiInit) {
+    globalForLaxii.__laxiiZaiInit = ZAI.create().then(
+      (client) => {
+        globalForLaxii.__laxiiZai = client;
+        delete globalForLaxii.__laxiiZaiInit;
+        return client;
+      },
+      (error) => {
+        delete globalForLaxii.__laxiiZaiInit;
+        throw error;
+      }
+    );
   }
-  return globalForLaxii.__laxiiZai;
+  return globalForLaxii.__laxiiZaiInit;
+}
+
+/** getZai with a bounded init deadline (single shared init across concurrent callers). */
+function getZaiWithDeadline(): Promise<Awaited<ReturnType<typeof ZAI.create>>> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    getZai(),
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new LaxiiProviderError("The image engine is starting up; please retry.", "timeout")),
+        ZAI_INIT_TIMEOUT_MS
+      );
+    }),
+  ]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer);
+  }) as Promise<Awaited<ReturnType<typeof ZAI.create>>>;
 }
 
 /**
@@ -136,7 +172,7 @@ async function callManaged(body: {
   image?: string;
   size: ManagedSize;
 }): Promise<string> {
-  const zai = await getZai();
+  const zai = await getZaiWithDeadline();
   // Gateway contract (verified): the edit endpoint takes `images: [{ url }]` —
   // an array of data URLs. The bundled .d.ts still declares a legacy
   // `image?: string` field, so the edit body is cast deliberately; the SDK

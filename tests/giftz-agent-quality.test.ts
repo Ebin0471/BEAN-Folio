@@ -26,6 +26,32 @@ import { editorLanguageForPath, lineDiff } from "../src/lib/giftz/editor-utils";
 import { normalizePlanJson } from "../src/lib/ai-design/plan";
 import { normalizeConfig, defaultConfig } from "../src/lib/site-config";
 
+// ---------------------------------------------------------------- fixtures
+// MI-1: the design-job store is the DURABLE DesignJob table — every job row
+// needs a real owner (FK). Each tag gets its own throwaway user (unique
+// email), created lazily and fully removed afterwards (cascade deletes the
+// job rows). Single-flight is per account, so each test keeps its own tag.
+import { afterAll } from "bun:test";
+import { db } from "../src/lib/db";
+import { hashPassword } from "../src/lib/auth";
+
+const __mi1Users = new Map<string, string>();
+async function uid(tag: string): Promise<string> {
+  const hit = __mi1Users.get(tag);
+  if (hit) return hit;
+  const email = `mi1-${tag.replace(/[^a-zA-Z0-9-]/g, "-")}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}@test.beanfolio.local`;
+  const user = await db.user.create({
+    data: { email, passwordHash: await hashPassword("mi1-fixture-password"), name: "MI-1 store test" },
+  });
+  __mi1Users.set(tag, user.id);
+  return user.id;
+}
+
+afterAll(async () => {
+  await db.user.deleteMany({ where: { id: { in: [...__mi1Users.values()] } } });
+});
+
+
 /** A JSON-round-tripped default config — the raw-shape fixture for normalizeConfig tests. */
 const baseDefault = defaultConfig();
 
@@ -302,7 +328,7 @@ describe("normalizeConfig — unusable backgroundEffects is healed, not fatal (G
         },
       ],
     };
-    const job = createJob({ userId: "user-gz-heal", plan: plan as never, baseConfig: config });
+    const job = await createJob({ userId: await uid("user-gz-heal"), plan: plan as never, baseConfig: config });
     const outcome = await runDesignJob(job, provider);
     expect(outcome.status).toBe("completed");
     expect(job.steps[0]!.status).toBe("done");

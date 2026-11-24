@@ -4,7 +4,7 @@
  * Baseline evidence (run 2026-11-22-baseline, benchmark A turn2): the
  * provider's DEFAULT output cap truncated a file-batch JSON mid-string
  * ("Unterminated string" at ~10.5k chars, verified live with
- * scripts/tmp/probe-giftz-batch.ts). All three recovery attempts reproduced
+ * scripts/diagnostics/probe-giftz-batch.ts). All three recovery attempts reproduced
  * the same cut, so a batch containing assets/styles.css was declared "no
  * usable content" and the turn failed. With an explicit max_tokens the
  * identical call returned 31.9k chars of parseable JSON.

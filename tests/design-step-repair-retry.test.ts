@@ -37,9 +37,36 @@ import {
   latestJob,
   jobSnapshot,
   prepareRetry,
+  persistJob,
 } from "../src/lib/ai-design/jobs";
 import { runDesignJob, describeFailedSteps, type StepProvider } from "../src/lib/ai-design/execute";
 import type { DesignPlan, PlanStep } from "../src/lib/ai-design/plan";
+
+// ---------------------------------------------------------------- fixtures
+// MI-1: the design-job store is the DURABLE DesignJob table — every job row
+// needs a real owner (FK). Each tag gets its own throwaway user (unique
+// email), created lazily and fully removed afterwards (cascade deletes the
+// job rows). Single-flight is per account, so each test keeps its own tag.
+import { afterAll } from "bun:test";
+import { db } from "../src/lib/db";
+import { hashPassword } from "../src/lib/auth";
+
+const __mi1Users = new Map<string, string>();
+async function uid(tag: string): Promise<string> {
+  const hit = __mi1Users.get(tag);
+  if (hit) return hit;
+  const email = `mi1-${tag.replace(/[^a-zA-Z0-9-]/g, "-")}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}@test.beanfolio.local`;
+  const user = await db.user.create({
+    data: { email, passwordHash: await hashPassword("mi1-fixture-password"), name: "MI-1 store test" },
+  });
+  __mi1Users.set(tag, user.id);
+  return user.id;
+}
+
+afterAll(async () => {
+  await db.user.deleteMany({ where: { id: { in: [...__mi1Users.values()] } } });
+});
+
 
 // ---------------------------------------------------------------- helpers
 
@@ -137,7 +164,7 @@ describe("bounded step repair inside the executor", () => {
     const p = plan([
       step({ id: "s1", title: "Create showreel section", tool: "section.add", kind: "functionality", targets: [cfg.pages[0].id], summary: "Adds the showreel.", instruction: "add a cinematic showreel section" }),
     ]);
-    const job = createJob({ userId: "user-repair-1", plan: p, baseConfig: cfg });
+    const job = await createJob({ userId: await uid("user-repair-1"), plan: p, baseConfig: cfg });
 
     const outcome = await runDesignJob(job, provider);
     expect(outcome.status).toBe("completed");
@@ -158,7 +185,7 @@ describe("bounded step repair inside the executor", () => {
     const p = plan([
       step({ id: "s1", title: "Create showreel section", tool: "section.add", kind: "functionality", summary: "Adds the showreel.", instruction: "add a showreel" }),
     ]);
-    const job = createJob({ userId: "user-repair-2", plan: p, baseConfig: cfg });
+    const job = await createJob({ userId: await uid("user-repair-2"), plan: p, baseConfig: cfg });
 
     const outcome = await runDesignJob(job, provider);
     expect(outcome.status).toBe("failed");
@@ -182,7 +209,7 @@ describe("bounded step repair inside the executor", () => {
     const p = plan([
       step({ id: "s1", title: "Doomed step", tool: "section.update", kind: "content", summary: "Fails.", instruction: "edit" }),
     ]);
-    const job = createJob({ userId: "user-repair-3", plan: p, baseConfig: cfg });
+    const job = await createJob({ userId: await uid("user-repair-3"), plan: p, baseConfig: cfg });
 
     await runDesignJob(job, provider);
     expect(job.steps[0].status).toBe("failed");
@@ -212,7 +239,7 @@ describe("partial failure preserves completed work", () => {
       step({ id: "s2", title: "Create showreel section", tool: "section.add", kind: "functionality", summary: "Adds the showreel.", instruction: "add a showreel" }),
       step({ id: "s3", title: "Dependent polish", tool: "theme.tokens", summary: "Depends on s2.", patch: { theme: { radius: "full" } }, dependsOn: ["s2"] }),
     ]);
-    const job = createJob({ userId: "user-partial-1", plan: p, baseConfig: cfg });
+    const job = await createJob({ userId: await uid("user-partial-1"), plan: p, baseConfig: cfg });
 
     const outcome = await runDesignJob(job, provider);
     expect(outcome.status).toBe("failed");
@@ -235,12 +262,12 @@ describe("partial failure preserves completed work", () => {
     expect(job.baseConfig.theme.accent).not.toBe("#f2d076");
   });
 
-  test("a job with zero completed steps reports an unchanged draft", () => {
+  test("a job with zero completed steps reports an unchanged draft", async () => {
     const cfg = base();
     const p = plan([
       step({ id: "s1", title: "Only step", tool: "section.update", kind: "content", summary: "Fails.", instruction: "edit" }),
     ]);
-    const job = createJob({ userId: "user-partial-2", plan: p, baseConfig: cfg });
+    const job = await createJob({ userId: await uid("user-partial-2"), plan: p, baseConfig: cfg });
     job.steps[0].status = "failed";
     job.steps[0].error = "Schema validation rejected the step's result twice — pages.0.sections.0: bad";
     const report = describeFailedSteps(job);
@@ -270,14 +297,18 @@ describe("retrying only the failed step", () => {
       step({ id: "s1", title: "Warm the accent", tool: "section.update", kind: "content", targets: [cfg.pages[0].sections[0].id], summary: "Warms the accent.", instruction: "warm it" }),
       step({ id: "s2", title: "Create showreel section", tool: "section.add", kind: "functionality", summary: "Adds the showreel.", instruction: "add a showreel" }),
     ]);
-    const job = createJob({ userId: "user-retrystep-1", plan: p, baseConfig: cfg });
+    const job = await createJob({ userId: await uid("user-retrystep-1"), plan: p, baseConfig: cfg });
 
     const first = await runDesignJob(job, provider);
     expect(first.status).toBe("failed");
     expect(calls()).toBe(3);
     const changesAfterFirstRun = job.changes.length;
 
-    expect(prepareRetry(job)).toBe(true);
+    // MI-1: the failed run stamped the exponential retry gate (backpressure,
+    // pinned by design-jobs-durable.test.ts) — rewind it to exercise the
+    // retry path itself.
+    job.nextAttemptAt = Date.now() - 1;
+    expect((await prepareRetry(job)).ok).toBe(true);
     // ONLY the failed step is pending — the completed one is untouched.
     expect(job.steps.map((s) => s.status)).toEqual(["done", "pending"]);
 
@@ -304,17 +335,17 @@ describe("retrying only the failed step", () => {
       step({ id: "s1", title: "Tokens", tool: "theme.tokens", summary: "Runs.", patch: { theme: { accent: "#f2d076" } } }),
       step({ id: "s2", title: "Skipped", tool: "theme.tokens", summary: "Skipped.", patch: { theme: { radius: "full" } } }),
     ]);
-    const job = createJob({ userId: "user-retrystep-2", plan: p, baseConfig: cfg });
+    const job = await createJob({ userId: await uid("user-retrystep-2"), plan: p, baseConfig: cfg });
     job.steps[0].status = "done";
     job.steps[1].status = "skipped";
     job.status = "failed";
 
-    expect(prepareRetry(job)).toBe(true);
+    expect((await prepareRetry(job)).ok).toBe(true);
     expect(job.steps[0].status).toBe("done"); // done steps are NEVER reset
     expect(job.steps[1].status as string).toBe("pending");
 
     job.status = "completed";
-    expect(prepareRetry(job)).toBe(false); // a completed job is not retryable
+    expect((await prepareRetry(job)).ok).toBe(false); // a completed job is not retryable
   });
 });
 
@@ -330,11 +361,13 @@ describe("job persistence after a refresh", () => {
     const p = plan([
       step({ id: "s1", title: "Create showreel section", tool: "section.add", kind: "functionality", summary: "Adds the showreel.", instruction: "add a showreel" }),
     ]);
-    const job = createJob({ userId: "user-persist-1", plan: p, baseConfig: cfg });
-    await runDesignJob(job, provider);
+    const job = await createJob({ userId: await uid("user-persist-1"), plan: p, baseConfig: cfg });
+    // MI-1: the durable store needs the persist callback — exactly what the
+    // routes, the turn pipeline and the queue driver pass in production.
+    await runDesignJob(job, provider, {}, { persist: persistJob });
 
     // A "refreshed" client reconnects via latestJob (no id)…
-    const reloaded = latestJob("user-persist-1");
+    const reloaded = ((await latestJob(await uid("user-persist-1"))));
     expect(reloaded?.id).toBe(job.id);
     expect(reloaded?.status).toBe("completed");
     // …and the finished snapshot includes the working config + step states.
@@ -347,15 +380,18 @@ describe("job persistence after a refresh", () => {
   test("latestFailedJob resolves the account's most recent failed job (owner-scoped)", async () => {
     const cfg = base();
     const bad = plan([step({ id: "s1", title: "F", tool: "section.update", kind: "content", summary: "Fails.", instruction: "x" })]);
-    const j1 = createJob({ userId: "user-persist-2", plan: bad, baseConfig: cfg });
+    const j1 = await createJob({ userId: await uid("user-persist-2"), plan: bad, baseConfig: cfg });
     j1.status = "failed";
     j1.steps[0].status = "failed";
-    const j2 = createJob({ userId: "user-persist-2", plan: bad, baseConfig: cfg });
+    await persistJob(j1);
+    const j2 = await createJob({ userId: await uid("user-persist-2"), plan: bad, baseConfig: cfg });
     j2.status = "failed";
     j2.steps[0].status = "failed";
-    j2.createdAt = j1.createdAt + 1; // created later
+    await persistJob(j2);
 
-    expect(latestFailedJob("user-persist-2")?.id).toBe(j2.id);
-    expect(latestFailedJob("someone-else")).toBeNull();
+    // MI-1: the durable store orders by the real createdAt column — the NEWER
+    // failed job wins; another account sees nothing (ownership is structural).
+    expect((await latestFailedJob(await uid("user-persist-2")))?.id).toBe(j2.id);
+    expect(await latestFailedJob(await uid("someone-else"))).toBeNull();
   });
 });

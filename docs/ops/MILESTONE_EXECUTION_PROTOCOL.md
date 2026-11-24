@@ -113,8 +113,10 @@ Every milestone report must include all of the following:
 
 ### 5.1 Remote of record
 
-`origin` = `https://github.com/Ebin0471/BEAN-Folio.git` — owner-confirmed
-PRIVATE repository. Remote `main` is the only published branch.
+`origin` = `https://github.com/Ebin0471/BEAN-Folio.git` — connected as PRIVATE,
+now **PUBLIC** (GitHub-reported visibility, corrected 2026-11 publication-readiness
+audit). The verified source-only publishing policy below is unchanged — PUBLIC
+visibility makes it more important, not less. Remote `main` is the only published branch.
 
 ### 5.2 Current verified mechanism (binding)
 

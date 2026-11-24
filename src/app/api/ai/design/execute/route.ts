@@ -2,22 +2,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { handler, ok, err, parseBody } from "@/lib/api-helpers";
-import { aiComplete, aiGate, recordAiUsage, AI_DEEP_TIMEOUT_MS } from "@/lib/ai";
+import { aiGate, recordAiUsage } from "@/lib/ai";
 import { getSessionUser } from "@/lib/auth";
 import { normalizeConfig } from "@/lib/site-config";
 import type { SiteConfig } from "@/lib/site-config";
 import { buildSiteDigest } from "@/lib/ai-design/digest";
 import { designPlanSchema, validatePlan, type DesignPlan } from "@/lib/ai-design/plan";
-import { createJob, JobConflictError } from "@/lib/ai-design/jobs";
-import { runDesignJob, type StepProvider, type StepContext } from "@/lib/ai-design/execute";
+import { createJob, enqueueDesignJobDrive, JobConflictError } from "@/lib/ai-design/jobs";
+import { driveJob, designStepProvider } from "@/lib/ai-design/driver";
+import type { StepContext } from "@/lib/ai-design/execute";
 import { fetchPortfolioBlock } from "@/lib/ai-design/context";
 import { loadMaterialsForRequest, materialsBlock } from "@/lib/ai-design/ingest";
-
-/** The provider for model-tool steps: deep reasoning, extended deadline. */
-const stepProvider: StepProvider = {
-  complete: (system, messages, opts) =>
-    aiComplete(system, messages, { ...opts, thinking: true, timeoutMs: AI_DEEP_TIMEOUT_MS }),
-};
 
 export const dynamic = "force-dynamic";
 
@@ -71,31 +66,32 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
     );
   }
 
-  let job;
-  try {
-    job = createJob({ userId: user.id, plan, baseConfig: current, materialIds });
-  } catch (e) {
-    if (e instanceof JobConflictError) return err(e.message, 409);
-    throw e;
-  }
-
   // Grounding for model steps — built ONCE here (the route owns the DB
-  // session) and reused by every step of the job: the user's portfolio block
-  // always; the source-materials block when the job carries material ids
-  // (owner-scoped load — foreign ids silently resolve to nothing).
+  // session) and PERSISTED with the job at creation: the user's portfolio
+  // block always; the source-materials block when the job carries material
+  // ids (owner-scoped load — foreign ids silently resolve to nothing). The
+  // durable store keeps it for every future chunk, on any instance.
   const stepContext: StepContext = { portfolioText: await fetchPortfolioBlock(user) };
   if (materialIds.length > 0) {
     const materials = await loadMaterialsForRequest(user.id, materialIds);
     if (materials.length > 0) stepContext.materialsText = materialsBlock(materials);
   }
 
-  // Fire-and-forget with a hard failure guard — the client polls the job
-  // store; a crashed runner must still leave a reachable failed state.
-  void runDesignJob(job, stepProvider, stepContext).catch(() => {
-    job.status = "failed";
-    job.error = "The execution stopped unexpectedly. You can retry the remaining steps.";
-    for (const s of job.steps) if (s.status === "running" || s.status === "pending") s.status = "failed";
-  });
+  let job;
+  try {
+    job = await createJob({ userId: user.id, plan, baseConfig: current, materialIds, context: stepContext });
+  } catch (e) {
+    if (e instanceof JobConflictError) return err(e.message, 409);
+    throw e;
+  }
+
+  // Durable execution: the BackgroundJob queue is the backbone (a worker on
+  // ANY instance drives the job; restart recovery requeues it). The
+  // same-process kick makes long-running nodes start immediately — the
+  // claim lease arbitrates, so the kick and the worker can never run the
+  // same chunk twice.
+  await enqueueDesignJobDrive(job.id, user.id);
+  void driveJob(user, job.id, designStepProvider).catch(() => {});
 
   await recordAiUsage(user.id, "design");
   return ok({ jobId: job.id, status: job.status });

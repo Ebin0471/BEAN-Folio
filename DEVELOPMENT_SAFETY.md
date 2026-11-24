@@ -149,22 +149,28 @@ and private user media).
 > never be pushed. The binding publishing policy now lives in
 > [`docs/ops/MILESTONE_EXECUTION_PROTOCOL.md`](./docs/ops/MILESTONE_EXECUTION_PROTOCOL.md) §5.
 
-Remote of record: **`https://github.com/Ebin0471/BEAN-Folio.git`** — the
-owner-confirmed PRIVATE repository (connected 2026-11-11).
+Remote of record: **`https://github.com/Ebin0471/BEAN-Folio.git`** — connected
+2026-11-11 while PRIVATE; **PUBLIC since the 2026-11 publication-readiness audit
+(GitHub-reported visibility). Every rule below (source-only publishing, secret
+scans, runtime-data guard) applies with even greater force now that the
+repository is publicly readable.**
 
 ### Initial connection — COMPLETED 2026-11-11
 
 ```bash
-git remote add origin https://github.com/Ebin0471/BEAN-Folio.git  # owner-confirmed PRIVATE repo
+git remote add origin https://github.com/Ebin0471/BEAN-Folio.git  # (PRIVATE at the time; PUBLIC since 2026-11)
 git push -u origin github-clean:main              # clean snapshot becomes GitHub main
 git ls-remote origin refs/heads/main              # MUST equal `git rev-parse github-clean`
 ```
 
 Executed 2026-11-11: remote `main` verified ==
 `845641afbacc1a6caea78b4420a8c6572d8668c7` (800 source files, leak scan
-clean, repo PRIVATE).
+clean, repo PRIVATE at that time; **the repository is now PUBLIC** (GitHub-reported
+visibility, corrected 2026-11 publication-readiness audit).
 
-- Repository stays PRIVATE. No duplicate repos.
+- No duplicate repos. The repository's PUBLIC visibility raises the stakes of the
+  source-only publishing discipline; it must never be treated as permission to
+  expose user or customer data.
 - Credential: GitHub CLI OAuth token (owner-authorized device flow,
   scopes `repo`, `read:org`), never committed; revocable at
   github.com/settings/applications. Persisted since 2026-11-12 in the

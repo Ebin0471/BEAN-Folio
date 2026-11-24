@@ -50,6 +50,10 @@ PATTERNS=(
 allow() {
   case "$1" in
     .env.example) return 0 ;;
+    # Docker Compose template (placeholder values only: "change-me…", empty
+    # METRICS_TOKEN). Caught by the generic ^\.env\.[^/]*$ pattern since it
+    # was introduced with the Docker milestone; verified credential-free.
+    .env.compose.example) return 0 ;;
     *) return 1 ;;
   esac
 }

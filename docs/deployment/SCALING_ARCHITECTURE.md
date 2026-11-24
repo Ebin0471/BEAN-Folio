@@ -1,0 +1,165 @@
+# BEAN Folio — Scaling Architecture (measured → 100k)
+
+Status: **architecture defined, Tier A/B proven locally, Tier C (100k) NOT
+measured — requires the topology in §6.** This document separates what is
+MEASURED (with evidence) from what is DESIGNED (with exact activation steps).
+
+> **MI-1 update (multi-instance state readiness):** the three load-bearing
+> instance-local state gaps (AI design jobs, GIFTZ cancel/in-flight sets,
+> LAXII in-flight coordination) are CLOSED — see §2. The application is now
+> correct at N>1 replicas for job state, cancellation, duplicate-execution
+> prevention and restart recovery. §2 keeps the register with its evidence.
+
+## 1. What is already multi-instance-safe (measured / code-verified)
+
+| Concern | Mechanism | Evidence |
+|---|---|---|
+| Sessions | Opaque 32-byte token, SHA-256 at rest in the `Session` table; per-request DB lookup | `src/lib/auth.ts:34-122` |
+| Rate limiting | `RATE_LIMIT_BACKEND=postgres` — SHA-256-hashed keys in `RateLimitBucket`, fleet-shared | `src/lib/rate-limit-backend.ts` |
+| Cache invalidation | `CACHE_BACKEND=postgres` shared tier, generation counter, whitelist (`profile:public:*`, `professions:*`) | `src/lib/cache/shared.ts` |
+| Background jobs | Durable `BackgroundJob` table queue: atomic claims, heartbeats, stuck recovery, DLQ + replay, recurring chains | `src/lib/queue/index.ts` |
+| Media | S3 driver + presigned direct PUT (10-min single-key), private buckets, Range serving | `src/lib/storage.ts` |
+| Published GIFTZ sites | DB JSON artifacts (not instance-local files) | `public/[...path]/route.ts` |
+| Realtime | SSE (stateless HTTP) — LB-friendly; no sticky sessions needed | `api/ai/chat-stream/route.ts` |
+| Graceful shutdown | SIGTERM → queue drain, 27 s hard cap | `src/instrumentation.ts` |
+| **Design-job state (MI-1)** | Durable `DesignJob` table: shared store, claim lease, durable cancel, retry budget, per-step persistence, queue-driven execution (`ai.design-job` handler) | `src/lib/ai-design/jobs.ts`, `tests/design-jobs-durable.test.ts` |
+| **GIFTZ task coordination (MI-1)** | Durable `AgentTask.cancelRequestedAt` + status-guarded transitions + guarded launch claims (no process-local Sets) | `src/lib/giftz/jobs.ts`, `tests/giftz-cross-instance.test.ts` |
+| **LAXII job coordination (MI-1)** | RUNNING row IS the claim (transactional check+create); all terminal writes status-guarded (cancel is final, DONE never overwrites cancel) | `src/lib/laxii/jobs.ts`, `src/lib/laxii/service.ts`, `tests/laxii-job-state.test.ts` |
+
+## 2. Instance-local state register (post-MI-1)
+
+| Gap | Location | Status | Evidence / remaining note |
+|---|---|---|---|
+| AI design jobs in-memory Map | `src/lib/ai-design/jobs.ts` | **CLOSED (MI-1)** — job state is the durable `DesignJob` table; execution moved onto the durable `BackgroundJob` queue (`ai.design-job` handler); claim lease + heartbeat + stale recovery + retry budget | `tests/design-jobs-durable.test.ts` (14 tests); live two-instance HTTP proof in `scripts/multi-instance-verify.ts` |
+| GIFTZ task cancel/in-flight sets | `src/lib/giftz/jobs.ts` | **CLOSED (MI-1)** — `cancelRequestedAt` on the task row; runners poll it at step boundaries; every runner transition active-guarded; approve/retry claims via guarded update | `tests/giftz-cross-instance.test.ts` (5 tests) |
+| LAXII in-flight set | `src/lib/laxii/jobs.ts` | **CLOSED (MI-1)** — the write-only Set removed; RUNNING row is the transactional claim; terminal writes status-guarded (cancel final; DONE never resurrects) | `tests/laxii-job-state.test.ts` (6 tests) |
+| Circuit breakers per-instance | `src/lib/intelligence/circuit.ts` | ACCEPTED (per-user quotas bound spend) | Optional shared breaker in Postgres later — evidence-driven |
+| Editing workspaces on local disk | `src/lib/giftz/workspace.ts` | ACCEPTED for Tier A/B | Single-writer tier: sticky route via LB for `/api/giftz/*`, or move workspaces to the S3 driver (`storage.ts` seam) before replicas>1 serve GIFTZ editing |
+
+**Multi-instance run rule after MI-1:** job/state coordination is safe at
+N>1 replicas with `RATE_LIMIT_BACKEND=postgres` + `CACHE_BACKEND=postgres`
+(the shipped compose sets both). The ONLY remaining single-writer surface is
+the GIFTZ editing workspace on disk (row 5) — keep GIFTZ editing traffic on
+one replica or activate the S3 workspace driver before serving it from >1.
+
+### 2.1 Rate limiting — distributed enforcement recommendation (OWNER DECISION REQUIRED)
+
+**Evidence (read from code, not assumed):**
+
+- `src/lib/rate-limit-backend.ts` ships TWO interchangeable backends with
+  IDENTICAL fixed-window semantics: the default `memory` backend
+  (per-instance, 5,000-bucket cap with prune) and the `postgres` shared
+  backend (`RateLimitBucket` upsert, PII-hashed keys, opportunistic prune).
+- `hitRateLimit()` is resilient: if the shared backend fails, the call falls
+  back to memory for that request and logs `ratelimit.backend_fallback` —
+  limits are enforced per-instance rather than disabled.
+- `/api/metrics` exposes the ACTIVE backend identity per instance
+  (`bean_rate_limit_backend`) — the fleet-wide scaling tell is already
+  observable.
+- The shipped production compose sets `RATE_LIMIT_BACKEND: postgres` (and
+  `CACHE_BACKEND: postgres`) — the verified multi-instance configuration is
+  already the default in the reviewed deployment artifact.
+- `docker-compose.multi.yml` (MI-1) repeats both — a replica set that forgot
+  them would still be caught by the metrics tell and by the documented
+  startup validation (invalid values refuse to boot).
+
+**Recommendation (requires explicit owner approval — security-sensitive
+default, MILESTONE_EXECUTION_PROTOCOL §3.4):** at N>1 instances the memory
+backend is UNSUITABLE for consistent enforcement (each instance counts
+separately, so the effective limit multiplies by N). The evidence supports
+flipping the DEFAULT to `postgres` once Postgres is the primary database —
+the per-request cost is one indexed upsert and the fallback keeps requests
+flowing if the shared bucket write ever fails. This milestone deliberately
+DOES NOT make that change: it is a security-sensitive default change and
+stays behind the approval gate. Until approved, multi-instance deployments
+MUST set `RATE_LIMIT_BACKEND=postgres` explicitly (the compose artifacts
+already do), and `docker-compose.multi.yml` ships with it.
+
+**Deliberately NOT changed here (owner-gated):** scrypt parameters
+(N=16384 — below OWASP 2024 guidance, a documented M-7 finding) remain
+untouched; changing them re-locks every existing account or requires a
+rehash-on-login migration — a separate owner decision.
+
+## 3. Measured envelope (2026-11-23 campaign — 2 vCPU / 3.9 GiB sandbox, SQLite)
+
+### 3.0 MI-1 single-vs-multi-instance comparison (same box, same QA data)
+
+Closed-model `vu-probe.js` (realistic public read mix, 1s think time),
+production standalone artifact, 45 s per leg, one generator IP, zero hard
+errors (5xx + network) in EVERY leg:
+
+| Metric | 1 instance @ 100 VU | 2 instances @ 50 VU each |
+|---|---|---|
+| Aggregate throughput | 277.6 req/s | **325.2 req/s** (+17 %) |
+| p50 read latency | 55.4 ms | **≈ 22 ms** (−60 %) |
+| p95 read latency | 368 ms | **≈ 181–193 ms** (−50 %) |
+| 429 throttles (shared postgres limiter) | 2 894 | 3 138 aggregate — CONSISTENT fleet-wide enforcement |
+| RSS per instance | 719 MB | 686 / 727 MB |
+| Hard errors | 0 | 0 |
+
+Honest reading: the multi-instance topology MEASURES better under the same
+total concurrency (latency halves because each instance serves half the
+load; aggregate throughput +17 %). The throughput gain is bounded by the
+SHARED SQLite database's single-writer ceiling — exactly the documented next
+bottleneck: Tier B (Postgres + PgBouncer) is where the replica count starts
+paying off multiplicatively. The 429 counts also prove the shared
+`RateLimitBucket` backend enforces ONE limit across both instances (a
+single IP is throttled fleet-wide, not per-instance).
+
+### 3.1 Prior campaign (2026-11-23 — GZ-SCALE, single instance, SQLite)
+
+- Zero 5xx across ~107 k requests incl. **1,000 simultaneous connections**
+  (closed-model) and an 800-VU connection spike; RSS stayed < 1 GB.
+- Safe interactive envelope on THAT box: **~100–200 concurrent users**
+  (closed-model p95 ≤ 400 ms); open-model admitted 30–80 effective RPS under
+  production rate limits.
+- Saturation curve (p50 56 ms → 419 ms → 756 ms at 100/500/1000 VU) is
+  connection queueing + SQLite single-writer — NOT a leak or crash mode.
+- Full tables: `docs/ops/LOAD_TESTING.md` §6.4; raw JSON in
+  `scripts/loadtest/results/gz-scale-*.json`.
+
+## 4. Tier ladder (targets, not claims)
+
+| Tier | Concurrent users | Topology | Swap points (all exist) |
+|---|---|---|---|
+| A | ~100–500 | 1 app + Postgres + Caddy (shipped compose) | `DATABASE_URL` → postgres; backends → `postgres` |
+| B | 5k–20k | N app replicas + Postgres + PgBouncer + S3 + CDN | §2 gaps closed first; `deploy.resources.replicas` / LB |
+| C | 100k | Tier B + CDN (≈70 % offload) + read replicas + Redis | `DEPLOYMENT_TIERS.md` §env-lever table |
+
+## 5. Tier C activation checklist (each item independently verifiable)
+
+1. **Database**: PostgreSQL 16 primary (schemas already at 100/100 parity —
+   `scripts/check-schema-parity.ts` in CI). PgBouncer in front; Prisma
+   `?connection_limit=10&pool_timeout=10` behind it (compose already does).
+   Read replica for public profile/feed reads once measured read share > 70 %.
+2. **Cache/rate-limit backends**: `postgres` first; Redis adapter is a named
+   swap point (`rate-limit-backend.ts:271`, `cache/index.ts:222`) — implement
+   only when Postgres polling shows measurable contention (avoid adding a
+   dependency before evidence demands it).
+3. **Object storage**: S3 driver (`MEDIA_STORAGE_DRIVER=s3`, all four vars) +
+   presigned uploads (already shipped); CDN in front of `/api/media/*/raw`
+   with signed URLs.
+4. **Queues**: move §2 job stores onto the durable queue; scale
+   `scripts/queue-drain.ts` workers independently from web replicas.
+5. **AI isolation**: per-user quotas exist (`AI_DAILY_LIMIT`,
+   `INTELLIGENCE_DAILY_COST_LIMIT_USD`); add a fleet-wide concurrency
+   semaphore (p-limit style) in `src/lib/intelligence/gateway.ts` before Tier C.
+6. **Observability**: Prometheus scrape of `/api/metrics` (`METRICS_TOKEN`);
+   alert on `bean_queue_jobs{state="QUEUED"}` age, `bean_ai_circuit_status`,
+   RSS, 5xx rate.
+7. **Load proof**: §6 distributed generator plan at T2 → T5 with per-source
+   IPs; SLOs in `docs/ops/LOAD_TESTING.md` §2 must hold at each tier before
+   the tier is claimed.
+
+## 6. Distributed load-generator plan (100k connections cannot be generated here)
+
+- 1 sandbox ≈ 550 req/s generated (measured ceiling). For 10–30k edge RPS:
+  ≥ 20 generator boxes (or k6 cloud) running `scripts/loadtest/k6/*.js` with
+  distributed execution (k6 `--distribution` / operator-managed fleet),
+  distinct source IPs so rate limiting behaves like production.
+- Staged: T1 1k → T2 10k → T3 25k → T4 50k → T5 100k; ramp, sustained, spike
+  and soak profiles are declared in `scripts/loadtest/workloads.md` §3.
+- Failure drills per tier: stop the DB, saturate AI providers (circuit must
+  open and recover — regression-pinned in
+  `tests/intelligence-circuit-probe.test.ts`), kill a worker mid-job
+  (heartbeat recovery), 4× traffic spike.
