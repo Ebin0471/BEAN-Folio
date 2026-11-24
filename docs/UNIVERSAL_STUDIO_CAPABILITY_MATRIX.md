@@ -41,7 +41,7 @@ Baseline: `main` at `74123a5` (PR #7 merge, 2026-11-24). North star:
 | GSAP motion presets (`GSAP_MOTION_PRESETS`) | 39 | `src/lib/giftz/motion-engine.ts` |
 | Vanta background effects (`VANTA_EFFECTS`) | 13 | `src/lib/giftz/motion-engine.ts` |
 | Config-mode step tools (`STEP_TOOLS`) | 15 | `src/lib/ai-design/tools.ts` |
-| GIFTZ API route files under `src/app/api/giftz/` | 41 | route-tree count (39 at baseline `74123a5` + 2 added in M33: `src/app/api/giftz/brand-kit/route.ts`, `src/app/api/giftz/planner/route.ts`) |
+| GIFTZ API route files under `src/app/api/giftz/` | 42 | route-tree count (39 at baseline `74123a5` + 3 added in M33: `src/app/api/giftz/brand-kit/route.ts`, `src/app/api/giftz/planner/route.ts`, `src/app/api/giftz/quality-gate/route.ts`) |
 
 ### 1.2 Capability table
 
@@ -72,7 +72,7 @@ Baseline: `main` at `74123a5` (PR #7 merge, 2026-11-24). North star:
 | --- | --- | --- |
 | Brand attributes → validated font pairings + shared brand kit | M33.1 | Implemented in this milestone (`src/lib/brand-kit.ts`); see §4 tests. |
 | Universal website-family planner + capability router (no dead buttons) | M33.2 | Implemented in this milestone (`src/lib/giftz/site-taxonomy.ts`, `src/lib/giftz/site-planner.ts`). |
-| Consolidated quality gate (a11y/SEO/links/responsive/perf report) | M33.3 | Browser checks exist per-proposal (`src/lib/ai-design/browser-checks.ts`); a consolidated report surface is not built yet. |
+| Consolidated quality gate (a11y/SEO/links/responsive/perf report) | Existing | `src/lib/giftz/quality-gate.ts`, `src/app/api/giftz/quality-gate/route.ts` | M33.3: deterministic STATIC report (15 checks) over a site's compiled project file tree with page-attributed evidence; every report ships an explicit `untested` list — static analysis never claims runtime proof; live-render complement remains `src/lib/ai-design/browser-checks.ts`. |
 | Versioned banner/canvas presets beyond the canonical one (LAXII side) | M33.4 | See §2. |
 | Custom-domain serving (after DNS/TLS/ingress) | Owner gate | Registry + DNS verify only. |
 
