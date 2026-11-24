@@ -49,6 +49,20 @@ and archived-banner checks instead of the REST API — both succeeded for every 
     examples or presets** (upstream's `gjs-preset-webpage` is deliberately NOT installed).
   - Import/export adapter (project files → editor → project files) with the round-trip +
     reconciliation contract (see `docs/architecture/multi-tenant-publishing.md` §12).
+  - **Round-trip fidelity (EXECUTED browser evidence, 2026-11-24):** the import→edit→export→
+    reconstruct cycle was run in a real browser against representative GIFTZ output (full
+    evidence: `scripts/poc/giftz-visual-editor-roundtrip/RESULT.md`). Three editor-model
+    findings shaped the adapter: scripts are stripped by the editor (→ extracted at load,
+    re-injected VERBATIM at save — the visual editor never claims to edit scripts), the
+    `styles` project-data entry round-trips only partially (→ the stylesheet rides as an
+    editor-managed in-document style block, which GrapesJS parses completely), and the export
+    is wrapper-less (→ doctype + verbatim head + `<html lang>` spliced from the original).
+    Verified kept: verbatim head (meta/title/link), nav links + aria labels, section
+    ids/classes, img alt, vendor + motion scripts, and a COMPLETE stylesheet (CSS variables +
+    every class rule). Body whitespace/attribute order normalizes (documented,
+    non-semantic). Pages whose styling does not fit the safe shape (multi-stylesheet,
+    external CSS) are refused with an honest reason — the Code workspace stays fully
+    available for them.
 - **License obligations honored:** BSD-3-Clause requires retaining the copyright + license text
   in redistributions of the library — satisfied because the library ships as an npm dependency
   with its LICENSE file intact (never stripped, never modified); the attribution note below

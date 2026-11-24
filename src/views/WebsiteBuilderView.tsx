@@ -1,5 +1,7 @@
 "use client";
 
+import dynamic from "next/dynamic";
+
 /**
  * CODE GIFTZ — the website coding studio (the ONE Code Giftz workspace).
  *
@@ -87,6 +89,15 @@ import { Switch } from "@/components/ui/switch";
 import { EmptyState } from "@/components/bean/EmptyState";
 import { BuildWorkspace } from "@/components/bean/site/giftz/BuildWorkspace";
 import { CodeWorkspace } from "@/components/bean/site/giftz/CodeWorkspace";
+// M3/M4: the GrapesJS-based visual editor is client-only (DOM + iframe
+// dependencies) and heavy — loaded lazily, one instance per mount.
+const VisualWorkspace = dynamic(() => import("@/components/bean/site/giftz/VisualWorkspace"), {
+  loading: () => (
+    <div className="flex min-h-0 flex-1 items-center justify-center text-xs text-muted-foreground">
+      Loading the visual editor…
+    </div>
+  ),
+});
 import { MotionWorkspace } from "@/components/bean/site/giftz/MotionWorkspace";
 import { InspectorPanel } from "@/components/bean/site/giftz/InspectorPanel";
 import { GiftzVersionDialog } from "@/components/bean/site/giftz/GiftzVersionDialog";
@@ -704,6 +715,7 @@ const STUDIO_MODES = [
  */
 const GIFTZ_CANVAS_TABS = [
   { key: "preview", label: "Preview", hint: "Rendered preview of the generated website" },
+  { key: "design", label: "Design", hint: "Visual editing of the generated pages (GrapesJS-based)" },
   { key: "code", label: "Code", hint: "Project file tree and code editor" },
   { key: "motion", label: "Motion", hint: "GSAP animations and Vanta background configuration" },
   { key: "build", label: "Build", hint: "Builds, deployments, domains and activity" },
@@ -3022,6 +3034,20 @@ export default function WebsiteBuilderView() {
                     </div>
                   ) : null}
                 </>
+              ) : giftzCanvasTab === "design" ? (
+                giftzSite ? (
+                  // M3/M4: the GrapesJS-based visual editor — operates on the
+                  // site's REAL project files through the same validated APIs
+                  // as the Code workspace (source reconciliation included).
+                  <VisualWorkspace siteId={giftzSite.id} refreshToken={giftzFilesRefresh} />
+                ) : (
+                  <div className="flex min-h-0 flex-1 items-center justify-center p-6 text-center">
+                    <p className="max-w-sm text-xs leading-relaxed text-muted-foreground">
+                      The Design workspace visually edits a SAVED generated website's pages — generate and save a
+                      website in Chat first, then switch between Design and Code freely.
+                    </p>
+                  </div>
+                )
               ) : giftzCanvasTab === "code" ? (
                 giftzSite ? (
                   <CodeWorkspace
