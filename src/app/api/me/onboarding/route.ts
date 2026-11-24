@@ -3,6 +3,7 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { getSessionUser, getUserWithTaxonomy, buildPublicMe } from "@/lib/auth";
 import { ok, err, ERR, parseBody, handler, USERNAME_RE } from "@/lib/api-helpers";
+import { isUsernameReservedForClaim } from "@/lib/tenant-host";
 import { resolveActiveSlugs, normalizeProfessionSlugs } from "@/lib/professions/service";
 import { identityOnboardingSchema, userFieldUpdatesFor } from "@/lib/onboarding-identity";
 
@@ -89,6 +90,15 @@ export const POST = handler(async (req: NextRequest) => {
   const username = r.data.username.trim().toLowerCase();
   if (!USERNAME_RE.test(username)) {
     return err("Username must be 3-24 chars: lowercase letters, numbers, hyphens", 400);
+  }
+  // M1 (multi-tenant): reserved platform/system names are not claimable as
+  // NEW usernames — the username IS the tenant hostname under the platform
+  // root, and a reserved name would shadow platform infrastructure
+  // (www/api/admin/docs/...) once wildcard subdomains go live. Existing
+  // users who already hold such a name keep it (no reclassification, no
+  // backfill); only new claims are guarded.
+  if (isUsernameReservedForClaim(username)) {
+    return err("This username is reserved for platform use — choose another", 400);
   }
 
   const professionIds = await requireProfessionIds(r.data.professions);
