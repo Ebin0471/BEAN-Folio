@@ -17,7 +17,7 @@
 import { db } from "@/lib/db";
 import type { GiftzBuild, GiftzDeployment, GiftzSite } from "@prisma/client";
 import { normalizeConfig } from "@/lib/site-config";
-import { publicSiteGiftzPath } from "@/lib/site-url";
+import { publicSiteGiftzPath, tenantGiftzUrl } from "@/lib/site-url";
 import { resolveShareOriginForRequest } from "@/lib/workspace-origin";
 import { log } from "@/lib/logger";
 import { reportError } from "@/lib/monitoring";
@@ -88,6 +88,16 @@ export type PublishResult =
       canonicalUrl: string | null;
       canonicalKind: string | null;
       canonicalUrlUnavailable: { reason: string; message: string } | null;
+      /**
+       * M2 — tenant-host address for this site (username.beanfolio.app model;
+       * `username.localhost:3000` in local dev). Constructed ONLY from the
+       * configured root (or the documented local-dev default) — never from
+       * request hosts. `local-preview` results must be labelled as local
+       * previews by the UI, never presented as public links.
+       */
+      tenantUrl: string | null;
+      tenantUrlKind: "local-preview" | "production" | null;
+      tenantUrlUnavailable: { reason: string; message: string } | null;
     }
   | {
       ok: false;
@@ -254,6 +264,9 @@ export async function publishGiftzSiteProject(
     const share = await resolveShareOriginForRequest(headers);
     const canonicalUrl = share.ok && live.url ? `${share.origin}${live.url}` : null;
 
+    // M2: tenant-host address (config-derived only — see tenantGiftzUrl).
+    const tenant = tenantGiftzUrl(user.username, site.id);
+
     return {
       ok: true,
       deployment: live,
@@ -263,6 +276,9 @@ export async function publishGiftzSiteProject(
       canonicalUrl,
       canonicalKind: share.ok ? share.kind : null,
       canonicalUrlUnavailable: share.ok ? null : { reason: share.reason, message: share.message },
+      tenantUrl: tenant.ok ? tenant.url : null,
+      tenantUrlKind: tenant.ok ? tenant.kind : null,
+      tenantUrlUnavailable: tenant.ok ? null : { reason: tenant.reason, message: tenant.message },
     };
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
