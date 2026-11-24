@@ -10,8 +10,9 @@
  *  - identical theme tokens (colors, gradient, glass, fonts, radius, density,
  *    type scale, spacing, buttons, links, dividers) via the SAME deriveTheme /
  *    themeFontStacks / motion CSS generators from lib/site-config & site-motion
- *  - all 11 section types incl. hero variants, list/grid/editorial/featured
- *    project layouts, gallery strip/masonry, timeline experience rows
+ *  - all supported section types (see SECTION_TYPES in site-config.ts) incl.
+ *    hero variants, list/grid/editorial/featured project layouts, gallery
+ *    strip/masonry, timeline experience rows
  *  - multi-page sites → one HTML file per page, real <a> navigation
  *  - scroll reveals with the same IntersectionObserver semantics (once/repeat,
  *    failsafe, prefers-reduced-motion) shipped as a small vanilla site.js

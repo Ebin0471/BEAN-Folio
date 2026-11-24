@@ -30,7 +30,7 @@ import { PROFESSION_FAMILIES, flattenTaxonomy } from "@/lib/professions/taxonomy
 export interface ProfessionPlaybook {
   /** Must be a slug of PROFESSION_FAMILIES (13 families). */
   familySlug: string;
-  /** Ordered section-type guidance — a subset of the 11 valid SiteSectionTypes. */
+  /** Ordered section-type guidance — a subset of the valid SiteSectionTypes (see SECTION_TYPES in site-config.ts). */
   sectionOrderPreference: SiteSectionType[];
   /** The kind of work this family portfolios ("News report", "Case study"…). */
   projectTypes: string[];

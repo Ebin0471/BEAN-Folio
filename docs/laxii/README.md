@@ -1,5 +1,16 @@
 # LAXII — Open-Source AI Image Engine
 
+> **HISTORICAL DOCUMENT (marked 2026-11, M33.0).** This README describes an
+> architecture that has since been removed from the codebase: `engine.ts` and
+> `pipeline/*`, the MODNet preserved-pixel backdrop engine, the `LaxiiJob`
+> Prisma model, and the 6+7 preset registry (13 banner presets incl.
+> YouTube 2560×1440). None of these exist in source today — the live registry
+> has exactly ONE banner preset (2048×687) and provider selection is pinned to
+> the managed gateway. Do not use this document as a current-state reference.
+> Current truth: `docs/UNIVERSAL_STUDIO_CAPABILITY_MATRIX.md` and
+> `docs/ai-transformation/04-laxii-realism-capabilities.md`. The preserved
+> file remains for provenance of the Diffusers worker work described below.
+
 LAXII is a modular, provider-agnostic image generation & editing engine. It
 powers professional avatar and banner creation inside BEAN Folio (Profile
 Studio) while remaining **independently reusable** by any other BEAN product.

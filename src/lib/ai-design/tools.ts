@@ -17,6 +17,8 @@
  * UNSUPPORTED so prompts, the UI and the docs state the limit honestly.
  */
 
+import { SECTION_TYPES } from "@/lib/site-config";
+
 export type ToolFamily = "deterministic" | "model";
 export type ToolTargetKind = "none" | "section" | "page" | "library-id";
 
@@ -86,7 +88,7 @@ export const STEP_TOOLS: readonly ToolDef[] = [
     family: "model",
     targetKind: "page",
     needsInstruction: true,
-    description: "Create a new section (any of the 15 section types: hero, about, projects, skills, stats, collections, contact, services, experience, gallery, testimonials, process, faq, pricing, logos) on a target page, with its content.",
+    description: `Create a new section (any of the ${SECTION_TYPES.length} section types: ${SECTION_TYPES.join(", ")}) on a target page, with its content.`,
   },
   {
     id: "section.update",
