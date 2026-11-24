@@ -1,0 +1,15 @@
+/* Representative GIFTZ generated stylesheet (motion/runtime references included) */
+:root { --gold: #c8a44d; --ink: #101010; }
+* { box-sizing: border-box; }
+body { margin: 0; font-family: system-ui, sans-serif; color: var(--ink); }
+.site-header { padding: 16px 24px; border-bottom: 1px solid #eee; }
+.nav-link { margin-right: 16px; text-decoration: none; color: var(--ink); }
+.hero { padding: 80px 24px; text-align: center; opacity: 0; }
+.hero h1 { font-size: 44px; margin: 0 0 10px; }
+.hero-sub { color: #555; margin: 0 0 20px; }
+.cta { display: inline-block; padding: 10px 20px; border: 1px solid var(--gold); border-radius: 999px; text-decoration: none; }
+.work { padding: 48px 24px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
+.card { border: 1px solid #e2ded2; border-radius: 12px; padding: 16px; }
+.card img { width: 100%; border-radius: 8px; }
+.site-footer { padding: 24px; text-align: center; color: #777; }

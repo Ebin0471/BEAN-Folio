@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<!-- M3 PoC — GrapesJS round-trip harness for representative GIFTZ output.
+     Served by serve.ts (port 3102). The agent-browser run imports the sample
+     GIFTZ page, exports it through the editor, and the structural diff is
+     recorded in RESULT.md (see the directory README). -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BEAN GIFTZ visual-editor round-trip PoC</title>
+  <script src="/grapes.min.js"></script>
+  <style>
+    body { font-family: ui-sans-serif, system-ui; background: #101010; color: #e8e3d5; margin: 0; padding: 16px; }
+    button { background: #c8a44d; border: 0; border-radius: 8px; padding: 8px 14px; font-weight: 600; cursor: pointer; }
+    #editorHost { height: 480px; border: 1px solid #2a2a26; border-radius: 8px; margin: 12px 0; }
+    pre { background: #161616; border: 1px solid #2a2a26; padding: 10px; max-height: 300px; overflow: auto; font-size: 11px; }
+    .row { display: flex; gap: 10px; }
+  </style>
+</head>
+<body>
+  <h1 style="font-size:18px;margin:0 0 8px">GIFTZ visual-editor round-trip PoC (grapesjs 0.23.9)</h1>
+  <div class="row">
+    <button id="btnImport">1. Import sample GIFTZ page</button>
+    <button id="btnExport" disabled>2. Export round-trip</button>
+  </div>
+  <div id="editorHost"></div>
+  <h2 style="font-size:14px">Exported HTML</h2>
+  <pre id="outHtml">(not exported yet)</pre>
+  <h2 style="font-size:14px">Exported CSS</h2>
+  <pre id="outCss">(not exported yet)</pre>
+  <script>
+    window.poc = { editor: null };
+    document.getElementById("btnImport").addEventListener("click", async () => {
+      const res = await fetch("/sample-page.html");
+      const html = await res.text();
+      const css = await (await fetch("/sample-style.css")).text();
+      const grapesjs = window.grapesjs;
+      window.poc.editor = grapesjs.init({
+        container: document.getElementById("editorHost"),
+        height: "480px", width: "auto", storageManager: false,
+        projectData: { pages: [{ id: "p", component: html }], styles: [{ selectors: [], style: {}, cssText: css }] },
+      });
+      document.getElementById("btnExport").disabled = false;
+    });
+    document.getElementById("btnExport").addEventListener("click", () => {
+      const e = window.poc.editor;
+      document.getElementById("outHtml").textContent = e.getHtml();
+      document.getElementById("outCss").textContent = e.getCss();
+    });
+  </script>
+</body>
+</html>

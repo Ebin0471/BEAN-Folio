@@ -1,5 +1,7 @@
 "use client";
 
+import dynamic from "next/dynamic";
+
 /**
  * CODE GIFTZ — the website coding studio (the ONE Code Giftz workspace).
  *
@@ -87,6 +89,15 @@ import { Switch } from "@/components/ui/switch";
 import { EmptyState } from "@/components/bean/EmptyState";
 import { BuildWorkspace } from "@/components/bean/site/giftz/BuildWorkspace";
 import { CodeWorkspace } from "@/components/bean/site/giftz/CodeWorkspace";
+// M3/M4: the GrapesJS-based visual editor is client-only (DOM + iframe
+// dependencies) and heavy — loaded lazily, one instance per mount.
+const VisualWorkspace = dynamic(() => import("@/components/bean/site/giftz/VisualWorkspace"), {
+  loading: () => (
+    <div className="flex min-h-0 flex-1 items-center justify-center text-xs text-muted-foreground">
+      Loading the visual editor…
+    </div>
+  ),
+});
 import { MotionWorkspace } from "@/components/bean/site/giftz/MotionWorkspace";
 import { InspectorPanel } from "@/components/bean/site/giftz/InspectorPanel";
 import { GiftzVersionDialog } from "@/components/bean/site/giftz/GiftzVersionDialog";
@@ -704,6 +715,7 @@ const STUDIO_MODES = [
  */
 const GIFTZ_CANVAS_TABS = [
   { key: "preview", label: "Preview", hint: "Rendered preview of the generated website" },
+  { key: "design", label: "Design", hint: "Visual editing of the generated pages (GrapesJS-based)" },
   { key: "code", label: "Code", hint: "Project file tree and code editor" },
   { key: "motion", label: "Motion", hint: "GSAP animations and Vanta background configuration" },
   { key: "build", label: "Build", hint: "Builds, deployments, domains and activity" },
@@ -837,6 +849,13 @@ export default function WebsiteBuilderView() {
   const [giftzSitesLoading, setGiftzSitesLoading] = useState(false);
   const [giftzSite, setGiftzSite] = useState<GiftzSiteDetail | null>(null);
   const [giftzPublishedPath, setGiftzPublishedPath] = useState<string | null>(null);
+  // M2 (multi-tenant publishing): the tenant-host address for THIS generated
+  // site, exactly as the publish pipeline constructed it (config-derived —
+  // never request-derived). `local-preview` results are labelled as local
+  // previews; production results are the real future public URL once the
+  // root domain, wildcard DNS and wildcard HTTPS exist.
+  const [giftzTenantUrl, setGiftzTenantUrl] = useState<{ url: string; kind: "local-preview" | "production" } | null>(null);
+  const [giftzTenantUnavailable, setGiftzTenantUnavailable] = useState<string | null>(null);
   const [giftzLinkDialogOpen, setGiftzLinkDialogOpen] = useState(false);
   /** GIFTZ center-area view (Preview | Code | Build) — contract §8. */
   const [giftzCanvasTab, setGiftzCanvasTab] = useState<GiftzCanvasTab>("preview");
@@ -1956,12 +1975,18 @@ export default function WebsiteBuilderView() {
       // Pre-check passed (or no project files — legacy JSON-only path).
       setPublishDialogOpen(false);
       setGiftzPublishBuild(null);
-      const res = await api<{ status: string; publishedAt: string | null; publicPath: string | null }>(
-        `/api/giftz/sites/${encodeURIComponent(siteId)}/publish`,
-        { method: "POST" }
-      );
+      const res = await api<{
+        status: string;
+        publishedAt: string | null;
+        publicPath: string | null;
+        tenantUrl: string | null;
+        tenantUrlKind: "local-preview" | "production" | null;
+        tenantUrlUnavailable: { reason: string; message: string } | null;
+      }>(`/api/giftz/sites/${encodeURIComponent(siteId)}/publish`, { method: "POST" });
       setGiftzSite((s) => (s && s.id === siteId ? { ...s, status: "PUBLISHED", deployStatus: "PUBLISHED" } : s));
       setGiftzPublishedPath(res.publicPath);
+      setGiftzTenantUrl(res.tenantUrl && res.tenantUrlKind ? { url: res.tenantUrl, kind: res.tenantUrlKind } : null);
+      setGiftzTenantUnavailable(res.tenantUrlUnavailable?.message ?? null);
       setGiftzLinkDialogOpen(true);
       setGiftzFilesRefresh((n) => n + 1);
       toast.success("Generated website published — it is live at its own address");
@@ -1980,6 +2005,8 @@ export default function WebsiteBuilderView() {
       await api(`/api/giftz/sites/${encodeURIComponent(giftzSite.id)}/unpublish`, { method: "POST" });
       setGiftzSite((s) => (s ? { ...s, status: "DRAFT" } : s));
       setGiftzPublishedPath(null);
+      setGiftzTenantUrl(null);
+      setGiftzTenantUnavailable(null);
       setGiftzLinkDialogOpen(false);
       toast.success("Generated website unpublished — it is no longer publicly visible");
     } catch (e) {
@@ -3007,6 +3034,20 @@ export default function WebsiteBuilderView() {
                     </div>
                   ) : null}
                 </>
+              ) : giftzCanvasTab === "design" ? (
+                giftzSite ? (
+                  // M3/M4: the GrapesJS-based visual editor — operates on the
+                  // site's REAL project files through the same validated APIs
+                  // as the Code workspace (source reconciliation included).
+                  <VisualWorkspace siteId={giftzSite.id} refreshToken={giftzFilesRefresh} />
+                ) : (
+                  <div className="flex min-h-0 flex-1 items-center justify-center p-6 text-center">
+                    <p className="max-w-sm text-xs leading-relaxed text-muted-foreground">
+                      The Design workspace visually edits a SAVED generated website's pages — generate and save a
+                      website in Chat first, then switch between Design and Code freely.
+                    </p>
+                  </div>
+                )
               ) : giftzCanvasTab === "code" ? (
                 giftzSite ? (
                   <CodeWorkspace
@@ -3302,6 +3343,32 @@ export default function WebsiteBuilderView() {
                 <ExternalLink className="size-4" aria-hidden /> Open generated website
               </Button>
             </div>
+            {giftzTenantUrl ? (
+              <div className="space-y-1.5 rounded-lg border border-border/60 bg-background/40 p-3">
+                <p className="text-[11px] font-medium text-foreground">
+                  {giftzTenantUrl.kind === "local-preview"
+                    ? "Tenant address — LOCAL PREVIEW (username.localhost)"
+                    : "Tenant address (username.<root domain>)"}
+                </p>
+                <Input
+                  readOnly
+                  value={giftzTenantUrl.url}
+                  aria-label="Tenant address for this generated website"
+                  className="h-9 font-mono text-xs"
+                  onFocus={(e) => e.currentTarget.select()}
+                />
+                {giftzTenantUrl.kind === "local-preview" ? (
+                  <p className="text-[11px] leading-relaxed text-muted-foreground">
+                    Local development preview only — resolves on this machine (localhost subdomains). Public
+                    wildcard subdomains go live only after the root domain, DNS, HTTPS and hosting are configured.
+                  </p>
+                ) : null}
+              </div>
+            ) : giftzTenantUnavailable ? (
+              <p className="rounded-lg border border-border/60 bg-muted/30 p-3 text-[11px] leading-relaxed text-muted-foreground">
+                Tenant address unavailable: {giftzTenantUnavailable}
+              </p>
+            ) : null}
             <p className="rounded-lg border border-border/60 bg-muted/30 p-3 text-[11px] leading-relaxed text-muted-foreground">
               A permanent domain link follows the platform's production-domain configuration — the route above is the
               real working address on this deployment. Your portfolio website and its publish state are unaffected.

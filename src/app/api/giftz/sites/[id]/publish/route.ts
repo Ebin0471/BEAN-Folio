@@ -116,6 +116,11 @@ export const POST = handler(async (req: NextRequest, { params }: Ctx) => {
     canonicalUrl: result.canonicalUrl,
     canonicalKind: result.canonicalKind,
     canonicalUrlUnavailable: result.canonicalUrlUnavailable,
+    // M2 tenant-host address (config-derived only; local preview is labelled
+    // local-preview by the UI — never presented as a public link).
+    tenantUrl: result.tenantUrl,
+    tenantUrlKind: result.tenantUrlKind,
+    tenantUrlUnavailable: result.tenantUrlUnavailable,
     build: {
       id: result.build.id,
       status: result.build.status,

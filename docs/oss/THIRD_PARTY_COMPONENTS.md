@@ -16,6 +16,20 @@ to reuse BEAN's source).
 
 ## Adopted (dependency in use)
 
+### grapesjs 0.23.9 — BSD-3-Clause — GIFTZ visual editor core (production dependency, client-side only)
+
+| Field | Value |
+| --- | --- |
+| Upstream | https://github.com/GrapesJS/grapesjs |
+| Pinned version | `0.23.9` EXACT pin (published 2026-11-03; no `^` range so license audits bind to one tree) |
+| License (verified in-package at pinned version) | BSD-3-Clause — `node_modules/grapesjs/LICENSE` (`Copyright (c) 2017-current, Artur Arseniev`); npm metadata matches |
+| Packages/files reused | The published npm package only. No upstream source vendored into `src/`; no fork; no patch; `node_modules` never modified. |
+| Where used | GIFTZ visual editor (`src/lib/giftz/visual-editor/*`, mounted client-side in a `WebsiteBuilderView` canvas tab via dynamic import). NOT server-side; not executed for anonymous visitors. |
+| BEAN modifications | None to the upstream package. All customization is original BEAN adapter code (`grapesjs-config.ts`, import/export adapter, BEAN blocks/presets); upstream's own presets (`gjs-preset-webpage`) and plugins are NOT installed (zero plugins → no unaudited third-party plugin licenses). |
+| Commercial separation | `@grapesjs/studio-sdk` (Grapes Studio Inc. EULA — license keys/watermarks) is a SEPARATE commercial package that depends on the core; it is NOT installed and must never enter the dependency tree (see `docs/oss/website-editor-evaluation.md` §4 rules). |
+| License obligations | BSD-3-Clause notices preserved in the pinned package's LICENSE (carried by the lockfile); product-facing attribution recorded in `docs/oss/website-editor-evaluation.md` §2. No upstream trademarks used as BEAN branding. |
+| Full evaluation | `docs/oss/website-editor-evaluation.md` (candidates, licenses, rejection reasons, maintenance rules) |
+
 ### @langchain/langgraph 0.4.10 — MIT — PoC ONLY (devDependency)
 
 | Field | Value |

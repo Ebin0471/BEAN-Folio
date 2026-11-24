@@ -9,6 +9,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { resolveTenantHost } from "@/lib/tenant-host";
 
 /**
  * Minimal hash router. The whole SPA lives under the `/` route, so URLs look
@@ -52,10 +53,35 @@ const PUBLIC_BOOT_RE =
  * it is what makes the proxy-seeded server render and the client snapshot
  * agree (no wrong-route swap after hydration).
  */
+/**
+ * M1 — tenant-host navigation mapping (NAVIGATION ONLY, never authorization).
+ * When the SPA boots on a tenant host (`username.localhost` in local dev,
+ * `username.<configured root>` later), the browser URL stays the tenant form
+ * while the route resolves to the SAME experience as its path-form twin:
+ * tenant root → `/site/<username>`, tenant `/g/<siteId>` →
+ * `/site/<username>/g/<siteId>`. Every data endpoint still authenticates and
+ * authorizes server-side; this mapping only keeps the router in sync with
+ * the boot route the proxy seeded for the same request.
+ */
+function tenantRouteFromLocation(): string | null {
+  if (typeof window === "undefined") return null;
+  const resolved = resolveTenantHost(window.location.host);
+  if (resolved.kind !== "tenant") return null;
+  const path = window.location.pathname;
+  if (path === "/" || path === "") return `/site/${resolved.username}`;
+  const gMatch = /^\/g\/([A-Za-z0-9_-]+)\/?$/.exec(path);
+  if (gMatch) return `/site/${resolved.username}/g/${gMatch[1]}`;
+  return null;
+}
+
 export function currentPath(): string {
   if (typeof window === "undefined") return "/";
   const hash = window.location.hash;
   if (hash) return parseHash(hash);
+  // Tenant host: the visible URL is the tenant form; route as its path-form
+  // twin (the proxy seeded the identical boot route server-side).
+  const tenantRoute = tenantRouteFromLocation();
+  if (tenantRoute) return tenantRoute;
   const pathname = window.location.pathname;
   if (PUBLIC_BOOT_RE.test(pathname)) {
     // Decode each segment exactly as parseHash consumers expect — the proxy
@@ -104,6 +130,9 @@ export function navigate(to: string, replace = false): void {
 if (typeof window !== "undefined") {
   const canonicalizeBootUrl = () => {
     try {
+      // M1: on a tenant host the tenant URL form IS canonical — never rewrite
+      // the visible address to a path-form equivalent.
+      if (tenantRouteFromLocation()) return;
       if (PUBLIC_BOOT_RE.test(window.location.pathname)) return; // already route form
       const route = parseHash(window.location.hash);
       if (!PUBLIC_BOOT_RE.test(route)) return;
