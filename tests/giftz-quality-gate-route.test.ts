@@ -77,7 +77,7 @@ beforeAll(async () => {
     data: {
       userId: qaUserId,
       title: "QA Gate Site",
-      config: JSON.stringify({ palette: "midnight-gold" }),
+      config: JSON.stringify({ palette: "dark-luxury" }),
     },
   });
   siteId = site.id;
