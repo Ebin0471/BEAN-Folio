@@ -8,7 +8,7 @@ import { riisheSystemPrompt } from "@/lib/intelligence/personas";
 import { buildPortfolioContext } from "@/lib/intelligence/context";
 import { detectDelegationIntent, prepareDelegation } from "@/lib/intelligence/delegation";
 import { runAutomationIntent, detectAutomationIntent } from "@/lib/riishe/actions";
-import { looksLikeWorkflow, planAndCreateWorkflow } from "@/lib/riishe/planner";
+import { looksLikeWorkflow, planAndCreateWorkflow, planSpecialistWorkflow } from "@/lib/riishe/planner";
 import { interpretRequest, nextBestAction } from "@/lib/riishe/response-loop";
 import { systemPromptWithMode } from "@/lib/riishe/modes";
 import type { RiisheActionCard } from "@/lib/types";
@@ -120,6 +120,23 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
           } catch (e) {
             console.error("[ai-chat] automation intent failed, falling back to advisory chat:", e instanceof Error ? e.message : e);
           }
+        }
+      }
+      // M31: single-goal specialist path — a clear specialist request that is
+      // neither multi-step nor an existing automation intent becomes a REAL
+      // one-step workflow owned by the classified specialist (persisted,
+      // inspectable, pausable, auditable). Conservative: unmatched goals keep
+      // the plain advisory chat behavior.
+      if (!workflowCard && !automationOutcome) {
+        try {
+          const specialistWorkflow = await planSpecialistWorkflow(user, message, {
+            conversationId: conversation.id,
+          });
+          if (specialistWorkflow) {
+            workflowCard = { kind: "workflow", workflow: specialistWorkflow };
+          }
+        } catch (e) {
+          console.error("[ai-chat] specialist planning failed, falling back:", e instanceof Error ? e.message : e);
         }
       }
     }

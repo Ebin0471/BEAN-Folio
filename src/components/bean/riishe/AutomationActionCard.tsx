@@ -19,6 +19,7 @@ import { api } from "@/lib/client";
 import { navigate } from "@/lib/hash-router";
 import type { RiisheActionCard } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { SPECIALIST_NAME_BY_ID } from "@/lib/riishe/specialists-ui";
 
 /**
  * AutomationActionCard — the inline review card the EXISTING RIISHE chat
@@ -539,6 +540,11 @@ function WorkflowCardView({ action, onDismiss }: { action: Extract<RiisheActionC
 
   const steps = workflow.steps;
   const done = steps.filter((s) => s.status === "SUCCEEDED").length;
+  // M31: BEAN specialist identity for this workflow (name only — the UI never
+  // surfaces provider/model/backend labels).
+  const specialistName = (workflow as { specialistId?: string | null }).specialistId
+    ? SPECIALIST_NAME_BY_ID[(workflow as { specialistId?: string | null }).specialistId as string]
+    : undefined;
 
   return (
     <div>
@@ -548,6 +554,7 @@ function WorkflowCardView({ action, onDismiss }: { action: Extract<RiisheActionC
         hint={workflow.summary ?? workflow.goal.slice(0, 140)}
       />
       <p className="mt-1 text-xs text-muted-foreground">
+        {specialistName && <span className="mr-2 rounded-full border border-primary/40 bg-gold-soft px-2 py-0.5 text-[10px] font-medium text-primary">{specialistName}</span>}
         {done}/{steps.length} steps done · status {workflow.status.toLowerCase()}
       </p>
       <ol className="mt-3 max-h-80 space-y-2 overflow-y-auto pr-1" aria-label="Workflow steps">

@@ -38,6 +38,13 @@ import {
   type PlannerStepPlan,
 } from "@/lib/riishe/workflow-engine";
 import { toolCatalogForPlanner, getTool } from "@/lib/riishe/tools";
+import {
+  classifySpecialist,
+  getSpecialist,
+  specialistCatalogForPlanner,
+  specialistAllowsWorkspace,
+} from "@/lib/riishe/specialists";
+import { resolveWorkspace, type WorkspaceContext } from "@/lib/workspace";
 
 const PLANNER_SYSTEM = `You are the RIISHE automation planner inside BEAN Folio.
 Convert the user's goal into an execution plan using ONLY the registered tools below.
@@ -46,6 +53,7 @@ Return ONLY a JSON object (no prose, no markdown fences) shaped exactly like:
 {
   "title": "short workflow title",
   "summary": "one sentence describing the outcome",
+  "specialist": "<specialist id from the specialist catalog, or omit when no specialist fits>",
   "steps": [
     { "id": "s1", "tool": "<registered tool name>", "title": "what this step does",
       "params": { ...tool-specific params... },
@@ -54,6 +62,10 @@ Return ONLY a JSON object (no prose, no markdown fences) shaped exactly like:
     }
   ]
 }
+
+Specialists (choose the best match when the goal clearly belongs to one; only
+ids from the catalog — never invent specialists):
+{{SPECIALIST_CATALOG}}
 
 Rules:
 - Use ONLY tool names from the catalog. Never invent tools or params.
@@ -97,6 +109,8 @@ export async function planWithModel(
 ): Promise<PlannerPlan | null> {
   const context = await buildPortfolioContext(user as User);
   const catalog = toolCatalogForPlanner();
+  const specialistCatalog = specialistCatalogForPlanner();
+  const system = PLANNER_SYSTEM.replace("{{SPECIALIST_CATALOG}}", specialistCatalog || "(none available)");
   const prompt = [
     `Owner: ${user.name}`,
     context.profileBlock,
@@ -111,7 +125,7 @@ export async function planWithModel(
 
   let text: string;
   try {
-    const r = await aiComplete(PLANNER_SYSTEM, [{ role: "user", content: prompt }], {
+    const r = await aiComplete(system, [{ role: "user", content: prompt }], {
       agent: "RIISHE",
       feature: "riishe-planner",
       userId: user.id,
@@ -133,7 +147,16 @@ export async function planWithModel(
     if (!getTool(s.tool)) return null;
     if (!s.params || typeof s.params !== "object" || Array.isArray(s.params)) return null;
   }
-  return { title: plan.title, summary: plan.summary, steps: plan.steps as PlannerStepPlan[] };
+  // M31: specialist attribution is validated against the registry — an
+  // unknown or unavailable specialist id degrades to null (never trusted).
+  const specialistRaw = (plan as { specialist?: string }).specialist;
+  const specialist = typeof specialistRaw === "string" ? getSpecialist(specialistRaw) : null;
+  return {
+    title: plan.title,
+    summary: plan.summary,
+    steps: plan.steps as PlannerStepPlan[],
+    specialist: specialist && specialist.available() ? specialist.id : null,
+  };
 }
 
 /**
@@ -166,12 +189,152 @@ export function planDeterministically(goal: string): PlannerPlan | null {
     pendingDraftId = mapped.draftId ?? pendingDraftId;
   }
 
+  // M31: deterministic specialist mapping for clauses the intent engine does
+  // not recognize (research / metrics / checklists / interviews / docs).
+  for (const clause of clauses) {
+    if (steps.length >= MAX_WORKFLOW_STEPS) break;
+    if (steps.some((st) => clause.toLowerCase().split(/\s+/).some((w) => w.length > 3 && (st.title ?? "").toLowerCase().includes(w)))) {
+      continue; // crude de-dup: clause already covered by an earlier step
+    }
+    const step = specialistStepForClause(clause, () => `s${steps.length + 1}`, steps.length);
+    if (step) steps.push(step);
+  }
+
   if (steps.length === 0) return null;
+  const specialist = classifySpecialist(goal);
   return {
     title: goal.replace(/\s+/g, " ").slice(0, 60) || "Workflow",
     summary: "Deterministic plan built from your request.",
     steps: steps.slice(0, MAX_WORKFLOW_STEPS),
+    specialist: specialist?.id ?? null,
   };
+}
+
+/**
+ * M31: conservative keyword→specialist-tool mapping for a single clause.
+ * Only fires for goals the automation-intent engine does not already handle,
+ * and only with honest, minimal params (no invented people, dates or data).
+ */
+function specialistStepForClause(
+  clause: string,
+  nextId: () => string,
+  index: number
+): PlannerStepPlan | null {
+  const c = clause.toLowerCase();
+  const id = nextId();
+
+  if (/\b(interview|behavioral|technical round|portfolio review)\b/.test(c) && getTool("career.interviewPrep")) {
+    const roleMatch = clause.match(/\b(?:for|as)\s+(?:a|an)?\s*([a-z\s]{3,60}?)(?:\s+(?:role|position|interview))?(?:[?.,]|$)/i);
+    return {
+      id,
+      tool: "career.interviewPrep",
+      title: "Prepare an interview pack",
+      params: {
+        ...(roleMatch?.[1] ? { role: roleMatch[1].trim().slice(0, 120) } : {}),
+        ...(/\bbehavioral\b/.test(c) ? { interviewType: "BEHAVIORAL" as const } : {}),
+        ...(/\btechnical\b/.test(c) ? { interviewType: "TECHNICAL" as const } : {}),
+        ...(/\bportfolio\b/.test(c) ? { interviewType: "PORTFOLIO" as const } : {}),
+      },
+      dependsOn: index > 0 ? undefined : undefined,
+    };
+  }
+  if (/\b(research|market scan|competitor|competitors|industry trend|benchmarks?)\b/.test(c) && getTool("research.webBrief")) {
+    return {
+      id,
+      tool: "research.webBrief",
+      title: "Research a cited brief",
+      params: { query: clause.replace(/^(please\s+)?(research|look up|find out)\s*/i, "").slice(0, 200) },
+    };
+  }
+  if (/\b(metrics|analytics|how many|performance report|numbers)\b/.test(c) && getTool("analysis.metricsReport")) {
+    return { id, tool: "analysis.metricsReport", title: "Compile owner metrics", params: {} };
+  }
+  if (/\b(project status|status of my projects|project report)\b/.test(c) && getTool("pm.statusReport")) {
+    return { id, tool: "pm.statusReport", title: "Compile project status", params: {} };
+  }
+  if (/\b(onboarding checklist|onboard(ing)? (a |an )?(new )?(hire|joiner|teammate|employee))\b/.test(c) && getTool("peopleops.onboardingChecklist")) {
+    const roleMatch = clause.match(/\bfor\s+(?:a|an|our)?\s*([a-z\s]{3,60})(?:[?.,]|$)/i);
+    return {
+      id,
+      tool: "peopleops.onboardingChecklist",
+      title: "Draft an onboarding checklist",
+      params: { role: (roleMatch?.[1] ?? "new team member").trim().slice(0, 80) },
+    };
+  }
+  if (/\b(process checklist|playbook|sop|document the process)\b/.test(c) && getTool("ops.processChecklist")) {
+    const proc = clause.replace(/^(please\s+)?(draft|create|write|document)\s*(a|an|the)?\s*(process\s*(checklist|playbook|sop)?|sop)\s*(for|about|on)?\s*/i, "");
+    return {
+      id,
+      tool: "ops.processChecklist",
+      title: "Draft a process checklist",
+      params: { process: (proc || clause).slice(0, 120) },
+    };
+  }
+  if (/\b(find my document|search my documents|find document|where is my document|summarize my (docs|documents))\b/.test(c) && getTool("docs.searchWorkspace")) {
+    const terms = clause
+      .split(/\b(?:about|on|for|containing|with|mentioning)\b/i)[1]
+      ?.split(/[\s,]+/)
+      .filter((w) => w.length > 3)
+      .slice(0, 3);
+    return {
+      id,
+      tool: "docs.searchWorkspace",
+      title: "Search authorized documents",
+      params: { terms: terms && terms.length ? terms : ["draft"] },
+    };
+  }
+  return null;
+}
+
+/**
+ * M31 — single-goal specialist workflow path.
+ *
+ * The chat route calls this when neither delegation, multi-step planning nor
+ * the automation-intent engine matched: a clear single-specialist request
+ * ("prepare me for interviews", "research the competitor landscape", "compile
+ * my metrics") becomes a REAL one-step workflow owned by the classified
+ * specialist — persisted, inspectable, pausable, auditable. Conservative:
+ * returns null when no specialist classifies confidently, so plain chat
+ * stays the default.
+ */
+export async function planSpecialistWorkflow(
+  user: Pick<User, "id" | "name">,
+  goal: string,
+  opts?: { conversationId?: string | null }
+): Promise<(ReturnType<typeof toWorkflowDTO> & { planner: string }) | null> {
+  const specialist = classifySpecialist(goal);
+  if (!specialist) return null;
+  const workspace = await safeResolveWorkspace(user.id);
+  if (!specialistAllowsWorkspace(specialist, workspace.type)) return null;
+
+  const step = specialistStepForClause(goal, () => "s1", 0);
+  if (!step) return null;
+
+  try {
+    const created = await createWorkflowFromPlan(
+      user.id,
+      goal,
+      { title: `${specialist.name}: ${goal.replace(/\s+/g, " ").slice(0, 50)}`, summary: `${specialist.name} handles this request.`, steps: [step], specialist: specialist.id },
+      {
+        conversationId: opts?.conversationId ?? null,
+        planner: "deterministic",
+        specialistId: specialist.id,
+        workspace,
+      }
+    );
+    return { ...toWorkflowDTO(created), planner: "specialist" };
+  } catch {
+    return null;
+  }
+}
+
+/** Workspace resolution that never throws outside a request context. */
+export async function safeResolveWorkspace(userId: string): Promise<WorkspaceContext> {
+  try {
+    return await resolveWorkspace(userId);
+  } catch {
+    return { type: "PERSONAL", organizationId: null };
+  }
 }
 
 function mapIntentToStep(
@@ -329,6 +492,7 @@ export async function planAndCreateWorkflow(
   goal: string,
   opts?: { conversationId?: string | null }
 ): Promise<(ReturnType<typeof toWorkflowDTO> & { planner: string }) | null> {
+  const workspace = await safeResolveWorkspace(user.id);
   const viaModel = await planWithModel(user, goal);
   let created: Awaited<ReturnType<typeof createWorkflowFromPlan>> | null = null;
   let planner: "llm" | "deterministic" = "llm";
@@ -337,6 +501,8 @@ export async function planAndCreateWorkflow(
       created = await createWorkflowFromPlan(user.id, goal, viaModel, {
         conversationId: opts?.conversationId ?? null,
         planner: "llm",
+        specialistId: viaModel.specialist ?? null,
+        workspace,
       });
     } catch {
       created = null; // invalid plan → deterministic fallback
@@ -350,6 +516,8 @@ export async function planAndCreateWorkflow(
       created = await createWorkflowFromPlan(user.id, goal, fallback, {
         conversationId: opts?.conversationId ?? null,
         planner: "deterministic",
+        specialistId: fallback.specialist ?? null,
+        workspace,
       });
     } catch {
       return null;

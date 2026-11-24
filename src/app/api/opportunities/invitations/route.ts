@@ -1,6 +1,7 @@
 import { NextRequest, type NextResponse } from "next/server";
 import { z } from "zod";
 import { getSessionUser } from "@/lib/auth";
+import { requiresEmailVerification } from "@/lib/identity";
 import { ok, err, ERR, handler, rateLimitShared, sameOriginOk, parseBody } from "@/lib/api-helpers";
 import { db } from "@/lib/db";
 import { assertCandidateDiscoverableToOrg, getOrgActiveMemberUserIds } from "@/lib/ox/discovery";
@@ -75,6 +76,14 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
   const user = await getSessionUser();
   if (!user) return ERR.unauthorized();
   if (!sameOriginOk(req)) return ERR.forbidden();
+  // M31 trust gate: identity-aware accounts must verify their email before
+  // trust-sensitive actions (external outreach / invitations / candidate
+  // contact). Legacy accounts (primaryIdentity = null) and demo fixtures are
+  // outside the gate — existing behavior is exactly preserved.
+  if (requiresEmailVerification(user)) {
+    return err("Verify your email address before performing this action", 403, "EMAIL_VERIFICATION_REQUIRED");
+  }
+
 
   const parsed = await parseBody(req, createInvitationSchema);
   if (parsed.response) return parsed.response;

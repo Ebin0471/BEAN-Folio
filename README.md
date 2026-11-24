@@ -30,12 +30,12 @@ through a provider-independent gateway. Documentation separates **verified facts
 | **My Folio & Create Studio** | Universal project model: draft → publish gate → unpublish; media, skills, tools, contributors; portfolio profile with taxonomy |
 | **Portfolio Websites** | Creator-owned personal websites: builder, published sites served at `/site/<username>` with server-side SEO metadata, case studies |
 | **GIFTZ** | Engineering workspace: repository explorer, task composer with **plan-approval gate**, live execution timeline, per-file diffs, terminal output, test results, completion report — generates and builds real websites in sandboxed Git workspaces |
-| **RIISHE** | Personal intelligence: portfolio improvement, resume drafting, activity summaries — grounded in the user's own data only, draft-first outputs |
+| **RIISHE** | Personal intelligence workspace: one chat entry point with nine registered specialist agents (Career Guide, Talent Scout, Project Manager, Research Analyst, Business Operations, Growth & Communications, Business Analyst, People Operations, Document & Knowledge) over the real tool registry — plus portfolio improvement, resume drafting, activity summaries; durable multi-step workflows with approvals, pause/resume and full task history; grounded in the user's own authorized data only, draft-first outputs |
 | **LAXII** | Creative intelligence: conversational image studio — reference-guided creation, multi-reference editing, the 2048×687 banner studio and resume documents |
 | **Connect & Messaging** | Inquiries (accept/decline), follows, saves & collections, notifications, blocks & reports, one-to-one direct messages with message requests |
 | **Opportunity Exchange** | Employer identity verification, opportunities, matching, invitations, shortlists and hiring rooms (governed by the O0–O7 milestone reports) |
 | **Insights** | Owner-only analytics from real deduplicated view tables — honestly labeled estimates, 14-day series, top projects |
-| **Trust & Settings** | Visibility controls, AI consent, data export, account deletion, audit log |
+| **Trust & Settings** | Role-aware registration (four account identities: Career Professional, Independent Professional, Organization, Talent Partner — additive, never a platform-role change) with identity-aware onboarding, email verification lifecycle (hashed single-use tokens, honest no-provider delivery state), progressive trust state, personal/organization workspace switcher with server-enforced membership re-verification, visibility controls, AI consent, data export, account deletion, audit log |
 | **Moderation** | Admin review queues, including the Opportunity Exchange employer-verification and opportunity review pilots |
 
 ## Tech stack (as actually used)
@@ -45,9 +45,9 @@ through a provider-independent gateway. Documentation separates **verified facts
 | App | Next.js 16 (App Router, standalone output), React 19 |
 | Language | TypeScript 5 (strict) |
 | UI | Tailwind CSS 4 + shadcn/ui ("new-york"), dark obsidian + champagne-gold brand, framer-motion |
-| Data | Prisma 6 — **SQLite in development (`prisma/schema.prisma`), PostgreSQL mirror in production (`prisma/schema.postgres.prisma`)**; 101 models in both, kept identical by `scripts/check-schema-parity.ts` |
+| Data | Prisma 6 — **SQLite in development (`prisma/schema.prisma`), PostgreSQL mirror in production (`prisma/schema.postgres.prisma`)**; 104 models in both, kept identical by `scripts/check-schema-parity.ts` |
 | AI | Server-side BEAN Intelligence gateway (`src/lib/intelligence/**`) over `z-ai-web-dev-sdk` (sandbox managed provider); provider-registry + circuit-breaker, never client-side |
-| Auth | scrypt password hashing, opaque DB-backed sessions in httpOnly cookies; Google OAuth prepared (`docs/google-auth.md`) |
+| Auth | scrypt password hashing, opaque DB-backed sessions in httpOnly cookies; email verification lifecycle (SHA-256-hashed single-use tokens, configurable delivery adapter — `none` default never fabricates a send); Google OAuth prepared (`docs/google-auth.md`) |
 | Validation | zod v4 at every API boundary |
 | Scale readiness | Shared rate-limit/cache backends (`RATE_LIMIT_BACKEND`/`CACHE_BACKEND=postgres`), durable job store, cross-instance cancellation, multi-instance Compose overlay |
 | Runtime | bun (install, dev, build, scripts); Node 22 in production containers |
@@ -150,9 +150,9 @@ unconfigured features degrade honestly (never fake results). Per-user consent + 
 │   ├── components/bean/**     ← product components (incl. giftz/laxii/riishe workspaces)
 │   └── lib/**                 ← auth, ai gateway, giftz, laxii, riishe, ox, queue, cache,
 │                                 rate-limit-backend, storage, monitoring, security…
-├── prisma/schema.prisma       ← SQLite data model (101 models, development)
-├── prisma/schema.postgres.prisma ← PostgreSQL mirror (same 101 models, production)
-├── tests/                     ← 106 automated suites (isolated-QA-DB runner)
+├── prisma/schema.prisma       ← SQLite data model (104 models, development)
+├── prisma/schema.postgres.prisma ← PostgreSQL mirror (same 104 models, production)
+├── tests/                     ← 110 automated suites (isolated-QA-DB runner)
 ├── scripts/                   ← ops, ci, loadtest, diagnostics, seeds (see scripts/*/README.md)
 ├── docker-compose*.yml        ← production / development / multi-instance topologies
 ├── docs/                      ← documentation suite (below) + ops runbooks
