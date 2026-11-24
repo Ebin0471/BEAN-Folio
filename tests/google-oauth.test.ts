@@ -391,7 +391,7 @@ describe("account linking — password account + verified Google email", () => {
   test("does NOT silently link: issues a single-use grant and asks for one password login", async () => {
     clearJar();
     // Existing password account with a project (portfolio preservation check).
-    const reg = await registerRoute(req("/api/auth/register", "POST", { email: EMAILS.passwordLink, password: "link-password-1", name: "Link Me" }));
+    const reg = await registerRoute(req("/api/auth/register", "POST", { email: EMAILS.passwordLink, password: "link-password-1", name: "Link Me", identity: "CAREER_PROFESSIONAL" }));
     expect(reg.status).toBe(200);
     const owner = await db.user.findUnique({ where: { email: EMAILS.passwordLink } });
     await db.project.create({ data: { ownerId: owner!.id, title: "Pre-link portfolio piece", visibility: "PRIVATE", status: "DRAFT" } });
@@ -443,9 +443,9 @@ describe("account linking — password account + verified Google email", () => {
     // not a new account.
     const grantEmail = `grant-src-${Date.now()}@beanfolio.test`;
     const otherEmail = `grant-other-${Date.now()}@beanfolio.test`;
-    await registerRoute(req("/api/auth/register", "POST", { email: grantEmail, password: "grant-password-1", name: "Grant Src" }));
+    await registerRoute(req("/api/auth/register", "POST", { email: grantEmail, password: "grant-password-1", name: "Grant Src", identity: "CAREER_PROFESSIONAL" }));
     clearJar();
-    await registerRoute(req("/api/auth/register", "POST", { email: otherEmail, password: "other-password-1", name: "Other" }));
+    await registerRoute(req("/api/auth/register", "POST", { email: otherEmail, password: "other-password-1", name: "Other", identity: "CAREER_PROFESSIONAL" }));
     clearJar();
 
     // Grant scoped to grantEmail.
@@ -479,7 +479,7 @@ describe("account linking — password account + verified Google email", () => {
 
   test("authenticated confirmation links immediately for the signed-in owner", async () => {
     clearJar();
-    await registerRoute(req("/api/auth/register", "POST", { email: EMAILS.googleReturn, password: "confirm-password-1", name: "Confirm" }));
+    await registerRoute(req("/api/auth/register", "POST", { email: EMAILS.googleReturn, password: "confirm-password-1", name: "Confirm", identity: "CAREER_PROFESSIONAL" }));
     const owner = await db.user.findUnique({ where: { email: EMAILS.googleReturn } });
     clearJar();
     // Sign in properly so a real session exists.
@@ -504,7 +504,7 @@ describe("account linking — password account + verified Google email", () => {
     clearJar();
     // A separate password account that the Google identity will claim.
     const victimEmail = `mismatch-victim-${Date.now()}@beanfolio.test`;
-    await registerRoute(req("/api/auth/register", "POST", { email: victimEmail, password: "victim-password-1", name: "Victim" }));
+    await registerRoute(req("/api/auth/register", "POST", { email: victimEmail, password: "victim-password-1", name: "Victim", identity: "CAREER_PROFESSIONAL" }));
     // Sign in as the googleReturn user; Google identity carries the victim's email.
     await loginRoute(req("/api/auth/login", "POST", { email: EMAILS.googleReturn, password: "confirm-password-1" }));
 
@@ -571,7 +571,7 @@ describe("PKCE and existing authentication regression", () => {
   test("existing email + password signup still works alongside the Google path", async () => {
     clearJar();
     const email = `regression-${Date.now()}@beanfolio.test`;
-    const res = await registerRoute(req("/api/auth/register", "POST", { email, password: "regression-1", name: "Regression" }));
+    const res = await registerRoute(req("/api/auth/register", "POST", { email, password: "regression-1", name: "Regression", identity: "CAREER_PROFESSIONAL" }));
     expect(res.status).toBe(200);
     const body = await resBody(res);
     expect(typeof body.recoveryKey).toBe("string");

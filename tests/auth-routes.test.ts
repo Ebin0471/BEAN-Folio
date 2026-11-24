@@ -161,14 +161,14 @@ describe("registration", () => {
     const email = `auth-dup-${randomUUID()}@beanfolio.test`;
     try {
       const first = await registerRoute(
-        post("/api/auth/register", { email, password: "first-password-1", name: "Dup First" })
+        post("/api/auth/register", { email, password: "first-password-1", name: "Dup First", identity: "CAREER_PROFESSIONAL" })
       );
       expect(first.status).toBe(200);
       const userId = ((await resBody(first)).user as Record<string, unknown>).id as string;
       expect(await db.session.count({ where: { userId } })).toBe(1);
 
       const second = await registerRoute(
-        post("/api/auth/register", { email, password: "second-password-2", name: "Dup Second" })
+        post("/api/auth/register", { email, password: "second-password-2", name: "Dup Second", identity: "CAREER_PROFESSIONAL" })
       );
       expect(second.status).toBe(409);
       expect((await resBody(second)).error).toBe("An account with this email already exists");
@@ -204,7 +204,7 @@ describe("registration", () => {
     const email = `auth-me-${randomUUID()}@beanfolio.test`;
     try {
       const reg = await registerRoute(
-        post("/api/auth/register", { email, password: "me-password-1", name: "Me Flow" })
+        post("/api/auth/register", { email, password: "me-password-1", name: "Me Flow", identity: "CAREER_PROFESSIONAL" })
       );
       expect(reg.status).toBe(200);
       const regBody = await resBody(reg);
@@ -238,7 +238,7 @@ describe("registration", () => {
     const email = `auth-logout-${randomUUID()}@beanfolio.test`;
     try {
       const reg = await registerRoute(
-        post("/api/auth/register", { email, password: "logout-password-1", name: "Logout Flow" })
+        post("/api/auth/register", { email, password: "logout-password-1", name: "Logout Flow", identity: "CAREER_PROFESSIONAL" })
       );
       expect(reg.status).toBe(200);
       const userId = ((await resBody(reg)).user as Record<string, unknown>).id as string;

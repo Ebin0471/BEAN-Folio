@@ -109,12 +109,12 @@ function must(step: string, r: Resp, expect: number | number[] = 200): any {
 async function registerOrLogin(email: string, name: string): Promise<Jar> {
   const jar: Jar = { cookie: undefined };
   const password = CANONICAL_EMAILS.has(email) ? CANONICAL_PASSWORD : PASSWORD;
-  let reg = await api(jar, "POST", "/api/auth/register", { email, password, name });
+  let reg = await api(jar, "POST", "/api/auth/register", { email, password, name, identity: "CAREER_PROFESSIONAL" });
   // Shared-IP burst limiter (register is 10/min per client key): wait and retry.
   for (let attempt = 0; reg.status === 429 && attempt < 12; attempt++) {
     console.log(`  … register rate-limited, waiting 10s (attempt ${attempt + 1})`);
     await new Promise((r) => setTimeout(r, 10_000));
-    reg = await api(jar, "POST", "/api/auth/register", { email, password, name });
+    reg = await api(jar, "POST", "/api/auth/register", { email, password, name, identity: "CAREER_PROFESSIONAL" });
   }
   if (reg.status === 201 || reg.status === 200) {
     console.log(`  + registered ${email}`);

@@ -106,7 +106,7 @@ describe("password recovery routes", () => {
   test("registration issues a recovery key exactly once and stores only its hash", async () => {
     const email = `recovery-reg-${randomUUID()}@beanfolio.test`;
     const res = await registerRoute(
-      jsonRequest("/api/auth/register", { email, password: "correct horse battery", name: "Recovery Reg" })
+      jsonRequest("/api/auth/register", { email, password: "correct horse battery", name: "Recovery Reg", identity: "CAREER_PROFESSIONAL" })
     );
     try {
       expect(res.status).toBe(200);
