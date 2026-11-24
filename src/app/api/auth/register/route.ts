@@ -18,10 +18,15 @@ export const POST = handler(async (req: NextRequest) => {
       password: z.string().min(8).max(200),
       // trim() runs BEFORE the checks — a whitespace-only name is empty.
       name: z.string().trim().min(1).max(80),
-      // M31 (additive): the identity chosen in the registration UI. Optional
-      // at the API boundary for backwards compatibility — absent = a
-      // legacy-style registration keeps the previous behavior exactly.
-      identity: IDENTITY_SCHEMA.optional(),
+      // M31.10: REQUIRED for every new account registration. The previous
+      // optional form was the email-verification bypass — an API caller that
+      // omitted `identity` skipped the verification lifecycle entirely
+      // (registration issued no token and the trust gates never applied).
+      // The registration UI has always required the selection; the API now
+      // enforces the same contract. Existing legacy accounts and user
+      // records are untouched: no backfill, no reclassification, no change
+      // to any row created before this milestone.
+      identity: IDENTITY_SCHEMA,
     })
   );
   if (r.response !== undefined) return r.response;
@@ -29,7 +34,8 @@ export const POST = handler(async (req: NextRequest) => {
   const email = r.data.email.trim().toLowerCase();
   const name = r.data.name.trim();
   const passwordHash = await hashPassword(r.data.password);
-  const identity = r.data.identity ?? null;
+  // M31.10: every new registration is identity-aware (validated above).
+  const identity = r.data.identity;
 
   // Every new account gets a recovery key generated from the platform CSPRNG.
   // The plaintext key is returned ONCE in this response (the UI requires an
@@ -46,8 +52,8 @@ export const POST = handler(async (req: NextRequest) => {
   // purpose: cookie writing is an external, non-transactional side effect.
   //
   // M31 (additive): identity-aware registrations start with a PRIVATE
-  // profile (the user can choose public during onboarding). Registrations
-  // without an identity keep the historical default unchanged.
+  // profile (the user can choose public during onboarding). M31.10: this is
+  // now unconditional — EVERY new registration starts PRIVATE.
   let user;
   let token;
   try {
@@ -59,9 +65,8 @@ export const POST = handler(async (req: NextRequest) => {
           name,
           recoveryKeyHash: recovery.hash,
           recoveryKeySetAt: new Date(),
-          ...(identity !== null
-            ? { primaryIdentity: identity, profileVisibility: "PRIVATE" }
-            : {}),
+          primaryIdentity: identity,
+          profileVisibility: "PRIVATE",
         },
       });
       const t = await createSession(u.id, tx);
@@ -93,35 +98,33 @@ export const POST = handler(async (req: NextRequest) => {
     .create({ data: { actorUserId: user.id, action: "recovery-key.setup", targetType: "USER", targetId: user.id } })
     .catch(() => undefined);
 
-  // M31 (additive): kick off the email verification lifecycle for
-  // identity-aware accounts. Best-effort — a delivery/adapter failure must
-  // never turn a created account into a failed registration; the user can
-  // resend from the app at any time.
+  // M31 (additive), M31.10 (unconditional): kick off the email verification
+  // lifecycle for EVERY new registration — the bypass is closed. Best-effort
+  // — a delivery/adapter failure must never turn a created account into a
+  // failed registration; the user can resend from the app at any time.
   let emailVerification: { issued: boolean; sent: boolean; reason?: string; devToken?: string } = {
     issued: false,
     sent: false,
   };
-  if (identity) {
-    try {
-      const issued = await issueEmailVerification({
-        id: user.id,
-        email,
-        name,
-        emailVerifiedAt: null,
-      });
-      if (issued.issued) {
-        emailVerification = {
-          issued: true,
-          sent: issued.delivery.sent,
-          ...(issued.delivery.reason ? { reason: issued.delivery.reason } : {}),
-          ...(issued.devToken ? { devToken: issued.devToken } : {}),
-        };
-      } else {
-        emailVerification = { issued: false, sent: false, reason: issued.reason };
-      }
-    } catch {
-      emailVerification = { issued: false, sent: false, reason: "delivery-failed" };
+  try {
+    const issued = await issueEmailVerification({
+      id: user.id,
+      email,
+      name,
+      emailVerifiedAt: null,
+    });
+    if (issued.issued) {
+      emailVerification = {
+        issued: true,
+        sent: issued.delivery.sent,
+        ...(issued.delivery.reason ? { reason: issued.delivery.reason } : {}),
+        ...(issued.devToken ? { devToken: issued.devToken } : {}),
+      };
+    } else {
+      emailVerification = { issued: false, sent: false, reason: issued.reason };
     }
+  } catch {
+    emailVerification = { issued: false, sent: false, reason: "delivery-failed" };
   }
 
   await setSessionCookie(token, req);
@@ -134,7 +137,8 @@ export const POST = handler(async (req: NextRequest) => {
   return ok({
     user: buildPublicMe({ ...user, professions: [], skills: [] }),
     recoveryKey: recovery.key,
-    // M31 additive fields (absent for legacy-style registrations):
-    ...(identity ? { identity, emailVerification } : {}),
+    // M31.10: always present — every new registration is identity-aware.
+    identity,
+    emailVerification,
   });
 });

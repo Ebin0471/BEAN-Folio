@@ -205,17 +205,29 @@ describe("M31 email verification — resend cooldown + daily cap", () => {
 });
 
 describe("M31 email verification — no enumeration for legacy/demo accounts", () => {
-  test("legacy account (null identity): request is a no-op with the same response shape and no token row", async () => {
+  test("legacy user RECORD (pre-M31 row): request is a no-op with the same response shape and no token row", async () => {
+    // M31.10: the register API can no longer create identity-less accounts
+    // (identity is required) — the fixture models an EXISTING pre-M31 user
+    // row directly; legacy records are preserved exactly, never reclassified.
     const email = `ev-legacy-${randomUUID()}@beanfolio.test`;
-    await registerRoute(post("/api/auth/register", { email, password: "legacy-noev-pass-1", name: "Legacy No EV" }));
-    const res = await verifyRequestRoute(post("/api/auth/verify-email/request"));
-    expect(res.status).toBe(200);
-    const body = await resBody(res);
-    expect(body.issued).toBe(false);
-    expect(body.reason).toBe("not-required");
-    expect(body.devToken).toBeUndefined();
-    const legacyUser = await db.user.findUnique({ where: { email } });
-    expect(await db.emailVerificationToken.count({ where: { userId: legacyUser!.id } })).toBe(0);
+    const { createSession, hashPassword } = await import("@/lib/auth");
+    const legacy = await db.user.create({
+      data: { email, passwordHash: await hashPassword("legacy-noev-pass-1"), name: "Legacy No EV" },
+    });
+    const session = await createSession(legacy.id);
+    jar.set("bean_session", session);
+    try {
+      const res = await verifyRequestRoute(post("/api/auth/verify-email/request"));
+      expect(res.status).toBe(200);
+      const body = await resBody(res);
+      expect(body.issued).toBe(false);
+      expect(body.reason).toBe("not-required");
+      expect(body.devToken).toBeUndefined();
+      expect(await db.emailVerificationToken.count({ where: { userId: legacy.id } })).toBe(0);
+    } finally {
+      jar.delete("bean_session");
+      await db.user.delete({ where: { email } }).catch(() => undefined);
+    }
   });
 
   test("anonymous callers are unauthorized (no probe surface)", async () => {
@@ -254,11 +266,23 @@ describe("M31 trust gate on external outreach (POST /api/inquiries)", () => {
   });
 
   test("legacy unverified accounts are NOT gated (existing behavior preserved exactly)", async () => {
+    // M31.10: the fixture models an EXISTING pre-M31 user row (the register
+    // API can no longer create identity-less accounts).
     const email = `ev-legacy-gate-${randomUUID()}@beanfolio.test`;
-    await registerRoute(post("/api/auth/register", { email, password: "legacy-gate-pass-1", name: "Legacy Gate" }));
-    const outreach = await inquiriesRoute(post("/api/inquiries", {}));
-    expect(outreach.status).toBe(400); // body validation — past the gate
-    const body = await resBody(outreach);
-    expect(JSON.stringify(body).includes("EMAIL_VERIFICATION_REQUIRED")).toBe(false);
+    const { createSession, hashPassword } = await import("@/lib/auth");
+    const legacy = await db.user.create({
+      data: { email, passwordHash: await hashPassword("legacy-gate-pass-1"), name: "Legacy Gate" },
+    });
+    const session = await createSession(legacy.id);
+    jar.set("bean_session", session);
+    try {
+      const outreach = await inquiriesRoute(post("/api/inquiries", {}));
+      expect(outreach.status).toBe(400); // body validation — past the gate
+      const body = await resBody(outreach);
+      expect(JSON.stringify(body).includes("EMAIL_VERIFICATION_REQUIRED")).toBe(false);
+    } finally {
+      jar.delete("bean_session");
+      await db.user.delete({ where: { email } }).catch(() => undefined);
+    }
   });
 });

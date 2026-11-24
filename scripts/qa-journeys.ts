@@ -78,11 +78,11 @@ async function registerOrLogin(email: string, name: string): Promise<Jar> {
   const jar: Jar = {};
   const password = SOCIAL_EMAILS.has(email) ? SOCIAL_PASSWORD
     : CANONICAL_EMAILS.has(email) ? CANONICAL_PASSWORD : PASSWORD;
-  let reg = await api(jar, "POST", "/api/auth/register", { email, password, name });
+  let reg = await api(jar, "POST", "/api/auth/register", { email, password, name, identity: "CAREER_PROFESSIONAL" });
   for (let attempt = 0; reg.status === 429 && attempt < 12; attempt++) {
     console.log(`  … register rate-limited, waiting 10s (attempt ${attempt + 1})`);
     await new Promise((r) => setTimeout(r, 10_000));
-    reg = await api(jar, "POST", "/api/auth/register", { email, password, name });
+    reg = await api(jar, "POST", "/api/auth/register", { email, password, name, identity: "CAREER_PROFESSIONAL" });
   }
   if (reg.status === 200 || reg.status === 201) return jar;
   const login = await api(jar, "POST", "/api/auth/login", { email, password });

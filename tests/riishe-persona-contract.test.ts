@@ -132,7 +132,7 @@ async function asViewer(userId: string) {
 
 const qaUserIds: string[] = [];
 async function makeUser(tag: string, opts: { headline?: string; bio?: string } = {}): Promise<{ id: string; name: string; username: string }> {
-  const res = await registerRoute(request("/api/auth/register", "POST", { email: email(tag), password: "qa-password-123", name: `Persona QA ${tag}` }));
+  const res = await registerRoute(request("/api/auth/register", "POST", { email: email(tag), password: "qa-password-123", name: `Persona QA ${tag}`, identity: "CAREER_PROFESSIONAL" }));
   if (!res.ok) throw new Error(`register ${tag} failed: ${res.status}`);
   const { user } = (await res.json()) as { user: { id: string } };
   const username = `qap${RUN}${tag}`.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 30);

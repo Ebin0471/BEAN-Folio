@@ -145,7 +145,7 @@ const leakedUserIds: string[] = []; // ad-hoc users created inside tests (cleane
 
 async function createQAUser(tag: string, opts: { username?: string; visibility?: string; isDemo?: boolean; professions?: string[]; skills?: string[]; location?: string } = {}) {
   const emailAddr = email(tag);
-  const res = await registerRoute(request("/api/auth/register", "POST", { email: emailAddr, password: "qa-password-123", name: `QA ${tag}` }));
+  const res = await registerRoute(request("/api/auth/register", "POST", { email: emailAddr, password: "qa-password-123", name: `QA ${tag}`, identity: "CAREER_PROFESSIONAL" }));
   if (!res.ok) throw new Error(`register ${tag} failed: ${res.status}`);
   const { user } = (await res.json()) as { user: { id: string } };
   const username = opts.username ?? `qar${RUN}${tag}`.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 30);
@@ -155,6 +155,11 @@ async function createQAUser(tag: string, opts: { username?: string; visibility?:
       username,
       onboarded: true,
       aiConsent: true,
+      // M31.10: registration is identity-aware, so the email-verification
+      // trust gate applies to every new fixture account. These suites test
+      // the automation lifecycle (not the gate), so the fixture account is
+      // verified explicitly.
+      emailVerifiedAt: new Date(),
       profileVisibility: opts.visibility ?? "PUBLIC",
       isDemo: opts.isDemo ?? false,
       location: opts.location ?? null,

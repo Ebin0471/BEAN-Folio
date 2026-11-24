@@ -85,7 +85,7 @@ let seededConversationId = "";
 
 async function register(): Promise<void> {
   const res = await registerRoute(
-    request("/api/auth/register", "POST", { email: EMAIL, password: "riishe-password-1", name: "Riishe Direct" })
+    request("/api/auth/register", "POST", { email: EMAIL, password: "riishe-password-1", name: "Riishe Direct", identity: "CAREER_PROFESSIONAL" })
   );
   expect(res.status).toBe(200);
   const body = await resBody(res);

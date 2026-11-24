@@ -147,6 +147,7 @@ describe("chat reliability — requests always reach a definitive state", () => 
       email: "riishe-reliability@example.com",
       password: "ReliabilityTest2026!",
       name: "Reliability Probe",
+      identity: "CAREER_PROFESSIONAL",
     }));
     const empty = await chatRoute(request("/api/ai/chat", "POST", { message: "" }));
     expect(empty.status).toBe(400);

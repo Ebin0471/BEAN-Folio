@@ -23,6 +23,7 @@ import { POST as registerRoute } from "@/app/api/auth/register/route";
 import { POST as addIdentityRoute } from "@/app/api/me/identity/route";
 import { GET as trustRoute } from "@/app/api/me/trust/route";
 import { POST as onboardingRoute } from "@/app/api/me/onboarding/route";
+import { createSession, hashPassword } from "@/lib/auth";
 
 afterAll(() => {
   mock.module("next/headers", () => realNextHeaders);
@@ -139,19 +140,45 @@ describe("M31 registration: four identities", () => {
     expect(tokenRow?.tokenHash).toMatch(/^[a-f0-9]{64}$/);
   });
 
-  test("legacy-style registration (no identity) keeps historical defaults and creates no verification token", async () => {
+  test("M31.10: identity-less registration is REJECTED — the email-verification bypass is closed", async () => {
+    // The historical optional-identity contract allowed an API caller to
+    // register without an identity and thereby skip the verification
+    // lifecycle entirely. M31.10 requires the identity for EVERY new
+    // registration: the request fails validation, creates NO user row and
+    // issues NO verification token.
     const email = `reg-legacy-${randomUUID()}@beanfolio.test`;
     const res = await registerRoute(post("/api/auth/register", { email, password: "legacy-password-1", name: "Legacy Flow" }));
-    expect(res.status).toBe(200);
-    const body = await resBody(res);
-    const user = body.user as Record<string, unknown>;
-    expect(user.primaryIdentity).toBeNull();
-    // NOT reclassified, NOT forced private — existing behavior exactly.
-    expect(user.profileVisibility).toBe("PUBLIC");
-    const row = await getUserByEmail(email);
-    expect(row?.primaryIdentity).toBeNull();
-    expect(row?.emailVerifiedAt).toBeNull();
-    expect(await db.emailVerificationToken.count({ where: { userId: row!.id } })).toBe(0);
+    expect(res.status).toBe(400);
+    expect(typeof (await resBody(res)).error).toBe("string");
+    expect(await db.user.count({ where: { email } })).toBe(0);
+  });
+
+  test("M31.10: a legacy user RECORD (created before identity-aware onboarding) is never reclassified by new registrations", async () => {
+    // Legacy accounts exist as pre-M31 rows with primaryIdentity null. They
+    // are preserved exactly — no backfill, no visibility change, no token
+    // issuance — even as every NEW registration is identity-aware.
+    const email = `reg-legacy-row-${randomUUID()}@beanfolio.test`;
+    const legacy = await db.user.create({
+      data: { email, passwordHash: await hashPassword("legacy-row-pass-1"), name: "Legacy Row" },
+    });
+    try {
+      expect(legacy.primaryIdentity).toBeNull();
+      expect(legacy.profileVisibility).toBe("PUBLIC");
+      expect(legacy.emailVerifiedAt).toBeNull();
+      expect(await db.emailVerificationToken.count({ where: { userId: legacy.id } })).toBe(0);
+      // A fresh identity-aware registration elsewhere must not touch this row.
+      const other = `reg-other-${randomUUID()}@beanfolio.test`;
+      const reg = await registerRoute(post("/api/auth/register", { email: other, password: "other-pass-1", name: "Other", identity: "CAREER_PROFESSIONAL" }));
+      expect(reg.status).toBe(200);
+      const after = await db.user.findUnique({ where: { id: legacy.id } });
+      expect(after?.primaryIdentity).toBeNull();
+      expect(after?.profileVisibility).toBe("PUBLIC");
+      expect(after?.emailVerifiedAt).toBeNull();
+      expect(await db.emailVerificationToken.count({ where: { userId: legacy.id } })).toBe(0);
+      await db.user.delete({ where: { email: other } }).catch(() => undefined);
+    } finally {
+      await db.user.delete({ where: { email } }).catch(() => undefined);
+    }
   });
 
   test("platform-role values are rejected in the identity field (namespace separation)", async () => {
@@ -195,18 +222,30 @@ describe("M31 /api/me/identity — additional identities without duplicate accou
   });
 
   test("legacy account adopts its first explicit identity without visibility reclassification", async () => {
+    // M31.10: legacy records can no longer be created through the register
+    // API (identity is required) — the fixture models an EXISTING pre-M31
+    // user row directly.
     const email = `id-legacy-${randomUUID()}@beanfolio.test`;
-    await registerRoute(post("/api/auth/register", { email, password: "legacy-adopt-pass-1", name: "Legacy Adopt" }));
-    const before = await db.user.findUnique({ where: { email }, select: { profileVisibility: true, primaryIdentity: true } });
-    expect(before?.primaryIdentity).toBeNull();
+    const legacy = await db.user.create({
+      data: { email, passwordHash: await hashPassword("legacy-adopt-pass-1"), name: "Legacy Adopt" },
+    });
+    const session = await createSession(legacy.id);
+    jar.set("bean_session", session);
+    try {
+      const before = await db.user.findUnique({ where: { email }, select: { profileVisibility: true, primaryIdentity: true } });
+      expect(before?.primaryIdentity).toBeNull();
 
-    const res = await addIdentityRoute(post("/api/me/identity", { type: "TALENT_PARTNER", data: ONBOARDING_PAYLOADS.TALENT_PARTNER }));
-    expect(res.status).toBe(200);
-    const body = await resBody(res);
-    expect(body.primaryIdentity).toBe("TALENT_PARTNER");
-    const after = await db.user.findUnique({ where: { email }, select: { profileVisibility: true } });
-    // Adding an identity never silently flips visibility.
-    expect(after?.profileVisibility).toBe(before?.profileVisibility);
+      const res = await addIdentityRoute(post("/api/me/identity", { type: "TALENT_PARTNER", data: ONBOARDING_PAYLOADS.TALENT_PARTNER }));
+      expect(res.status).toBe(200);
+      const body = await resBody(res);
+      expect(body.primaryIdentity).toBe("TALENT_PARTNER");
+      const after = await db.user.findUnique({ where: { email }, select: { profileVisibility: true } });
+      // Adding an identity never silently flips visibility.
+      expect(after?.profileVisibility).toBe(before?.profileVisibility);
+    } finally {
+      jar.delete("bean_session");
+      await db.user.delete({ where: { email } }).catch(() => undefined);
+    }
   });
 
   test("rejects unknown identity types", async () => {
@@ -273,11 +312,22 @@ describe("M31 identity-aware onboarding + trust state", () => {
   });
 
   test("legacy account is outside the email gate (grandfathered exactly)", async () => {
+    // M31.10: the fixture models an EXISTING pre-M31 user row (the register
+    // API can no longer create identity-less accounts).
     const email = `trust-legacy-${randomUUID()}@beanfolio.test`;
-    await registerRoute(post("/api/auth/register", { email, password: "trust-legacy-pass-1", name: "Trust Legacy" }));
-    const trust = await resBody(await trustRoute());
-    const emailTrust = trust.email as Record<string, unknown>;
-    expect(emailTrust.gateApplies).toBe(false);
-    expect(emailTrust.required).toBe(false);
+    const legacy = await db.user.create({
+      data: { email, passwordHash: await hashPassword("trust-legacy-pass-1"), name: "Trust Legacy" },
+    });
+    const session = await createSession(legacy.id);
+    jar.set("bean_session", session);
+    try {
+      const trust = await resBody(await trustRoute());
+      const emailTrust = trust.email as Record<string, unknown>;
+      expect(emailTrust.gateApplies).toBe(false);
+      expect(emailTrust.required).toBe(false);
+    } finally {
+      jar.delete("bean_session");
+      await db.user.delete({ where: { email } }).catch(() => undefined);
+    }
   });
 });

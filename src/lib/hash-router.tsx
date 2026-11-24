@@ -152,8 +152,11 @@ export function takeReturnTo(fallback = "/"): string {
  * Route-classification used by the auth/onboarding gates:
  * public pages must never hijack navigation into an auth or setup flow.
  * Discover (empty path), project pages, profiles and static pages are public.
+ * M31.10: `verify-email` is public AND sessionless — the single-use token is
+ * the proof of mailbox control, and a not-yet-onboarded new account opening
+ * its verification link must never be bounced into an auth/setup flow.
  */
-const PUBLIC_ROOT_SEGMENTS = new Set(["explore", "p", "u", "site", "embed", "privacy", "terms", "auth", "onboarding"]);
+const PUBLIC_ROOT_SEGMENTS = new Set(["explore", "p", "u", "site", "embed", "privacy", "terms", "auth", "onboarding", "verify-email"]);
 
 export function isPublicRoute(segments: string[]): boolean {
   if (segments.length === 0) return true; // Discover feed

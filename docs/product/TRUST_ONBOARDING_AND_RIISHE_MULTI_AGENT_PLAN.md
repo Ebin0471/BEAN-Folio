@@ -55,6 +55,14 @@ Verified by direct source inspection at the baseline:
 | M31.7 | Browser Use / OpenHands assessments; `docs/oss/THIRD_PARTY_COMPONENTS.md` provenance register | `docs/oss/*` |
 | M31.8 | Verification: QA suites for every new surface, tsc, lint, parity, both prisma validates, build; docs refresh (README capabilities, legal owner-decision register) | `tests/*`, docs |
 | M31.9 | Review PR + final report (published branch push; PR left unmerged for owner review) | — |
+| M31.10 | Security hardening (owner directive, follow-up to merged PR #5): registration REQUIRES an identity (closes the email-verification bypass; legacy records preserved, never reclassified); GET on the confirm route completely NON-MUTATING (only explicit POST confirmation consumes a token — automated link scanners/prefetchers can no longer burn single-use tokens); token consumption + `emailVerifiedAt` update ATOMIC (one transaction); verification URLs ABSOLUTE and generated ONLY from the trusted configured application origin (`resolveShareOrigin`; request hosts never influence the link). Non-mutating `#/verify-email` confirmation page added (`VerifyEmailView.tsx`, public + sessionless). Regression suite: `tests/m31-10-security-hardening.test.ts`. | `register/route.ts`, `verify-email/confirm/route.ts`, `email-verification.ts`, `VerifyEmailView.tsx`, `SiteShell.tsx`, `hash-router.tsx` |
+
+### M31.10 design notes (recorded decisions)
+
+- **Identity requirement is a deliberate API contract change**: `POST /api/auth/register` returns 400 without `identity`. The registration UI always required the selection; the API previously accepted an identity-less body, which skipped the verification lifecycle entirely (the bypass). Existing legacy rows (`primaryIdentity = null`) are preserved exactly — no backfill, no reclassification.
+- **Google OAuth is intentionally unchanged**: the OAuth flow rejects unverified Google emails (`unverified_email`), so provider-verified accounts never relied on the BEAN verification lifecycle; the flow is verified intact by `tests/google-oauth.test.ts`. Google-created accounts continue with `primaryIdentity = null` (documented limitation; adding identity selection to OAuth onboarding is an owner decision).
+- **GET non-mutating with a same-host fallback**: when no trusted origin is configured, the GET redirect target falls back to the REQUEST'S OWN origin (Next.js requires absolute redirect targets) — never a foreign or client-suggested host. The delivered EMAIL link is stricter: trusted configured origin only, honest path-only fallback otherwise.
+- **Atomicity**: consume (`consumedAt`) and `emailVerifiedAt` commit in ONE Prisma interactive transaction (bounded `maxWait`/`timeout`); audit events stay outside (best-effort — never roll back a verification, never fail one).
 
 ---
 
