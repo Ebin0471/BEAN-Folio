@@ -159,6 +159,7 @@ type UserWithTaxonomy = {
   onboarded: boolean;
   isDemo: boolean;
   role: string;
+  primaryIdentity: string | null;
   createdAt: Date;
   professions: { profession: { slug: string } }[];
   skills: { skill: { slug: string } }[];
@@ -191,6 +192,7 @@ export function buildPublicMe(user: UserWithTaxonomy): PublicMe {
     profileVisibility: user.profileVisibility,
     isDemo: user.isDemo,
     role: user.role,
+    primaryIdentity: user.primaryIdentity,
     createdAt: user.createdAt.toISOString(),
   };
 }

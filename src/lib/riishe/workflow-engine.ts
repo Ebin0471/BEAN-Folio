@@ -81,6 +81,8 @@ export type PlannerPlan = {
   title: string;
   summary?: string;
   steps: PlannerStepPlan[];
+  /** M31: validated specialist id from the planner (registry-checked). */
+  specialist?: string | null;
 };
 
 /** Workflow + steps serialized for the UI/cards. */
@@ -90,6 +92,7 @@ export function toWorkflowDTO(w: {
   goal: string;
   status: string;
   planJson: string;
+  specialistId?: string | null;
   createdAt: Date;
   updatedAt: Date;
   steps: {
@@ -111,7 +114,7 @@ export function toWorkflowDTO(w: {
     dependsOnJson: string;
   }[];
 }) {
-  let plan: { summary?: string; planner?: string } = {};
+  let plan: { summary?: string; planner?: string; specialist?: string } = {};
   try {
     plan = JSON.parse(w.planJson) as typeof plan;
   } catch {
@@ -124,6 +127,7 @@ export function toWorkflowDTO(w: {
     status: w.status,
     summary: plan.summary ?? null,
     planner: plan.planner ?? null,
+    specialistId: w.specialistId ?? plan.specialist ?? null,
     createdAt: w.createdAt.toISOString(),
     updatedAt: w.updatedAt.toISOString(),
     steps: w.steps.map((s) => ({
@@ -171,11 +175,37 @@ function safeIds(v: string): string[] {
  * approval, timeout and retry policy; params must pass each tool's schema.
  * Dependencies must reference existing planner ids without cycles.
  */
+/** M31: the workspace a workflow was created in (re-verified per execution). */
+export interface WorkflowWorkspaceHint {
+  type: "PERSONAL" | "ORGANIZATION";
+  organizationId?: string | null;
+  membershipRole?: string | null;
+}
+
+/** Parse the persisted workspace hint from a planJson (defensive). */
+export function workspaceHintFromPlanJson(planJson: string): WorkflowWorkspaceHint | null {
+  try {
+    const parsed = JSON.parse(planJson) as { workspace?: WorkflowWorkspaceHint };
+    if (parsed.workspace && (parsed.workspace.type === "PERSONAL" || parsed.workspace.type === "ORGANIZATION")) {
+      return parsed.workspace;
+    }
+  } catch {
+    // fall through
+  }
+  return null;
+}
+
 export async function createWorkflowFromPlan(
   userId: string,
   goal: string,
   plan: PlannerPlan,
-  opts?: { conversationId?: string | null; planner?: "llm" | "deterministic"; autoStart?: boolean }
+  opts?: {
+    conversationId?: string | null;
+    planner?: "llm" | "deterministic";
+    autoStart?: boolean;
+    specialistId?: string | null;
+    workspace?: WorkflowWorkspaceHint | null;
+  }
 ) {
   if (!plan.title || typeof plan.title !== "string") throw new WorkflowError("plan needs a title", "invalid");
   if (!Array.isArray(plan.steps) || plan.steps.length === 0) {
@@ -240,7 +270,13 @@ export async function createWorkflowFromPlan(
       planJson: JSON.stringify({
         summary: (plan.summary ?? "").slice(0, 500),
         planner: opts?.planner ?? "llm",
+        // M31 (additive): specialist ownership + creation-time workspace hint.
+        // The hint is NEVER an authorization — org-scoped handlers re-verify
+        // membership/role on every execution via src/lib/ox/authz.
+        ...(opts?.specialistId ? { specialist: opts.specialistId } : {}),
+        ...(opts?.workspace ? { workspace: opts.workspace } : {}),
       }),
+      specialistId: opts?.specialistId ?? null,
       conversationId: opts?.conversationId ?? null,
     },
   });
@@ -382,17 +418,38 @@ async function resolveStepParams(
   return resolved;
 }
 
-async function executeTool(step: {
-  id: string;
-  kind: string;
-  paramsJson: string;
-  timeoutMs: number;
-  workflowId: string;
-}, userId: string, createInquiry?: ToolContext["createInquiry"]): Promise<{ params: Record<string, unknown>; result: Record<string, unknown> }> {
+async function executeTool(
+  step: {
+    id: string;
+    kind: string;
+    paramsJson: string;
+    timeoutMs: number;
+    workflowId: string;
+  },
+  userId: string,
+  createInquiry?: ToolContext["createInquiry"],
+  workspace?: WorkflowWorkspaceHint | null
+): Promise<{ params: Record<string, unknown>; result: Record<string, unknown> }> {
   const tool = getTool(step.kind);
   if (!tool) throw new Error(`tool ${step.kind} is no longer registered`);
   const params = await resolveStepParams(step.workflowId, step);
-  const ctx: ToolContext = { userId, workflowId: step.workflowId, stepId: step.id, createInquiry };
+  const ctx: ToolContext = {
+    userId,
+    workflowId: step.workflowId,
+    stepId: step.id,
+    createInquiry,
+    // M31: creation-time workspace hint (planning context only — org tools
+    // re-verify membership/role server-side before touching anything).
+    ...(workspace
+      ? {
+          workspace: {
+            type: workspace.type,
+            organizationId: workspace.organizationId ?? null,
+            membershipRole: workspace.membershipRole ?? null,
+          },
+        }
+      : {}),
+  };
   const result = await Promise.race([
     tool.execute(ctx, params as never),
     new Promise<never>((_, reject) =>
@@ -491,7 +548,7 @@ export async function runWorkflowStepJob(job: BackgroundJob): Promise<void> {
   });
 
   try {
-    const { params, result } = await executeTool(step, payload.userId);
+    const { params, result } = await executeTool(step, payload.userId, undefined, workspaceHintFromPlanJson(workflow.planJson));
     // B2 verify phase: re-read the persistent output before success is recorded.
     const verifiedResult = tool
       ? await verifyToolOutput(tool, { userId: payload.userId, workflowId: step.workflowId, stepId: step.id }, params, result)
@@ -588,7 +645,7 @@ export async function executeApprovedStep(
     data: { status: "RUNNING", attempts: { increment: 1 }, startedAt: new Date() },
   });
   try {
-    const { params, result } = await executeTool(step, userId, createInquiry);
+    const { params, result } = await executeTool(step, userId, createInquiry, workspaceHintFromPlanJson(workflow.planJson));
     const verifiedResult = tool
       ? await verifyToolOutput(tool, { userId, workflowId: step.workflowId, stepId: step.id }, params, result)
       : result;

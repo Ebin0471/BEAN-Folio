@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { resolveTenantHost } from "@/lib/tenant-host";
 
 /**
  * Public URL path handling for the hash-routed SPA (Next.js 16 `proxy`
@@ -35,11 +36,37 @@ import { NextRequest, NextResponse } from "next/server";
  * canonicalizes legacy `/?#/u/<slug>` deep links to the path form, so both
  * address styles keep opening the same website.
  *
+ * TENANT HOSTS (multi-tenant publishing, `username.beanfolio.app` target with
+ * `username.localhost` as the documented local-dev shape): a request whose
+ * Host resolves as a TENANT (src/lib/tenant-host.ts — single valid username
+ * label under the configured root, never a reserved/platform name) serves the
+ * SAME SPA document rewritten onto the EXISTING path routes — tenant root →
+ * `/site/<username>`, tenant `/g/<siteId>` → `/site/<username>/g/<siteId>` —
+ * with the boot route in the same `x-bean-boot-route` header (any incoming
+ * client-supplied value is OVERWRITTEN first; the header is server-set only).
+ * The visible browser URL is preserved (rewrite, not redirect).
+ *
+ * Host safety rules (enforced here and re-verified at the server boundary):
+ * - Only the `Host` header is consulted — `X-Forwarded-Host` is NEVER used
+ *   for tenant decisions (forged forwarded-host values cannot select a
+ *   tenant; a configured trusted reverse proxy would be a separate,
+ *   explicitly-enabled step).
+ * - `/api/*`, `/_next/*`, static assets and every non-tenant host are never
+ *   rewritten — an API request can never become a website document, and the
+ *   main platform (root domain, www, reserved subdomains, arbitrary foreign
+ *   hosts) behaves exactly as before this file grew host awareness.
+ * - The proxy NEVER touches the database (no Prisma in the edge bundle):
+ *   tenant EXISTENCE (active account, published site, privacy) is resolved
+ *   by the API/data layer the boot route already flows into — an unknown or
+ *   inactive username simply renders the same honest not-found experience
+ *   any unknown `/site/<u>` path gets today.
+ *
  * Custom domains (future capability — NOT implemented): a verified custom
- * domain would map to its owner's portfolio here, by rewriting the request
- * for that Host to the owner's `/u/<username>` route after ownership
- * verification, DNS and TLS exist. Today every website lives on the deployed
- * BEAN Folio domain; nothing in this file claims otherwise.
+ * domain would map to its owner's portfolio here (GiftzDomain registry
+ * exists), after ownership verification, DNS and TLS exist. Today tenant
+ * routing covers ONLY `<username>.<configured root>`; nothing in this file
+ * claims public subdomains are live — `BEANFOLIO_ROOT_DOMAIN` is empty by
+ * default and production stays single-origin until the owner configures it.
  */
 
 const PUBLIC_PATH_SLUG_RE =
@@ -72,8 +99,58 @@ export function bootRouteFromPathname(pathname: string): string | null {
  */
 const EDGE_CACHE_HEADER = "public, max-age=0, s-maxage=30, stale-while-revalidate=120";
 
+/**
+ * M1 — boot route for a TENANT-host request. Maps the tenant URL space onto
+ * the existing public path routes so every downstream view, view-switch,
+ * standalone-chrome rule and data endpoint behaves EXACTLY as its path-form
+ * equivalent does today:
+ * - `https://<u>.<root>/`          → `/site/<u>`            (the tenant's site)
+ * - `https://<u>.<root>/g/<id>`    → `/site/<u>/g/<id>`    (a GIFTZ site)
+ * - `https://<u>.<root>/site/...`  → passthrough (already path form)
+ * Anything else on a tenant host (`/api/...`, assets, unknown paths) returns
+ * null — those requests fall through untouched and behave normally (the SPA
+ * document only ever renders at tenant root and `/g/<siteId>`).
+ */
+export function tenantBootRouteFromRequest(pathname: string, username: string): string | null {
+  if (!username) return null;
+  if (pathname === "/" || pathname === "") return `/site/${username}`;
+  const gMatch = /^\/g\/([A-Za-z0-9_-]+)\/?$/.exec(pathname);
+  if (gMatch) return `/site/${username}/g/${gMatch[1]}`;
+  if (pathname === `/site/${username}` || pathname.startsWith(`/site/${username}/`)) {
+    return bootRouteFromPathname(pathname);
+  }
+  return null;
+}
+
 export function proxy(req: NextRequest): NextResponse {
+  // ---- 1. existing path-form handling (platform URL space, unchanged) ----
   const bootRoute = bootRouteFromPathname(req.nextUrl.pathname);
+
+  // ---- 2. tenant-host routing (M1) ----
+  // Host-only decision (never X-Forwarded-Host). Reserved/root/malformed/
+  // foreign hosts resolve as platform and skip this branch entirely.
+  const tenant = resolveTenantHost(req.headers.get("host"));
+  if (tenant.kind === "tenant") {
+    const tenantRoute = tenantBootRouteFromRequest(req.nextUrl.pathname, tenant.username);
+    if (tenantRoute) {
+      const headers = new Headers(req.headers);
+      // Server-set only: overwrite any client-supplied boot-route value.
+      headers.set("x-bean-boot-route", tenantRoute);
+      headers.set("x-bean-tenant-host", "1");
+      const target = new URL(`/${req.nextUrl.search}`, req.nextUrl.origin);
+      const res = NextResponse.rewrite(target, { request: { headers } });
+      // Tenant documents are per-visitor (privacy ladder resolved at the
+      // data layer) — never shared-cache an SPA document keyed only by path:
+      // tenant hosts collapse thousands of tenants onto `/`.
+      res.headers.set("Cache-Control", "private, no-store");
+      res.headers.set("X-Bean-Edge-Cache", "tenant-site-shell");
+      return res;
+    }
+    // Tenant host + path the SPA doesn't own (e.g. /favicon.ico, assets):
+    // fall through untouched.
+    return NextResponse.next();
+  }
+
   if (!bootRoute) return NextResponse.next();
 
   // Serve the SPA document at the requested path. The slug stays exactly as
@@ -99,7 +176,11 @@ export function proxy(req: NextRequest): NextResponse {
 
 export const config = {
   // Only the public route families — never /api, /_next or static assets.
-  matcher: ["/u/:path*", "/p/:path*", "/site/:path*", "/post/:path*"],
+  // M1: the exact root and `/g/:path*` shapes are added so TENANT-host
+  // requests (tenant root + `/g/<siteId>`) enter the proxy; on the platform
+  // origin those paths resolve as platform and fall through untouched, and
+  // the root matcher does not affect /api or /_next (they never match).
+  matcher: ["/u/:path*", "/p/:path*", "/site/:path*", "/post/:path*", "/", "/g/:path*"],
 };
 
 // (P3 edge-cache headers for /u/* and /p/* are set in proxy() above —

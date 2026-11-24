@@ -3,7 +3,9 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { getSessionUser, getUserWithTaxonomy, buildPublicMe } from "@/lib/auth";
 import { ok, err, ERR, parseBody, handler, USERNAME_RE } from "@/lib/api-helpers";
+import { isUsernameReservedForClaim } from "@/lib/tenant-host";
 import { resolveActiveSlugs, normalizeProfessionSlugs } from "@/lib/professions/service";
+import { identityOnboardingSchema, userFieldUpdatesFor } from "@/lib/onboarding-identity";
 
 const onboardingSchema = z.object({
   username: z.string().min(1).max(24),
@@ -13,6 +15,9 @@ const onboardingSchema = z.object({
   bio: z.string().max(2000).optional(),
   location: z.string().max(100).optional(),
   headline: z.string().max(120).optional(),
+  // M31 (additive): identity-aware onboarding. Absent = the legacy 2-step
+  // flow behaves exactly as before (older clients, legacy accounts).
+  identity: identityOnboardingSchema.optional(),
 });
 
 function slugify(input: string): string {
@@ -86,6 +91,15 @@ export const POST = handler(async (req: NextRequest) => {
   if (!USERNAME_RE.test(username)) {
     return err("Username must be 3-24 chars: lowercase letters, numbers, hyphens", 400);
   }
+  // M1 (multi-tenant): reserved platform/system names are not claimable as
+  // NEW usernames — the username IS the tenant hostname under the platform
+  // root, and a reserved name would shadow platform infrastructure
+  // (www/api/admin/docs/...) once wildcard subdomains go live. Existing
+  // users who already hold such a name keep it (no reclassification, no
+  // backfill); only new claims are guarded.
+  if (isUsernameReservedForClaim(username)) {
+    return err("This username is reserved for platform use — choose another", 400);
+  }
 
   const professionIds = await requireProfessionIds(r.data.professions);
   if (!professionIds) return err("One or more professions are not recognized", 400);
@@ -95,6 +109,20 @@ export const POST = handler(async (req: NextRequest) => {
   if (taken && taken.id !== user.id) return err("This username is already taken", 409);
 
   try {
+    // M31 (additive): per-identity onboarding answers + mapped User fields.
+    // The identity section is validated by identityOnboardingSchema (strict,
+    // per-identity) and stored as an OnboardingProfile row keyed by
+    // (userId, identity). A legacy account completing identity-aware
+    // onboarding EXPLICITLY adopts its first identity here (never silently).
+    const identitySection = r.data.identity;
+    const identityData = identitySection
+      ? (identitySection.data as Record<string, unknown>)
+      : null;
+    const mappedUserFields =
+      identitySection && identityData
+        ? userFieldUpdatesFor(identitySection.type, identityData)
+        : {};
+
     await db.$transaction(async (tx) => {
       await tx.profileProfession.deleteMany({ where: { userId: user.id } });
       await tx.profileSkill.deleteMany({ where: { userId: user.id } });
@@ -115,9 +143,36 @@ export const POST = handler(async (req: NextRequest) => {
           bio: r.data.bio?.trim() || null,
           location: r.data.location?.trim() || null,
           onboarded: true,
+          ...mappedUserFields,
+          // Explicit first-identity adoption for legacy accounts.
+          ...(identitySection && !user.primaryIdentity ? { primaryIdentity: identitySection.type } : {}),
         },
       });
+      if (identitySection) {
+        await tx.onboardingProfile.upsert({
+          where: { userId_identity: { userId: user.id, identity: identitySection.type } },
+          create: {
+            userId: user.id,
+            identity: identitySection.type,
+            data: JSON.stringify(identityData ?? {}),
+          },
+          update: { data: JSON.stringify(identityData ?? {}) },
+        });
+      }
     });
+    if (identitySection) {
+      await db.auditEvent
+        .create({
+          data: {
+            actorUserId: user.id,
+            action: "onboarding.identity.completed",
+            targetType: "USER",
+            targetId: user.id,
+            meta: JSON.stringify({ identity: identitySection.type }),
+          },
+        })
+        .catch(() => undefined);
+    }
   } catch (e: unknown) {
     if (isUniqueViolation(e)) return err("This username is already taken", 409);
     throw e;

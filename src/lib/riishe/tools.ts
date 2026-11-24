@@ -42,109 +42,39 @@ import { normalizeHashtags, extractHashtagsFromText } from "@/lib/posts";
 import { publicProfileBaseFilter } from "@/lib/visibility";
 import type { RiisheCreatorMatch } from "@/lib/types";
 
-export type ToolRisk = "LOW" | "MEDIUM" | "HIGH" | "DESTRUCTIVE";
+// M31: contracts moved to tool-contracts.ts (cycle-free specialist registry).
+// Re-exported here so every existing importer keeps working unchanged.
+import {
+  TOOL_RISKS,
+  TOOL_LEVELS,
+  TOOL_CATEGORIES,
+  RISK_APPROVAL,
+  toolApprovalRequired,
+  defineTool,
+  type ToolRisk,
+  type ToolAutomationLevel,
+  type ToolCategory,
+  type ToolUndo,
+  type ToolVerification,
+  type ToolContext,
+  type RiisheToolDef,
+} from "@/lib/riishe/tool-contracts";
+import { SPECIALIST_TOOLS } from "@/lib/riishe/specialist-tools";
+export {
+  TOOL_RISKS,
+  TOOL_LEVELS,
+  TOOL_CATEGORIES,
+  RISK_APPROVAL,
+  toolApprovalRequired,
+  type ToolRisk,
+  type ToolAutomationLevel,
+  type ToolCategory,
+  type ToolUndo,
+  type ToolVerification,
+  type ToolContext,
+  type RiisheToolDef,
+} from "@/lib/riishe/tool-contracts";
 
-export const TOOL_RISKS: ToolRisk[] = ["LOW", "MEDIUM", "HIGH", "DESTRUCTIVE"];
-
-export const RISK_APPROVAL: Record<ToolRisk, boolean> = {
-  LOW: false,
-  MEDIUM: false,
-  HIGH: true,
-  DESTRUCTIVE: true,
-};
-
-// ------------------------------------------------------------- automation policy
-
-/**
- * Automation level (blueprint §5, B2) — the REGISTRY-level permission
- * declaration. The planner reads these values; it can never set, raise or
- * bypass them.
- *
- *  1  Safe automatic execution — drafts, private records, read-only analysis.
- *     Nothing public changes and nothing is sent.
- *  2  Explicit user confirmation required for EVERY execution — anything that
- *     sends a message, publishes/schedules public content or otherwise makes
- *     the owner visible to others. approval:true is enforced even where the
- *     generic risk map would have permitted silent execution (e.g. the
- *     MEDIUM-risk scheduled post below).
- *  3  Never silently executed — destructive actions with irreversible
- *     effects. They additionally require the typed confirm interaction
- *     (approve with confirm=true) and otherwise answer confirm-required.
- *     RIISHE has NO tools for spending money or purchasing services and must
- *     never gain them.
- */
-export type ToolAutomationLevel = 1 | 2 | 3;
-
-export const TOOL_LEVELS: ToolAutomationLevel[] = [1, 2, 3];
-
-/** Registry-level automation category (drives pre-authorization preferences). */
-export type ToolCategory = "discovery" | "outreach" | "content" | "relationship" | "growth";
-
-export const TOOL_CATEGORIES: ToolCategory[] = ["discovery", "outreach", "content", "relationship", "growth"];
-
-/** Undo metadata: the honest reversal story for a tool's persistent effect. */
-export interface ToolUndo {
-  supported: boolean;
-  /** How to reverse it (user-facing, honest); null when nothing persists. */
-  how: string | null;
-}
-
-/** Verification result recorded in the step's resultJson (B2 verify phase). */
-export interface ToolVerification {
-  ok: boolean;
-  /** Evidence: what was re-read from the backend and what it showed. */
-  detail: string;
-}
-
-export interface ToolContext {
-  /** The workflow owner — every handler re-verifies ownership server-side. */
-  userId: string;
-  workflowId?: string;
-  stepId?: string;
-  /**
-   * Present ONLY when executed at approval time inside an authenticated HTTP
-   * request. HIGH tools that reuse a real API route handler (enquiry send)
-   * require it — the queue never executes them.
-   */
-  createInquiry?: (req: NextRequest) => Promise<Response>;
-}
-
-export interface RiisheToolDef<S = unknown> {
-  name: string;
-  title: string;
-  description: string;
-  risk: ToolRisk;
-  /** Registry-level automation level (see ToolAutomationLevel). */
-  level: ToolAutomationLevel;
-  /** Registry-level automation category. */
-  category: ToolCategory;
-  inputSchema: ZodType<S>;
-  timeoutMs: number;
-  maxAttempts: number;
-  /** Re-execution after a partial failure cannot duplicate the effect. */
-  idempotent: boolean;
-  auditAction: string;
-  execute: (ctx: ToolContext, input: S) => Promise<Record<string, unknown>>;
-  /**
-   * B2 verify phase: re-read the persistent output from the backend after the
-   * handler returns. A failed verification is a FAILED step — success is
-   * never reported before the persistent result is confirmed. Read-only tools
-   * (no persistent output) declare no verify function.
-   */
-  verify?: (ctx: ToolContext, input: S, result: Record<string, unknown>) => Promise<ToolVerification>;
-  /** Honest reversal story for the tool's persistent effect (null = read-only). */
-  undo: ToolUndo | null;
-}
-
-/**
- * Approval rule of record: a tool requires explicit user approval when the
- * REGISTRY says so — its automation level is 2 or 3 (or its risk tier is
- * HIGH/DESTRUCTIVE). The generic risk map alone is never sufficient: a
- * Level-2 MEDIUM-risk tool still requires approval.
- */
-export function toolApprovalRequired(tool: Pick<RiisheToolDef, "level" | "risk">): boolean {
-  return tool.level >= 2 || tool.risk === "HIGH" || tool.risk === "DESTRUCTIVE";
-}
 
 // ---------------------------------------------------------------- discovery
 
@@ -733,10 +663,6 @@ export const REF_FIELDS = new Set(["draftRef", "postRef"]);
  * shared registry stores the widened type (executors re-validate params
  * against the schema before invoking). One cast site, honest schema checks.
  */
-function defineTool<S>(def: RiisheToolDef<S>): RiisheToolDef<never> {
-  return def as unknown as RiisheToolDef<never>;
-}
-
 export const RIISHE_TOOLS: Record<string, RiisheToolDef<never>> = {
   "discovery.searchCreators": defineTool({
     name: "discovery.searchCreators",
@@ -958,6 +884,9 @@ export const RIISHE_TOOLS: Record<string, RiisheToolDef<never>> = {
     execute: topContentExecute,
     undo: null, // read-only — nothing persists
   }),
+  // M31: specialist tools merge into the SAME registry — the planner and
+  // executor see one authoritative tool catalog (no second registry).
+  ...SPECIALIST_TOOLS,
 };
 
 export function getTool(name: string): RiisheToolDef<never> | null {

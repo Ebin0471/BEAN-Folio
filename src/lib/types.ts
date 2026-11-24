@@ -31,6 +31,9 @@ export interface PublicMe {
   onboarded: boolean;
   profileVisibility: string;
   isDemo: boolean;
+  /** M31: registered primary identity (CAREER_PROFESSIONAL | ... | null for
+   *  legacy accounts). Display/planning hint only — never an authorization. */
+  primaryIdentity: string | null;
   /** USER | ADMIN — the SPA uses this only to show/hide admin surfaces;
    *  the server re-checks the role on every admin API call. */
   role: string;

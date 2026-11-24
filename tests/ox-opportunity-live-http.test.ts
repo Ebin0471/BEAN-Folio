@@ -79,7 +79,7 @@ describe("M-O3 live HTTP (gated on server readiness)", async () => {
     const register = await fetch(`${BASE}/api/auth/register`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email, password: "ox-live-password-1", name: "Live Nonmember" }),
+      body: JSON.stringify({ email, password: "ox-live-password-1", name: "Live Nonmember", identity: "CAREER_PROFESSIONAL" }),
     });
     expect(register.status).toBe(200);
     const setCookie = register.headers.get("set-cookie") ?? "";

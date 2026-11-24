@@ -174,7 +174,15 @@ describe("M-O4 privacy — account state and exclusions", () => {
   test("deleted accounts are never discoverable", async () => {
     const { org, owner } = await makeOrg(`Priv Org Deleted ${randomUUID().slice(0, 8)}`);
     const candidate = await makeDiscoverableCandidate("Priv Deleted");
-    await db.user.update({ where: { id: candidate.user.id }, data: { deletedAt: new Date() } });
+    // Simulate the REAL deletion contract (POST /api/me/deletion): the row is
+    // tombstoned AND its address is anonymized (deleted+<id>@deleted.beanfolio).
+    // Setting deletedAt alone used to leave a non-anonymized tombstone behind,
+    // which tripped tests/auth.test.ts's tombstone invariant whenever this
+    // file ran first in the shared QA database.
+    await db.user.update({
+      where: { id: candidate.user.id },
+      data: { deletedAt: new Date(), email: `deleted+${candidate.user.id}@deleted.beanfolio` },
+    });
     const opp = await makePublishedOpportunity(org.id, owner.id);
     const members = await getOrgActiveMemberUserIds(org.id);
     const result = await assertCandidateDiscoverableToOrg({

@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 
+import { bootRouteFromPathname } from "@/proxy";
+
 import SiteShell from "@/components/bean/SiteShell";
 import { getPublicProfileMeta } from "@/lib/public-profile";
 import { seoOrigin, publicProfilePath } from "@/lib/site-url";
@@ -23,7 +25,13 @@ import { SEO_DEFAULTS } from "@/lib/seo-defaults";
  */
 export const dynamic = "force-dynamic";
 
-const BOOT_ROUTE_RE = /^\/(u|p|post)\/[^/]+$|^\/site\/[^/]+(?:\/[^/]+)?$/;
+// M1 fix (pre-existing defect): boot-route validation now REUSES the proxy's
+// canonical validator (bootRouteFromPathname, imported above) instead of a
+// second, drifted regex. The previous page-local form rejected the deep
+// /site/<u>/projects|work|g/<id> shapes the proxy and client accept, silently
+// discarding those boot routes — those URLs booted the generic SPA (chrome
+// flash, wrong SSR metadata) before swapping client-side. One validator now
+// governs the proxy seed AND this page's acceptance (pinned by test).
 
 /**
  * Server-side SEO/social metadata for public portfolio paths (P3).
@@ -42,7 +50,7 @@ const BOOT_ROUTE_RE = /^\/(u|p|post)\/[^/]+$|^\/site\/[^/]+(?:\/[^/]+)?$/;
 export async function generateMetadata(): Promise<Metadata> {
   const h = await headers();
   const seeded = h.get("x-bean-boot-route");
-  const bootRoute = seeded && BOOT_ROUTE_RE.test(seeded) ? seeded : null;
+  const bootRoute = seeded ? bootRouteFromPathname(seeded) : null;
 
   if (!bootRoute) {
     // The app shell keeps the platform defaults.
@@ -157,6 +165,6 @@ export default async function Home() {
   const seeded = h.get("x-bean-boot-route");
   // Only ever trust a well-formed seed — the header is set by our own proxy,
   // but this document also renders for every unproxied request (boot = null).
-  const bootRoute = seeded && BOOT_ROUTE_RE.test(seeded) ? seeded : null;
+  const bootRoute = seeded ? bootRouteFromPathname(seeded) : null;
   return <SiteShell bootRoute={bootRoute} />;
 }

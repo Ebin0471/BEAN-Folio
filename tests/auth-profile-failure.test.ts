@@ -105,7 +105,7 @@ describe("authentication when the profile load fails", () => {
     globalThis.__authProfileLoadFails = true;
     try {
       const res = await registerRoute(
-        jsonRequest("/api/auth/register", { email, password: "profile-fail-pw-2", name: "PF Register" })
+        jsonRequest("/api/auth/register", { email, password: "profile-fail-pw-2", name: "PF Register", identity: "CAREER_PROFESSIONAL" })
       );
       expect(res.status).toBe(200);
       const body = await resBody(res);

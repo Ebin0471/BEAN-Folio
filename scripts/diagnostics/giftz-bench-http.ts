@@ -194,6 +194,7 @@ async function cmdRun1(letter: string): Promise<void> {
     email,
     password,
     name: `Giftz Bench ${letter}`,
+    identity: "CAREER_PROFESSIONAL",
   });
   if (reg.status !== 201 && reg.status !== 200) throw new Error(`register failed: ${reg.status} ${JSON.stringify(reg.json).slice(0, 300)}`);
   const cookie = cookieFrom(reg.headers);

@@ -50,6 +50,7 @@ import { cn } from "@/lib/utils";
 
 import AuthView from "@/views/AuthView";
 import OnboardingView from "@/views/OnboardingView";
+import VerifyEmailView from "@/views/VerifyEmailView";
 import DiscoverView from "@/views/DiscoverView";
 import MessagesView from "@/views/MessagesView";
 import { SearchView, HashtagView } from "@/views/SearchView";
@@ -661,6 +662,12 @@ function Router() {
         return <AuthView />;
       case "onboarding":
         return <OnboardingView />;
+      case "verify-email":
+        // M31.10 — the non-mutating email-verification CONFIRMATION page.
+        // Public and sessionless by design: the single-use token is the proof
+        // of mailbox control, and ONLY the page's explicit POST consumes it
+        // (GET links from email scanners never verify anything).
+        return <VerifyEmailView />;
       case "folio":
         return (
           <RequireAuth label="My Folio">

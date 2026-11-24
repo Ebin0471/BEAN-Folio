@@ -22,6 +22,16 @@ import { Textarea } from "@/components/ui/textarea";
 import { EmptyState } from "@/components/bean/EmptyState";
 import { Spinner } from "@/components/bean/Spinner";
 import { AutomationActionCard } from "@/components/bean/riishe/AutomationActionCard";
+
+type SpecialistUIDTO = {
+  id: string;
+  name: string;
+  description: string;
+  capabilities: string[];
+  taskCategories: string[];
+  workspaceScopes: string[];
+  available: boolean;
+};
 import { RiisheDashboardPanel } from "@/components/bean/riishe/RiisheDashboardPanel";
 
 import { api, ApiError, formatDate } from "@/lib/client";
@@ -116,6 +126,8 @@ function ChatTab({
   const [conversations, setConversations] = useState<AiConversationSummary[]>([]);
   const [convLoading, setConvLoading] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
+  // M31: available specialists (BEAN identities with working tools only).
+  const [specialists, setSpecialists] = useState<SpecialistUIDTO[]>([]);
   const [thread, setThread] = useState<AiMessageDTO[]>([]);
   const [threadLoading, setThreadLoading] = useState(false);
   const [sending, setSending] = useState(false);
@@ -151,6 +163,12 @@ function ChatTab({
   }, []);
 
   // Load on mount — history is available to every signed-in user.
+  useEffect(() => {
+    api<{ specialists: SpecialistUIDTO[] }>("/api/riishe/specialists")
+      .then((r) => setSpecialists(r.specialists))
+      .catch(() => setSpecialists([]));
+  }, []);
+
   useEffect(() => {
     void refreshConversations();
   }, [refreshConversations]);
@@ -306,6 +324,27 @@ function ChatTab({
             </Button>
           </div>
         </div>
+        {specialists.length > 0 && (
+          <div className="pb-2">
+            <p className="px-1 pb-1.5 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+              Specialists
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {specialists.map((sp) => (
+                <span
+                  key={sp.id}
+                  title={`${sp.description} — ${sp.capabilities[0] ?? ""}`}
+                  className="inline-flex items-center rounded-full border border-border/70 bg-background px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
+                >
+                  {sp.name}
+                </span>
+              ))}
+            </div>
+            <p className="mt-1.5 px-1 text-[11px] leading-relaxed text-muted-foreground">
+              Ask RIISHE in plain language — it routes your goal to the right specialist automatically.
+            </p>
+          </div>
+        )}
         <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pb-2 pr-1" aria-busy={convLoading}>
           {convLoading ? (
             <div className="space-y-2 py-1">

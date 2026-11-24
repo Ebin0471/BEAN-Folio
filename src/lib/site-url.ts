@@ -421,3 +421,70 @@ export function shareActionUrls(
   }
   return { shareUrl: null, openUrl: liveHash ?? null, isPermanent: false };
 }
+
+// ------------------------------------------------------------- M1: tenant URLs
+
+/**
+ * M1 — tenant URL helpers (the tenant address model is
+ * `username.beanfolio.app`; `username.localhost` is the documented
+ * LOCAL-DEVELOPMENT shape). All construction flows through here so no
+ * component ever string-concatenates a tenant URL (spec Part C §10).
+ *
+ * Honesty rules (spec §10):
+ * - Without a configured production root (`BEANFOLIO_ROOT_DOMAIN`), tenant
+ *   URLs for REAL domains are `null` + an actionable explanation — never a
+ *   fabricated `https://username.beanfolio.app`.
+ * - The local-dev root (`localhost`) produces LOCAL PREVIEW URLs only —
+ *   callers must label them as local previews, never as public links.
+ * - A request-derived host is never consulted: the root comes from
+ *   configuration (or the documented local-dev default) alone.
+ */
+export type TenantUrlResult =
+  | { ok: true; url: string; kind: "production" | "local-preview"; hostname: string }
+  | { ok: false; reason: "not-configured" | "invalid-username"; message: string };
+
+export const TENANT_ROOT_NOT_CONFIGURED_MESSAGE =
+  "No public root domain is configured yet — set BEANFOLIO_ROOT_DOMAIN (for example beanfolio.app) once the domain, wildcard DNS and wildcard HTTPS exist. Tenant addresses stay a local-development capability until then.";
+
+function tenantRootForUrls(): { root: string; kind: "production" | "local-preview" } | null {
+  const configured = process.env.BEANFOLIO_ROOT_DOMAIN?.trim().toLowerCase();
+  if (configured) return { root: configured, kind: "production" };
+  if (process.env.NODE_ENV !== "production") return { root: "localhost", kind: "local-preview" };
+  return null;
+}
+
+/** The tenant hostname for a username (`<u>.<root>`), or null when unconfigured/invalid. */
+export function tenantHostname(username: string | null | undefined): string | null {
+  const root = tenantRootForUrls();
+  if (!root) return null;
+  const name = username?.trim().toLowerCase();
+  if (!name) return null;
+  return `${name}.${root.root}`;
+}
+
+/** Absolute tenant-site URL: `https://<u>.<root>` (production) or `http://<u>.localhost:3000` (local preview). */
+export function tenantSiteUrl(username: string | null | undefined): TenantUrlResult {
+  const root = tenantRootForUrls();
+  const name = username?.trim().toLowerCase();
+  if (!name || !/^[a-z0-9][a-z0-9-]{2,23}$/.test(name)) {
+    return { ok: false, reason: "invalid-username", message: "A claimed username is required for a tenant address." };
+  }
+  if (!root) return { ok: false, reason: "not-configured", message: TENANT_ROOT_NOT_CONFIGURED_MESSAGE };
+  const hostname = `${name}.${root.root}`;
+  return root.kind === "local-preview"
+    ? { ok: true, url: `http://${hostname}:3000`, kind: "local-preview", hostname }
+    : { ok: true, url: `https://${hostname}`, kind: "production", hostname };
+}
+
+/** Absolute tenant GIFTZ-site URL: `https://<u>.<root>/g/<siteId>` (or the local-preview http form). */
+export function tenantGiftzUrl(
+  username: string | null | undefined,
+  siteId: string | null | undefined
+): TenantUrlResult {
+  const site = tenantSiteUrl(username);
+  if (!site.ok) return site;
+  if (!siteId || !/^[A-Za-z0-9_-]+$/.test(siteId)) {
+    return { ok: false, reason: "invalid-username", message: "A valid GIFTZ site id is required." };
+  }
+  return { ok: true, url: `${site.url}/g/${siteId}`, kind: site.kind, hostname: site.hostname };
+}

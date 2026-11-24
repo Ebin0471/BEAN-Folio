@@ -287,6 +287,50 @@ export function validateStartupEnvironment(options: StartupValidationOptions = {
         : "All known environment variables carry recognized values",
   });
 
+  // ---- Check 9: email delivery configuration (M31, production guard) ----
+  // EMAIL_DELIVERY_ADAPTER=none is the honest default (nothing is sent, and
+  // nothing pretends it was). `console` is a dev/test-only adapter. The
+  // EMAIL_DEV_TEST_MODE=1 path (tokens returned in API responses for QA)
+  // must NEVER be active in production — fail fast if it is.
+  const emailAdapter = (env.EMAIL_DELIVERY_ADAPTER ?? "none").trim().toLowerCase();
+  if (!["none", "console"].includes(emailAdapter)) {
+    checks.push({
+      name: "email_delivery",
+      status: nodeEnv === "production" ? "fail" : "warn",
+      detail: `EMAIL_DELIVERY_ADAPTER="${emailAdapter}" is not implemented (allowed: none | console) — verification email delivery would fall back to the honest no-op adapter`,
+    });
+  } else if (emailAdapter === "console" && nodeEnv === "production") {
+    checks.push({
+      name: "email_delivery",
+      status: "fail",
+      detail: "EMAIL_DELIVERY_ADAPTER=console is a development/test-only adapter and is refused in production",
+    });
+  } else {
+    checks.push({
+      name: "email_delivery",
+      status: "ok",
+      detail:
+        emailAdapter === "none"
+          ? "EMAIL_DELIVERY_ADAPTER=none — no provider configured; verification delivery honestly reports non-delivery (no provider is pretended)"
+          : "EMAIL_DELIVERY_ADAPTER=console — development/test logging adapter active",
+    });
+  }
+  const devTestMode = (env.EMAIL_DEV_TEST_MODE ?? "").trim().toLowerCase();
+  if (devTestMode === "1" && nodeEnv === "production") {
+    checks.push({
+      name: "email_dev_test_mode",
+      status: "fail",
+      detail:
+        "EMAIL_DEV_TEST_MODE=1 in production is forbidden — the dev-only verification token path must never be enabled in production",
+    });
+  } else if (devTestMode === "1") {
+    checks.push({
+      name: "email_dev_test_mode",
+      status: "warn",
+      detail: "EMAIL_DEV_TEST_MODE=1 outside production — verification tokens are exposed to API responses for QA only",
+    });
+  }
+
   const failed = checks.filter((c) => c.status === "fail");
   const result: StartupValidationResult = {
     ok: failed.length === 0,

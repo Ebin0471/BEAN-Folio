@@ -42,7 +42,11 @@ export const GET = handler(async (req: NextRequest, { params }: Ctx) => {
   if (!row || !owner || owner.deletedAt) return ERR.notFound();
 
   const isSelf = sessionUser?.id === owner.id;
+  // M2 (multi-tenant, defense-in-depth): the demo-fixture ladder member is
+  // now enforced here too, matching isProfilePubliclyVisible exactly
+  // (previously isDemo was only filtered upstream of this endpoint).
   if (owner.profileVisibility === "PRIVATE" && !isSelf) return ERR.notFound();
+  if (owner.isDemo && !isSelf) return ERR.notFound();
 
   const rawConfig = preferDraft && isSelf ? row.draft : row.published ?? (isSelf ? row.draft : null);
   if (!rawConfig) return ERR.notFound(); // not published, not self
