@@ -236,13 +236,17 @@ const searchCandidatesExecute = async (ctx: ToolContext, input: z.infer<typeof s
   // Consent-enforced discovery: only candidates with an ACTIVE opportunity
   // profile AND a current DISCOVERY consent. The consent ledger (append-only,
   // revocation-aware) stays the single authority — this handler never reads
-  // around it and never returns contact fields.
+  // around it and never returns contact fields. The scan window is capped
+  // (QA-scale tradeoff, same convention as the discovery surfaces) with a
+  // DETERMINISTIC newest-first order so results are stable across runs and
+  // truncation is honestly reported instead of silently order-dependent.
   const profiles = await db.candidateOpportunityProfile.findMany({
     where: {
       visibilityStatus: "ACTIVE",
       user: { deletedAt: null, profileVisibility: { not: "PRIVATE" } },
     },
     include: { user: { select: { id: true, name: true, username: true, headline: true, location: true, availability: true } } },
+    orderBy: { createdAt: "desc" },
     take: 200,
   });
 
@@ -295,6 +299,12 @@ const searchCandidatesExecute = async (ctx: ToolContext, input: z.infer<typeof s
       "Only candidates with an ACTIVE opportunity profile and a current DISCOVERY consent are returned. Revoking consent removes a candidate from future results immediately.",
     totalScanned: profiles.length,
     returned: matches.length,
+    ...(profiles.length >= 200
+      ? {
+          scanWindowNote:
+            "The scan window covered the 200 most recently created ACTIVE opportunity profiles — older profiles beyond that window were not scanned in this pass.",
+        }
+      : {}),
   };
 };
 

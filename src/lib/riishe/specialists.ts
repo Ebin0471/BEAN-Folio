@@ -210,7 +210,7 @@ export const SPECIALISTS: SpecialistDefinition[] = [
     workspaceScopes: ["ORGANIZATION"],
     riskPolicy: { maxAutomationLevel: 1, approvalsAlwaysHuman: true },
     limits: { maxSteps: 5, defaultTimeoutMs: 45_000 },
-    routingKeywords: ["onboarding", "onboard a", "new hire paperwork", "hr process", "people ops", "offboarding"],
+    routingKeywords: ["onboarding", "onboard a", "new hire", "new hire paperwork", "hr process", "people ops", "offboarding"],
     auditNote: "Runs only in an organization workspace with an ACTIVE authorized membership re-verified per execution.",
     available: () => toolsAvailable(["peopleops.onboardingChecklist"]),
   },

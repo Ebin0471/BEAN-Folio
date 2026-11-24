@@ -18,9 +18,11 @@
  * it does not replace src/lib/riishe/workflow-engine.ts.
  */
 
+import { randomBytes } from "crypto";
 import { StateGraph, Annotation, START, END, MemorySaver, interrupt } from "@langchain/langgraph";
 
 import { getTool, type ToolContext } from "@/lib/riishe/tools";
+import { hashPassword } from "@/lib/auth";
 import { db } from "@/lib/db";
 
 // ------------------------------------------------------------- state
@@ -130,7 +132,9 @@ async function main() {
     qaUser = await db.user.create({
       data: {
         email: "poc-langgraph@beanfolio.test",
-        passwordHash: "poc-fixture-not-a-login-hash",
+        // Real scrypt hash (never a login credential — the password is not
+        // a known value) so every user row keeps the account invariants.
+        passwordHash: await hashPassword(randomBytes(24).toString("hex")),
         name: "LangGraph PoC Fixture",
         isDemo: true,
       },
@@ -145,7 +149,7 @@ async function main() {
   const state = await graph.getState(config);
   const interrupted = state.next.length > 0;
 
-  let resumed = null;
+  let resumed: PoCStateType | null = null;
   if (interrupted) {
     resumed = await graph.invoke({ awaitingApproval: null } as never, {
       configurable: { thread_id: config.configurable.thread_id },

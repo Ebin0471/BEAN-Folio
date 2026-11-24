@@ -194,9 +194,11 @@ describe("B2 registry — permission declarations are registry-level and real", 
       expect(name.startsWith("portfolio.")).toBe(false);
       expect(name.startsWith("resume.")).toBe(false);
     }
-    // Exactly the fourteen real tools.
+    // Exactly the fourteen real core tools + the nine real M31 specialist
+    // tools (all Level-1, registry-verified — see tests/riishe-specialists.test.ts).
     expect(Object.keys(RIISHE_TOOLS).sort()).toEqual(
       [
+        // Core fourteen (B1/B2)
         "discovery.opportunityRadar",
         "discovery.searchCreators",
         "enquiry.draft",
@@ -211,6 +213,16 @@ describe("B2 registry — permission declarations are registry-level and real", 
         "post.schedule",
         "relationship.saveNote",
         "shortlist.addCreators",
+        // M31 specialist tools (real, registered, tested)
+        "analysis.metricsReport",
+        "career.interviewPrep",
+        "career.readinessReport",
+        "docs.searchWorkspace",
+        "ops.processChecklist",
+        "peopleops.onboardingChecklist",
+        "pm.statusReport",
+        "research.webBrief",
+        "talent.searchCandidates",
       ].sort()
     );
   });
