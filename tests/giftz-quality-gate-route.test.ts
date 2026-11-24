@@ -171,7 +171,7 @@ describe("POST /api/giftz/quality-gate — route contract", () => {
     expect(byId.get("links-internal")!.status).toBe("fail"); // nowhere.html
     expect(byId.get("links-safety")!.status).toBe("fail"); // javascript:
     expect(byId.get("links-local-assets")!.status).toBe("fail"); // assets/missing.jpg
-    expect(byId.get("resp-viewport-meta")!.status).toBe("warn"); // flawed.html has no viewport
+    expect(byId.get("resp-viewport-meta")!.status).toBe("fail"); // flawed.html has no viewport
     // The clean page passes its share; media queries found in styles.css:
     expect(byId.get("resp-media-queries")!.status).toBe("pass");
     // The site config names a real palette → contrast RAN (not not-run).
