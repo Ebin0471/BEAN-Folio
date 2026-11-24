@@ -83,6 +83,13 @@ export const brandKitInputSchema = z
 
 export type BrandKitInput = z.infer<typeof brandKitInputSchema>;
 
+/** Wire/input shape: schema defaults (`toneAdjectives`, `languages`,
+ * `paletteDirection`, `motionPersonality`) are optional before parsing.
+ * `buildBrandKitProposal` normalizes them itself, so direct callers may pass
+ * the raw input shape; zod-parsed callers pass `BrandKitInput`, which is
+ * assignable to this. */
+export type BrandKitRawInput = z.input<typeof brandKitInputSchema>;
+
 /** Fields the strict schema deliberately rejects — visible for tests/docs. */
 export const REJECTED_PSYCHOMETRIC_FIELDS = [
   "personality",
@@ -432,11 +439,10 @@ function buildPairings(input: BrandKitInput, words: string[]): FontPairing[] {
  * `BrandKitFieldError` on unknown explicit ids (callers convert it to a
  * rejection response — the API route does exactly that).
  */
-export function buildBrandKitProposal(rawInput: BrandKitInput): BrandKitProposal {
+export function buildBrandKitProposal(rawInput: BrandKitRawInput): BrandKitProposal {
   // Normalize schema defaults for direct (non-parsed) calls so the pure
   // builder behaves identically whether or not zod applied its defaults.
-  const input: Required<Pick<BrandKitInput, "toneAdjectives" | "languages" | "paletteDirection" | "motionPersonality">> &
-    BrandKitInput = {
+  const input: BrandKitInput = {
     ...rawInput,
     toneAdjectives: rawInput.toneAdjectives ?? [],
     languages: rawInput.languages ?? [],

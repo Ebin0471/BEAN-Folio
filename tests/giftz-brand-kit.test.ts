@@ -199,7 +199,10 @@ describe("brand kit — contrast gate and registry validity", () => {
   });
 
   test("same input → same proposal (deterministic)", () => {
-    const input = { toneAdjectives: ["technical", "modern"], languages: ["de"] } as const;
+    const input = {
+      toneAdjectives: ["technical", "modern"],
+      languages: ["de"],
+    } satisfies import("@/lib/brand-kit").BrandKitRawInput;
     const a = buildBrandKitProposal(input);
     const b = buildBrandKitProposal(input);
     expect(JSON.stringify(a)).toBe(JSON.stringify(b));
