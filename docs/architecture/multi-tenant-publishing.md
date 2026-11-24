@@ -100,7 +100,36 @@ Never touched: existing portfolio/profile rendering, RIISHE/LAXII/OX modules, au
 - **Fidelity policy (honest):** scripts, external references, head metadata, vendor assets, motion runtime and navigation links are preserved by the round-trip as verified by the automated round-trip test on representative GIFTZ output; GrapesJS normalizes whitespace/attribute order (documented, non-semantic). Pages that fail round-trip verification keep full code-editing support — the editor never corrupts a site to claim visual support.
 - **BEAN-native chrome:** obsidian/champagne styling, BEAN block presets (hero/about/projects/contact), no upstream branding or default presets.
 
-## 13. Verification plan (executed — see PR evidence)
+## 13. Verification (EXECUTED — 2026-11-24, this branch)
+
+**Automated:** full per-file QA suite 113 files → **1679 pass / 0 code failures** (one
+transient `auth.test` invariant hit was my own probe fixture with a malformed password hash
+left in the ISOLATED QA database — removed, suite re-verified 9/9; the invariant guard did
+exactly its job); `tsc --noEmit` 0 errors; lint 0 errors / 14 baseline warnings; schema
+parity 104 models; both Prisma validates green; production standalone build exit 0 (BUILD_ID
+`ct0u7CXEsALXtEgCJO_Ov`, 2560 MB heap cap).
+
+**Live tenant E2E (running dev server of THIS branch, port 3100, browser + HTTP evidence in
+`agent-ctx/tenant-e2e/`):**
+1. Registered (identity-aware) → onboarded (username claimed) → GIFTZ site created → files
+   written → build SUCCEEDED → published → **republish response carried
+   `tenantUrl: http://m5e2e258122.localhost:3000/g/<siteId>` (kind: local-preview)**.
+2. `curl -H "Host: <u>.localhost:3100"` — tenant root AND tenant `/g/<siteId>` both serve the
+   SPA document with `X-Bean-Edge-Cache: tenant-site-shell` + `Cache-Control: private,
+   no-store`; the GIFTZ public JSON (200, ladder enforced) and the LIVE artifact bytes
+   (`E2E Tenant` markup, CSP, nosniff) serve through the tenant host.
+3. **Real browser (agent-browser/Chrome)** navigated to `http://<u>.localhost:3100/g/<siteId>`:
+   the sandboxed iframe renders the artifact's own content ("E2E Tenant" heading), title
+   "My website — made with BEAN Folio" — screenshot `tenant-giftz-site.png`. Tenant root after
+   publishing a SiteDesign renders the portfolio website (title "E2E Tenant Studio — E2E
+   Tenant") — screenshot `tenant-root.png`.
+4. Platform regression live: `localhost:3100` root renders the Discover feed (unchanged);
+   `/site/<u>/g/<id>` path form still carries `public-site-shell`; `www.` / `admin.`
+   hosts never rewrite; an UNKNOWN tenant host renders the honest platform-shell not-found
+   (`unknown-tenant.png`).
+
+**Not claimed:** public `*.beanfolio.app` subdomains remain an architectural target until the
+owner configures domain, wildcard DNS, ingress Host preservation and wildcard TLS.
 
 Host-routing tests (platform/reserved/tenant/malformed/forged headers, ports, case), username reserved-name tests per category, tenant isolation (A cannot touch B's draft/files/publish/editor state; forged siteId), privacy regressions (private-profile artifact serving must 404 anonymous; unpublished must not serve; deleted accounts never serve), GIFTZ publish flow (build gate rejects invalid; LIVE artifact = successful build snapshot; draft edits don't change the public version; rollback/unpublish revoke access), full per-file QA suite, tsc, lint, schema parity, both prisma validates, production build, secret/runtime-data scans. Local tenant URLs (`username.localhost`) verified with real HTTP requests against a running server of this branch; browser evidence captured where tooling permits. Public `*.beanfolio.app` subdomains are **NOT claimed to work** — the root domain, wildcard DNS, ingress and wildcard TLS are owner prerequisites (`BEANFOLIO_ROOT_DOMAIN` empty by default → `canonicalUrl: null` with explanation).
 
