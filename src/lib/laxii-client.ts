@@ -315,6 +315,76 @@ export interface ResumeImportProposal {
   warnings: string[];
 }
 
+/** M33.5-B: versioned Document Readability Report (deterministic). */
+export interface ReadabilityCheck {
+  id: string;
+  category: string;
+  status: "pass" | "warning" | "fail" | "not-run";
+  severity: "info" | "minor" | "major" | "critical";
+  detail: string;
+  remediation: string;
+}
+
+export interface ReadabilityReport {
+  reportVersion: number;
+  evaluator: string;
+  evaluatedAt: string;
+  status: "good" | "review" | "problem" | "not-run";
+  checks: ReadabilityCheck[];
+  untested: string[];
+  fileFacts: {
+    documentKind: string;
+    template: string;
+    sectionCount: number;
+    workEntries: number;
+    educationEntries: number;
+    skills: number;
+    extractedChars: number;
+    longestParagraphChars: number;
+  };
+}
+
+export interface JobRequirement {
+  kind: string;
+  importance: "required" | "preferred";
+  text: string;
+  sourcePhrase: string;
+}
+
+export interface JobEvidenceMap {
+  mapVersion: number;
+  profile: {
+    profileVersion: number;
+    roleTitle: string;
+    organization: string;
+    requirements: JobRequirement[];
+    parseWarnings: string[];
+  };
+  evidence: {
+    requirement: JobRequirement;
+    verdict: "supported" | "partial" | "missing" | "not_assessable";
+    citations: { section: string; fact: string }[];
+    followUp: string;
+  }[];
+  weightedCoverage: {
+    formula: string;
+    value: number;
+    assessedRequirements: number;
+    excludedNotAssessable: number;
+  };
+  matchWarnings: string[];
+}
+
+export interface ExportVerification {
+  format: "pdf" | "docx";
+  byteLength: number;
+  decodeOk: boolean;
+  extractedChars: number;
+  missingFacts: string[];
+  checkedFacts: number;
+  readingOrderOk: boolean;
+}
+
 export interface ResumeWorkItem {
   company: string;
   position: string;
@@ -584,6 +654,20 @@ export const laxiiApi = {
     }
     return { text: json.text, truncated: Boolean(json.truncated), source: json.source ?? "", proposal: json.proposal };
   },
+
+  /** M33.5-B: deterministic readability report (+ optional job evidence map). */
+  resumeAnalyze: (conversationId: string, jobDescription?: string) =>
+    api<{ readability: ReadabilityReport; evidenceMap?: JobEvidenceMap; profile?: JobEvidenceMap["profile"] }>("/api/laxii/resume/analyze", {
+      method: "POST",
+      json: { conversationId, ...(jobDescription ? { jobDescription } : {}) },
+    }),
+
+  /** M33.5-B: render + decode round-trip verification of the saved resume. */
+  resumeExportVerify: (conversationId: string, format: "pdf" | "docx") =>
+    api<{ verification: ExportVerification }>("/api/laxii/resume/export/verify", {
+      method: "POST",
+      json: { conversationId, format },
+    }),
 
   resumeTailor: (conversationId: string, jobDescription: string, targetTitle?: string) =>
     api<ResumeActionResult>("/api/laxii/resume", {
