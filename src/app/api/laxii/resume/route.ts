@@ -85,6 +85,8 @@ const postSchema = z.discriminatedUnion("action", [
     profession: z.string().max(60).optional(),
     // Text extracted from an uploaded resume — user-provided source material.
     sourceText: z.string().max(10000).optional(),
+    // Spec §4.2.5 — source text is kept only when the user explicitly opts in.
+    retainSourceText: z.boolean().default(false),
   }),
   z.object({
     action: z.literal("tailor"),
@@ -144,7 +146,7 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
         targetTitle: body.targetTitle,
         jobDescription: body.jobDescription,
         ...(body.profession ? { profession: body.profession } : {}),
-        ...(body.sourceText ? { sourceText: body.sourceText } : {}),
+        ...(body.sourceText ? { sourceText: body.sourceText, retainSourceText: body.retainSourceText } : {}),
       });
       return ok(result);
     }
