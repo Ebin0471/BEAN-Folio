@@ -339,6 +339,18 @@ export function evaluateTypography(render: TypographyRenderResult): QualityFindi
       check: "Typography does not obscure the main subject (planned focal region)",
       measured: `${Math.round(c.focalOverlap * 100)}% overlap`,
     });
+    // M33.4-B: glyph coverage is measured against the resolved family's real
+    // charset. Uncovered scripts still render (Pango falls back to a system
+    // font) but the finding says so — no silent substitution.
+    if (!c.glyphCoverage.covered) {
+      findings.push({
+        id: "typ.glyphs",
+        area: "typography",
+        status: "warn",
+        check: `Glyph coverage for "${c.lineText}" in the resolved family`,
+        measured: `${c.glyphCoverage.missingCount} uncovered codepoint(s)${c.glyphCoverage.missingSample.length ? `: ${c.glyphCoverage.missingSample.join(" ")}` : ""} — rendered with a system fallback for those glyphs`,
+      });
+    }
   }
   return findings;
 }

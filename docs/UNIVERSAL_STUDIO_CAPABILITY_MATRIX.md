@@ -96,7 +96,7 @@ Baseline: `main` at `74123a5` (PR #7 merge, 2026-11-24). North star:
 | Capability | Status | Evidence | Notes |
 | --- | --- | --- | --- |
 | Image generation via managed gateway (the only user-selectable provider) | Existing | `src/app/api/laxii/generate/route.ts` (schema pins `provider: z.literal("managed")`), `src/lib/laxii/router.ts` | `resolveProvider()` refuses any non-managed pin and never silently reroutes; Gemini/OpenAI/Diffusers adapters exist as internal plumbing, not user options. |
-| Banner pipeline with deterministic typography | Existing | `src/lib/laxii/banner-pipeline.ts`, `src/lib/laxii/typography.ts` | Exact-canvas output, measured ink (`verifyInkApplied`), WCAG text color choice, bounded refinement (≤3), quality eval. |
+| Banner pipeline with deterministic typography | Existing | `src/lib/laxii/banner-pipeline.ts`, `src/lib/laxii/typography.ts`, `src/lib/laxii/font-assets.ts` | Exact-canvas output, measured ink (`verifyInkApplied`), WCAG text color choice, bounded refinement (≤3), quality eval. M33.4-B: user-selectable SITE_FONTS families via a licence-audited 9-family provisioned set (OFL files pinned by sha256 in `data/laxii-fonts/`), real weights (measured on pixels), measured glyph coverage, last-resort measured wrapping — unprovisioned families fall back with explicit warnings, never silently. |
 | Exact-canvas banner export (PNG/JPEG/WebP) | Existing | `src/app/api/laxii/banner/export/route.ts` | Decode-verified dimensions. |
 | Preserve-pixel / identity-locked avatar compositing | **Removed** | `tests/laxii-backdrop.test.ts.disabled` records the removed engine; no segmentation/compositing code exists under `src/` | The MODNet weights on disk are referenced by **zero** code. Any UI/doc claiming "Preserved-pixel portrait" is stale. Identity note is honest: `AVATAR_IDENTITY_NOTE` in `src/lib/laxii/avatar-presets.ts`. |
 | AI-styled portrait presets (likeness best-effort, clearly labelled) | Existing | `src/lib/laxii/avatar-presets.ts` | Prompt-level styling only; review-before-use warning shipped. |
@@ -117,7 +117,7 @@ Baseline: `main` at `74123a5` (PR #7 merge, 2026-11-24). North star:
 | --- | --- | --- |
 | Versioned banner canvas registry (hero/platform covers/campaign formats + strict custom bounds) preserving canonical 2048×687 | Existing (M33.4) | `src/lib/laxii/banner-presets.ts` — 11 presets; platform entries carry `official`/`checkedAt`/`sourceUrl` verified 2026-11-25 against each platform's own docs; custom canvases via `resolveCustomBannerCanvas` (64–4096 per side, ≤2^22 px area, never silently clamped); export enforces registry dims + documented platform byte caps. X/Twitter header deliberately absent (official page unverifiable at check time). |
 | Numeric regression tests proving protected-region pixels unchanged (future preserve-pixel path) | M33.4 | Blocked: no preserve-pixel engine exists; rebuild requires design + owner approval. |
-| Deterministic typography with user-selected approved font families + glyph coverage checks | M33.4 | `src/lib/laxii/typography.ts` currently uses built-in fonts; SITE_FONTS integration pending. |
+| Deterministic typography with user-selected approved font families + glyph coverage checks | Existing (M33.4-B) | `src/lib/laxii/font-assets.ts` — 9-family provisioned subset of SITE_FONTS (Fraunces, Inter, Anton, Oswald, Lato, Merriweather, Caveat, Pacifico, Kalam), each family's own OFL.txt tracked beside its sha256-pinned file; measured charset coverage (`checkGlyphCoverage`); kind fallbacks are system DejaVu with explicit warnings. |
 | Cover-letter drafting grounded in the same facts (only after tests) | M33.5 | Zero code today. |
 | ATS-oriented parsing checks + job-keyword gap reporting | M33.5 | Honest gap reporting only; never an ATS score. |
 | Resume renderer + anti-fabrication unit tests | M33.5 | Currently no test imports `renderResumePdf`/`renderResumeDocx` or the guard functions. |
@@ -210,6 +210,7 @@ licence: each artefact class is audited separately.
 | ComfyUI | GPL-3.0 | **Do not vendor/link into BEAN**; independent sidecar needs separate review. |
 | React Bits | MIT + Commons Clause (BEAN review) | **Reference-only**; never copy/bundle. |
 | Google Fonts (129-family library) | Families are individually OFL/UFL/Apache — **not uniform** | Current loading = on-demand Google Fonts CDN; per-family licence audit is a hard prerequisite for any self-hosting move. |
+| LAXII provisioned banner fonts (9 families, M33.4-B) | Each family's own OFL-1.1 text tracked at `data/laxii-fonts/<id>/OFL.txt`; binaries sha256-pinned by `scripts/laxii/prefetch-banner-fonts.ts` | **Keep (server-side rendering only).** OFL permits embedding/server use with attribution; per-family licence text ships beside the file. Provisioned subset only — other SITE_FONTS families still resolve via CDN for websites and never claim server-side rendering. |
 | Removed MODNet weights on disk | Apache-2.0 (historic) | Unused by code; retained only as inert files pending owner cleanup decision — no capability claim. |
 
 ---

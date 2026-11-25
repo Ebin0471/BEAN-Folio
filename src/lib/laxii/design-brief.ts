@@ -32,8 +32,17 @@ export const typographyItemSchema = z.object({
   text: z.string().min(1).max(120),
   /** role headline | subtext | tagline | wordmark | cta */
   role: z.enum(["headline", "subtext", "tagline", "wordmark", "cta"]).default("headline"),
-  /** sans | serif | mono — resolved to concrete locally-available fonts at render time. */
-  font: z.enum(["sans", "serif", "mono"]).default("sans"),
+  /** Kind family: sans | serif | mono | display | script — the concrete font is resolved server-side (font-assets.ts). */
+  font: z.enum(["sans", "serif", "mono", "display", "script"]).default("sans"),
+  /**
+   * Optional SITE_FONTS registry id for a USER-SELECTED family. Only the
+   * licence-audited provisioned subset (font-assets.ts) renders with the
+   * real family server-side; everything else falls back with an explicit
+   * warning — never silently.
+   */
+  fontId: z.string().max(64).optional(),
+  /** Requested weight (100–1000); snapped to a REAL available weight at render time. */
+  weight: z.number().int().min(100).max(1000).optional(),
   /** left | center | right within the safe area (default follows composition). */
   align: z.enum(["left", "center", "right"]).optional(),
   /** Requested text color as #rrggbb (contrast-checked at render time). */

@@ -1,37 +1,50 @@
 /**
- * LAXII — deterministic typography engine (Phase 3, spec §3.7 / §4C).
+ * LAXII — deterministic typography engine (Phase 3 §3.7/§4C, M33.4-B).
  *
  * Banner text is NOT left to the image model. The brief's exact strings are
- * rendered here with real fonts through sharp's SVG rasterizer, measured from
- * the ACTUAL rendered pixels (trim-based ink bounding box), contrast-checked
- * against the sampled background under each text box, and constraint-checked
- * against the safe area and the planned focal region. Every check reports a
- * measurement — no invented scores.
+ * rendered here with REAL, licence-audited fonts through sharp's SVG
+ * rasterizer, measured from the ACTUAL rendered pixels (trim-based ink
+ * bounding box), contrast-checked against the sampled background under each
+ * text box, glyph-coverage-checked against the resolved family's real
+ * charset, and constraint-checked against the safe area and the planned
+ * focal region. Every check reports a measurement — no invented scores.
  *
- * Fonts resolve to locally installed, license-clean families (DejaVu family
- * ships with the rendering stack). A missing family degrades to the default
- * sans family with an honest warning — it never aborts the composite.
+ * M33.4-B upgrades over the DejaVu-only engine:
+ *  - SITE_FONTS integration: an item may carry a user-selected fontId. Only
+ *    the licence-audited provisioned subset (font-assets.ts) renders with
+ *    the real family server-side; everything else deterministically falls
+ *    back with an EXPLICIT warning. The user's spelling is never altered.
+ *  - Real weights: a requested weight snaps to a weight the family actually
+ *    provides (variable fonts included), with a warning when snapped.
+ *  - Measured wrapping: a line that cannot fit the safe-area width wraps
+ *    greedily by MEASURED word widths at the chosen size; only a single
+ *    word too wide for the whole safe area shrinks the size. Wrapping is
+ *    reported, never silent, and text is never truncated or squeezed.
  */
 
 import sharp from "sharp";
 import type { BriefRect, DesignBrief, TypographyItem } from "./design-brief";
 import { resolveTextPlacement } from "./design-brief";
+import { checkGlyphCoverage, resolveServerFont, type ResolvedServerFont } from "./font-assets";
 
-const FONT_FAMILIES: Record<TypographyItem["font"], string> = {
-  sans: "DejaVu Sans",
-  serif: "DejaVu Serif",
-  mono: "DejaVu Sans Mono",
-};
+const MIN_CONTRAST = 3.0; // display-size text on imagery — WCAG large-text floor
 
 export interface TextLinePlan {
   item: TypographyItem;
+  /** The EXACT fragment rendered on this line (wrap splits keep spelling). */
+  text: string;
   family: string;
+  fontId: string | null;
+  source: "provisioned" | "fallback";
   /** Font size chosen by the fit loop (canvas px). */
   size: number;
   color: string;
-  weight: "normal" | "bold";
+  /** The REAL weight rendered (snapped to the family's available weights). */
+  weight: number;
   /** Ink box of the rendered line, in canvas coordinates (measured, not estimated). */
   ink: { left: number; top: number; width: number; height: number };
+  /** True when the fragment is a wrap continuation (first fragment false). */
+  wrapped: boolean;
 }
 
 export interface TypographyPlan {
@@ -51,6 +64,8 @@ export interface TypographyCheck {
   contrastOk: boolean;
   /** Fraction of the ink box overlapping the planned focal region (0..1). */
   focalOverlap: number;
+  /** Real glyph-coverage result for the rendered fragment. */
+  glyphCoverage: { covered: boolean; missingCount: number; missingSample: string[] };
 }
 
 export interface TypographyRenderResult {
@@ -128,42 +143,188 @@ export function chooseTextColor(palette: string[], bgLuminance: number): { color
   return { color: best!.color, note: "Text color contrast is marginal — verify readability in the preview." };
 }
 
-interface RenderLineInput {
-  item: TypographyItem;
-  family: string;
-  size: number;
-  color: string;
-  weight: "normal" | "bold";
+/**
+ * Measurement cache — the pipeline re-runs the typography pass per refinement
+ * attempt with the SAME text/font/canvas, and the fit loop itself re-renders
+ * candidate sizes. Every (text, family, weight, size, color, canvas) ink
+ * measurement is deterministic, so results are memoized here (bounded; the
+ * buffers are treated as immutable).
+ */
+const INK_CACHE = new Map<string, { buf: Buffer; ink: TextLinePlan["ink"] } | null>();
+
+function cacheKey(text: string, family: string, weight: number, size: number, color: string, canvasW: number, canvasH: number): string {
+  return `${text}|${family}|${weight}|${size}|${color}|${canvasW}x${canvasH}`;
 }
 
-/** Render ONE line on a transparent canvas and measure its real ink box. */
-async function renderLineInk(input: RenderLineInput, canvasW: number, canvasH: number): Promise<{ buf: Buffer; ink: TextLinePlan["ink"] } | null> {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${canvasW}" height="${canvasH}"><text x="0" y="${Math.round(input.size)}" font-family="${input.family}" font-size="${input.size}" font-weight="${input.weight}" fill="${input.color}">${escapeXml(input.item.text)}</text></svg>`;
-  const buf = await sharp(Buffer.from(svg)).png().toBuffer();
-  const trimmed = await sharp(buf).trim({ threshold: 8 }).png().toBuffer().catch(() => null);
-  if (!trimmed) return null;
-  const meta = await sharp(trimmed).metadata();
-  if (!meta.width || !meta.height) return null;
-  // trim() reports the trimmed image; find its offset by diffing sizes —
-  // instead, re-measure deterministically: render at x=0 and use extract info
-  // via trim's info. sharp >=0.33 returns trim offset in metadata when using
-  // .toBuffer({resolveWithObject}). Re-render with resolveWithObject:
-  const withInfo = await sharp(Buffer.from(svg)).trim({ threshold: 8 }).png().toBuffer({ resolveWithObject: true }).catch(() => null);
-  const left = withInfo?.info.trimOffsetLeft ?? 0;
-  const top = withInfo?.info.trimOffsetTop ?? 0;
-  return { buf: trimmed, ink: { left, top, width: meta.width, height: meta.height } };
+/** Render ONE text fragment on a transparent canvas and measure its real ink box. */
+async function renderInk(
+  text: string,
+  family: string,
+  weight: number,
+  size: number,
+  color: string,
+  canvasW: number,
+  canvasH: number
+): Promise<{ buf: Buffer; ink: TextLinePlan["ink"] } | null> {
+  const key = cacheKey(text, family, weight, size, color, canvasW, canvasH);
+  if (INK_CACHE.has(key)) return INK_CACHE.get(key)!;
+  if (INK_CACHE.size > 400) INK_CACHE.clear();
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${canvasW}" height="${canvasH}"><text x="0" y="${Math.round(size)}" font-family="${escapeXml(family)}" font-size="${size}" font-weight="${weight}" fill="${color}">${escapeXml(text)}</text></svg>`;
+  const withInfo = await sharp(Buffer.from(svg))
+    .trim({ threshold: 8 })
+    .png()
+    .toBuffer({ resolveWithObject: true })
+    .catch(() => null);
+  if (!withInfo || !withInfo.info.width || !withInfo.info.height) {
+    INK_CACHE.set(key, null);
+    return null;
+  }
+  const ink = {
+    left: withInfo.info.trimOffsetLeft ?? 0,
+    top: withInfo.info.trimOffsetTop ?? 0,
+    width: withInfo.info.width,
+    height: withInfo.info.height,
+  };
+  if (ink.width <= 0 || ink.height <= 0) {
+    INK_CACHE.set(key, null);
+    return null;
+  }
+  const result = { buf: withInfo.data, ink };
+  INK_CACHE.set(key, result);
+  return result;
 }
 
-const MIN_CONTRAST = 3.0; // display-size text on imagery — WCAG large-text floor
+/**
+ * Resolve the font for an item and split its weight between the headline
+ * convention (bold display) and the item's explicit request.
+ */
+function resolveItemFont(item: TypographyItem, defaultWeight: number): ResolvedServerFont {
+  const wanted = item.weight ?? defaultWeight;
+  return resolveServerFont(item.fontId, wanted, item.font);
+}
+
+/**
+ * Fit one item's text with a hybrid strategy:
+ *  1. SHRINK first — while the FULL line overflows the safe width and the
+ *     size is above the floor, step down (×0.88). This keeps headlines on a
+ *     single line whenever a readable size exists (the established banner
+ *     contract: "long text shrinks to fit the safe area, no clipping").
+ *  2. WRAP only as the last resort — if the line still overflows at the
+ *     settled size AND it has multiple words, greedy-wrap by MEASURED word
+ *     widths. Wrapping is reported explicitly; text is never truncated,
+ *     squeezed or re-spelled.
+ */
+async function fitAndWrap(
+  item: TypographyItem,
+  font: ResolvedServerFont,
+  startSize: number,
+  color: string,
+  canvasW: number,
+  canvasH: number,
+  maxW: number
+): Promise<{ fragments: { text: string; size: number; ink: TextLinePlan["ink"] }[]; warnings: string[] }> {
+  const warnings: string[] = [];
+  let size = Math.max(10, Math.round(startSize));
+
+  // Pass 1: shrink the full line until it fits (single line preserved).
+  // Fast path: the start size usually fits — one render. Otherwise ink width
+  // is monotonic in font size, so binary search finds the largest fitting
+  // size in ~log2 steps (the 10px floor bounds the search — text is never
+  // squeezed below it).
+  {
+    const start = Math.max(10, Math.round(startSize));
+    const startRes = await renderInk(item.text, font.family, font.weight, start, color, canvasW, canvasH);
+    if (!startRes) {
+      warnings.push("The text could not be measured for rendering — it was skipped rather than rendered blind.");
+      return { fragments: [], warnings };
+    }
+    if (startRes.ink.width <= maxW) {
+      return { fragments: [{ text: item.text, size: start, ink: startRes.ink }], warnings };
+    }
+    let lo = 10;
+    let hi = start - 1;
+    let bestFit: { text: string; size: number; ink: TextLinePlan["ink"] } | null = null;
+    while (lo <= hi) {
+      const mid = Math.floor((lo + hi) / 2);
+      const res = await renderInk(item.text, font.family, font.weight, mid, color, canvasW, canvasH);
+      if (!res) {
+        warnings.push("The text could not be measured for rendering — it was skipped rather than rendered blind.");
+        return { fragments: [], warnings };
+      }
+      if (res.ink.width <= maxW) {
+        bestFit = { text: item.text, size: mid, ink: res.ink };
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    if (bestFit) return { fragments: [bestFit], warnings };
+    // Even size 10 overflows — the settled size for the wrap pass is the floor.
+    size = 10;
+  }
+
+  // Pass 2: last-resort wrap by measured word widths at the settled size.
+  const words = item.text.trim().split(/\s+/);
+  const measured: { word: string; ink: TextLinePlan["ink"] }[] = [];
+  for (const word of words) {
+    const res = await renderInk(word, font.family, font.weight, size, color, canvasW, canvasH);
+    if (!res) {
+      warnings.push("The text could not be measured for rendering — it was skipped rather than rendered blind.");
+      return { fragments: [], warnings };
+    }
+    measured.push({ word, ink: res.ink });
+  }
+  const widestWord = measured.reduce((m, w) => (w.ink.width > m.ink.width ? w : m), measured[0]);
+  if (widestWord.ink.width > maxW) {
+    warnings.push(`A word in "${item.text}" exceeds the safe-area width even at the minimum size — it may be clipped.`);
+  }
+  const spaceWidth =
+    words.length > 1
+      ? (await renderInk("a a", font.family, font.weight, size, color, canvasW, canvasH))!.ink.width -
+        (await renderInk("aa", font.family, font.weight, size, color, canvasW, canvasH))!.ink.width
+      : 0;
+  const lines: string[] = [];
+  let current = "";
+  let currentWidth = 0;
+  for (const w of measured) {
+    const candidateWidth = current ? currentWidth + spaceWidth + w.ink.width : w.ink.width;
+    if (current && candidateWidth > maxW) {
+      lines.push(current);
+      current = w.word;
+      currentWidth = w.ink.width;
+    } else {
+      current = current ? `${current} ${w.word}` : w.word;
+      currentWidth = candidateWidth;
+    }
+  }
+  if (current) lines.push(current);
+
+  const fragments: { text: string; size: number; ink: TextLinePlan["ink"] }[] = [];
+  for (const line of lines) {
+    const res = await renderInk(line, font.family, font.weight, size, color, canvasW, canvasH);
+    if (!res) {
+      warnings.push("The text could not be measured for rendering — it was skipped rather than rendered blind.");
+      return { fragments: [], warnings };
+    }
+    fragments.push({ text: line, size, ink: res.ink });
+  }
+  if (fragments.length > 1) {
+    warnings.push(`"${item.text}" did not fit the safe area even after shrinking — it was wrapped onto ${fragments.length} measured lines (text preserved, never truncated).`);
+  }
+  return { fragments, warnings };
+}
 
 /**
  * Plan + render the deterministic typography layer for a brief-driven banner.
  * Deterministic rules (documented, no randomness):
  *  - headline size starts at 46% of safe-area height, subtext at 55% of headline,
- *    both shrunk in fixed steps until the measured ink fits the safe-area width;
+ *    shrunk in fixed steps only while a single word overflows the safe width;
+ *  - multi-word lines wrap by MEASURED word widths (explicit warning);
  *  - lines stack with 18% leading, vertically centered in the safe area;
  *  - horizontal anchoring follows the placement rule (left/center/right);
  *  - text color comes from the brief palette chosen by measured contrast;
+ *  - fonts resolve through font-assets.ts (provisioned families, real
+ *    weights, glyph-coverage measurement, explicit fallback warnings);
  *  - a soft scrim is added ONLY when the measured contrast stays below the floor.
  */
 export async function renderTypographyLayer(
@@ -185,47 +346,37 @@ export async function renderTypographyLayer(
   const headline = items.find((t) => t.role === "headline") ?? items[0];
   const others = items.filter((t) => t !== headline);
 
-  // Fit loop per line: measure the real ink, shrink until it fits the safe width.
+  const headlineFont = resolveItemFont(headline, 700);
+  warnings.push(...headlineFont.warnings);
+  const otherFonts = others.map((item) => {
+    const f = resolveItemFont(item, 400);
+    warnings.push(...f.warnings);
+    return f;
+  });
+
+  // Fit loop per line: shrink only while a single word overflows, then wrap.
   const maxW = safe.width - 8;
-  const renderOne = async (
-    item: TypographyItem,
-    startSize: number,
-    weight: "normal" | "bold",
-    color: string
-  ): Promise<TextLinePlan> => {
-    let size = Math.max(10, Math.round(startSize));
-    let ink: TextLinePlan["ink"] | null = null;
-    for (let i = 0; i < 10; i += 1) {
-      const res = await renderLineInk(
-        { item, family: FONT_FAMILIES[item.font], size, color, weight },
-        canvasW,
-        canvasH
-      );
-      if (!res) break;
-      if (res.ink.width <= maxW || size <= 10) {
-        ink = res.ink;
-        break;
-      }
-      size = Math.max(10, Math.floor(size * 0.88));
-      if (i === 9) ink = res.ink;
-    }
-    return { item, family: FONT_FAMILIES[item.font], size, color, weight, ink: ink ?? { left: 0, top: 0, width: 0, height: 0 } };
-  };
-
-  // First pass with a provisional color to measure geometry, then finalize colors by contrast.
-  const provisional = "#ffffff";
-  const headlinePlan0 = await renderOne(headline, Math.round(safe.height * 0.46), "bold", provisional);
-  const otherPlans0 = await Promise.all(
-    others.map((item) => renderOne(item, Math.round(headlinePlan0.size * 0.55), "normal", provisional))
+  const headlineFit = await fitAndWrap(headline, headlineFont, Math.round(safe.height * 0.46), "#ffffff", canvasW, canvasH, maxW);
+  warnings.push(...headlineFit.warnings);
+  const otherFits = await Promise.all(
+    others.map((item, idx) =>
+      fitAndWrap(item, otherFonts[idx], Math.round((headlineFit.fragments[0]?.size ?? safe.height * 0.46) * 0.55), "#ffffff", canvasW, canvasH, maxW)
+    )
   );
-  const provisionalPlans = [headlinePlan0, ...otherPlans0];
+  for (const fit of otherFits) warnings.push(...fit.warnings);
 
-  // Total block height with leading.
+  // Total block height with leading (measured fragments).
   const leading = 0.18;
-  const blockH =
-    provisionalPlans.reduce((acc, p) => acc + p.ink.height, 0) +
-    Math.max(0, provisionalPlans.length - 1) * Math.round(headlinePlan0.size * leading);
-  const startY = Math.max(safe.y, Math.round(safe.y + (safe.height - blockH) / 2));
+  const headlineSize = headlineFit.fragments[0]?.size ?? Math.max(10, Math.round(safe.height * 0.46));
+  const leadingGap = Math.round(headlineSize * leading);
+  const allFragments: { item: TypographyItem; text: string; size: number; ink: TextLinePlan["ink"]; font: ResolvedServerFont; wrapped: boolean }[] = [
+    ...headlineFit.fragments.map((f) => ({ item: headline, text: f.text, size: f.size, ink: f.ink, font: headlineFont, wrapped: false })),
+    ...otherFits.flatMap((fit, idx) =>
+      fit.fragments.map((f, fi) => ({ item: others[idx], text: f.text, size: f.size, ink: f.ink, font: otherFonts[idx], wrapped: fi > 0 }))
+    ),
+  ];
+  const provisionalBlockH = allFragments.reduce((acc, f) => acc + f.ink.height, 0) + Math.max(0, allFragments.length - 1) * leadingGap;
+  const startY = Math.max(safe.y, Math.round(safe.y + (safe.height - provisionalBlockH) / 2));
 
   // Anchor X per placement.
   const anchorX = (inkWidth: number): number => {
@@ -237,7 +388,7 @@ export async function renderTypographyLayer(
   };
 
   // Contrast: sample the background under the whole text block.
-  const blockRect = { left: safe.x, top: startY, width: safe.width, height: Math.min(blockH, safe.height) };
+  const blockRect = { left: safe.x, top: startY, width: safe.width, height: Math.min(provisionalBlockH, safe.height) };
   const bgLum = sampleRegionLuminance(
     { data: bgRaw.data, width: bgRaw.info.width, height: bgRaw.info.height, channels: bgRaw.info.channels },
     blockRect
@@ -268,23 +419,27 @@ export async function renderTypographyLayer(
     warnings.push("Background contrast behind the text was low — a soft scrim was composited behind the text block.");
   }
 
-  // Final render at chosen color.
-  const headlinePlan = await renderOne(headline, headlinePlan0.size, "bold", finalColor);
-  const otherPlans = await Promise.all(
-    others.map((item, idx) => renderOne(item, otherPlans0[idx].size, "normal", finalColor))
-  );
-  const plans = [headlinePlan, ...otherPlans];
-
-  // Compose positions: stack from startY with anchor per placement.
+  // Compose positions: stack fragments from startY with anchor per placement.
   let cursorY = startY;
-  const positioned: TextLinePlan[] = plans.map((p) => {
+  const positioned: TextLinePlan[] = allFragments.map((f) => {
     const ink: TextLinePlan["ink"] = {
-      ...p.ink,
-      left: Math.max(0, anchorX(p.ink.width)),
+      ...f.ink,
+      left: Math.max(0, anchorX(f.ink.width)),
       top: Math.max(0, cursorY),
     };
-    cursorY += p.ink.height + Math.round(headlinePlan0.size * leading);
-    return { ...p, ink };
+    cursorY += f.ink.height + leadingGap;
+    return {
+      item: f.item,
+      text: f.text,
+      family: f.font.family,
+      fontId: f.font.fontId,
+      source: f.font.source,
+      size: f.size,
+      color: finalColor,
+      weight: f.font.weight,
+      ink,
+      wrapped: f.wrapped,
+    };
   });
 
   // Build the SVG layer (positions from MEASURED ink boxes).
@@ -295,11 +450,11 @@ export async function renderTypographyLayer(
     );
   }
   for (const p of positioned) {
-    if (!p.item.text) continue;
+    if (!p.text) continue;
     // SVG text baseline: ink top + ascent approximation via measured box is
-    // exact enough because we re-measured THIS font/size/color combination.
+    // exact enough because we re-measured THIS font/weight/size/color.
     svgParts.push(
-      `<text x="${p.ink.left}" y="${p.ink.top + Math.round(p.ink.height * 0.94)}" font-family="${p.family}" font-size="${p.size}" font-weight="${p.weight}" fill="${finalColor}">${escapeXml(p.item.text)}</text>`
+      `<text x="${p.ink.left}" y="${p.ink.top + Math.round(p.ink.height * 0.94)}" font-family="${escapeXml(p.family)}" font-size="${p.size}" font-weight="${p.weight}" fill="${finalColor}">${escapeXml(p.text)}</text>`
     );
   }
   const layer = await sharp({
@@ -328,7 +483,7 @@ export async function renderTypographyLayer(
     const ratio = contrastRatio(finalColor, lum > 0.5 ? "#f5f5f4" : "#1c1917");
     const overlap = focalRect ? intersectionFraction(ink, focalRect) : 0;
     checks.push({
-      lineText: p.item.text,
+      lineText: p.text,
       renderedInk: inkOnLayer.hasInk ? inkOnLayer.box : ink,
       fitsSafeArea:
         ink.left >= safe.x &&
@@ -339,6 +494,7 @@ export async function renderTypographyLayer(
       contrastRatio: Number(ratio.toFixed(2)),
       contrastOk: ratio >= MIN_CONTRAST,
       focalOverlap: Number(overlap.toFixed(3)),
+      glyphCoverage: checkGlyphCoverage(p.family, p.text),
     });
   }
 
@@ -433,7 +589,7 @@ export async function verifyInkApplied(
       }
     }
     const meanDelta = n > 0 ? sum / n / 3 : 0;
-    out.push({ text: line.item.text, meanDelta: Number(meanDelta.toFixed(2)), applied: meanDelta > 2 });
+    out.push({ text: line.text, meanDelta: Number(meanDelta.toFixed(2)), applied: meanDelta > 2 });
   }
   return out;
 }
