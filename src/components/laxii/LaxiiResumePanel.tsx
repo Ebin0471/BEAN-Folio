@@ -60,6 +60,7 @@ import {
   type ResumeData,
   type ResumeDetail,
   type ResumeFacts,
+  type ResumeImportProposal,
   type ResumeSectionKey,
 } from "@/lib/laxii-client";
 import {
@@ -70,6 +71,7 @@ import {
 } from "@/lib/laxii/resume-professions";
 import { RESUME_TYPES, RESUME_DEFAULT_ORDER, RESUME_CORE_TITLES } from "@/lib/laxii/resume-schema";
 import { LaxiiResumePreview } from "./LaxiiResumePreview";
+import { LaxiiResumeImportReview, type ApplyPayload } from "./LaxiiResumeImportReview";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -403,6 +405,10 @@ export function LaxiiResumePanel({
   const [sourceText, setSourceText] = useState("");
   const [sourceName, setSourceName] = useState("");
   const [parsing, setParsing] = useState(false);
+  // M33.5-A: structured import review — the proposal must be confirmed by the
+  // user before any of its fields reach the facts form.
+  const [importProposal, setImportProposal] = useState<ResumeImportProposal | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
 
   // Document editor state
   const [data, setData] = useState<ResumeData>(emptyResumeData());
@@ -465,15 +471,49 @@ export function LaxiiResumePanel({
   async function handleUploadResume(file: File) {
     setParsing(true);
     try {
-      const res = await laxiiApi.resumeParse(file);
+      // M33.5-A: one call returns the extracted text plus a deterministic
+      // structured proposal. Nothing is stored server-side; the review
+      // dialog decides what reaches the facts form.
+      const res = await laxiiApi.resumeImport(file);
       setSourceText(res.text);
       setSourceName(file.name);
-      toast.success("Resume text extracted — it will be used as source material.");
+      setImportProposal(res.proposal);
+      setImportOpen(true);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not read the file.");
     } finally {
       setParsing(false);
     }
+  }
+
+  /** Merge user-confirmed import fields into the facts form. */
+  function applyImport(payload: ApplyPayload) {
+    setFacts((f) => {
+      const basics = { ...f.basics };
+      for (const b of payload.basics) {
+        (basics as unknown as Record<string, string>)[b.key] = b.value;
+      }
+      return {
+        ...f,
+        basics,
+        work: [...f.work, ...payload.work.map((w) => ({ ...w, highlights: [...w.highlights] }))].slice(0, 15),
+        education: [...f.education, ...payload.education.map((e) => ({ ...e }))].slice(0, 10),
+        skills: [...f.skills, ...payload.skills.map((name) => ({ name, level: "" }))].slice(0, 40),
+        projects: [...f.projects, ...payload.projects.map((p) => ({ ...p, highlights: [...p.highlights] }))].slice(0, 10),
+        certificates: [...f.certificates, ...payload.certificates.map((c) => ({ ...c }))].slice(0, 15),
+        awards: [...f.awards, ...payload.awards.map((a) => ({ ...a }))].slice(0, 10),
+      };
+    });
+    setImportOpen(false);
+    const n = payload.basics.length + payload.work.length + payload.education.length + payload.skills.length + payload.projects.length + payload.certificates.length + payload.awards.length;
+    toast.success(
+      `${n} field${n === 1 ? "" : "s"} added to the facts form — review them, then generate. The extracted text stays as source material.`
+    );
+  }
+
+  function discardImport() {
+    setImportOpen(false);
+    setImportProposal(null);
   }
 
   // ------------------------------------------------------- custom sections
@@ -656,6 +696,7 @@ export function LaxiiResumePanel({
       className="mx-auto grid h-full w-full max-w-7xl grid-rows-[minmax(0,1fr)_minmax(0,1fr)] gap-4 px-4 py-4 lg:grid-cols-[minmax(340px,440px)_1fr] lg:grid-rows-[minmax(0,1fr)]"
       data-testid="laxii-resume-panel"
     >
+      <LaxiiResumeImportReview proposal={importProposal} open={importOpen} onApply={applyImport} onDiscard={discardImport} />
       {/* LEFT — form / editor (scrolls internally, fills the viewport height) */}
       <div className="laxii-scroll min-h-0 space-y-3 overflow-y-auto pb-6 pr-1">
         {!isExisting ? (
@@ -710,9 +751,14 @@ export function LaxiiResumePanel({
                 </p>
               ) : (
                 <p className="mt-2 text-[11px] text-muted-foreground">
-                  We extract the text and treat it as facts you provided. Scans (image-only PDFs) can’t be read.
+                  We extract the text and propose structured fields for your review — nothing is saved until you confirm. Scans (image-only PDFs) can’t be read.
                 </p>
               )}
+              {importProposal ? (
+                <Button variant="ghost" size="sm" className="mt-1 h-7 gap-1 text-[11px]" onClick={() => setImportOpen(true)} data-testid="laxii-import-review-reopen">
+                  Re-open the fact review ({[importProposal.basics.name, importProposal.basics.email, importProposal.basics.phone, importProposal.basics.website, importProposal.basics.location, importProposal.basics.summary].filter(Boolean).length + importProposal.work.length + importProposal.education.length + importProposal.skills.length} proposals)
+                </Button>
+              ) : null}
             </SectionCard>
 
             <SectionCard title="Personal details" icon={<UserRound className="size-4" aria-hidden />}>
