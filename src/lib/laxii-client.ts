@@ -277,6 +277,44 @@ export interface LaxiiGalleryImage {
 
 // ------------------------------------------------------------------ resume
 
+/** M33.5-A: one proposed field from the structured import (deterministic). */
+export interface ImportProposalField {
+  value: unknown;
+  confidence: "high" | "review" | "low";
+  snippet: string;
+  warnings: string[];
+}
+
+export interface ImportProposalString extends ImportProposalField {
+  value: string;
+}
+
+export interface ResumeImportProposal {
+  schemaVersion: 1;
+  source: {
+    method: "pdf-text" | "docx-text" | "plain-text" | "user-entered";
+    charCount: number;
+    truncated: boolean;
+    fileName: string;
+  };
+  basics: {
+    name: ImportProposalString | null;
+    label: ImportProposalString | null;
+    email: ImportProposalString | null;
+    phone: ImportProposalString | null;
+    website: ImportProposalString | null;
+    location: ImportProposalString | null;
+    summary: ImportProposalString | null;
+  };
+  work: (ImportProposalField & { value: ResumeWorkItem })[];
+  education: (ImportProposalField & { value: ResumeEducationItem })[];
+  skills: (ImportProposalField & { value: string })[];
+  projects: (ImportProposalField & { value: ResumeProjectItem })[];
+  certificates: (ImportProposalField & { value: ResumeCertificateItem })[];
+  awards: (ImportProposalField & { value: ResumeAwardItem })[];
+  warnings: string[];
+}
+
 export interface ResumeWorkItem {
   company: string;
   position: string;
@@ -294,6 +332,26 @@ export interface ResumeEducationItem {
   startDate: string;
   endDate: string;
   score: string;
+}
+
+export interface ResumeProjectItem {
+  name: string;
+  description: string;
+  highlights: string[];
+  url: string;
+}
+
+export interface ResumeCertificateItem {
+  name: string;
+  issuer: string;
+  date: string;
+}
+
+export interface ResumeAwardItem {
+  title: string;
+  awarder: string;
+  date: string;
+  summary: string;
 }
 
 export interface ResumeCustomEntry {
@@ -510,6 +568,21 @@ export const laxiiApi = {
       throw new Error(json?.error ?? "Could not read the resume file.");
     }
     return { text: json.text, truncated: Boolean(json.truncated), source: json.source ?? "" };
+  },
+
+  /** M33.5-A: structured import — upload a file and get text + a deterministic
+   *  review proposal. Nothing is persisted server-side. */
+  resumeImport: async (file: File): Promise<{ text: string; truncated: boolean; source: string; proposal: ResumeImportProposal }> => {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch("/api/laxii/resume/import", { method: "POST", body: form, credentials: "include" });
+    const json = (await res.json().catch(() => null)) as
+      | { text?: string; truncated?: boolean; source?: string; proposal?: ResumeImportProposal; error?: string }
+      | null;
+    if (!res.ok || typeof json?.text !== "string" || !json?.proposal) {
+      throw new Error(json?.error ?? "Could not read the resume file.");
+    }
+    return { text: json.text, truncated: Boolean(json.truncated), source: json.source ?? "", proposal: json.proposal };
   },
 
   resumeTailor: (conversationId: string, jobDescription: string, targetTitle?: string) =>

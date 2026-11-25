@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { getSessionUser } from "@/lib/auth";
 import { handler, ok, err, ERR, rateLimit } from "@/lib/api-helpers";
+import { resolveUploadKind, verifyUploadSignature } from "@/lib/laxii/resume-import";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -36,6 +37,14 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
   if (file.size > MAX_UPLOAD_BYTES) return err("The file is too large (max 10 MB).", 400);
 
   const bytes = Buffer.from(await file.arrayBuffer());
+
+  // M33.5-A: validate actual file bytes against the claimed type — a renamed
+  // or corrupted upload is rejected with a precise message.
+  const uploadKind = resolveUploadKind(file.name, file.type);
+  if (!uploadKind) return err("Unsupported file type — upload a PDF, DOCX or TXT resume.", 400);
+  const signature = verifyUploadSignature(bytes, uploadKind);
+  if (!signature.ok) return err(signature.reason ?? "The file content does not match its type.", 400);
+
   const name = file.name.toLowerCase();
 
   try {
