@@ -73,6 +73,7 @@ import { RESUME_TYPES, RESUME_DEFAULT_ORDER, RESUME_CORE_TITLES } from "@/lib/la
 import { LaxiiResumePreview } from "./LaxiiResumePreview";
 import { LaxiiResumeImportReview, type ApplyPayload } from "./LaxiiResumeImportReview";
 import { LaxiiResumeAnalysisPanel } from "./LaxiiResumeAnalysisPanel";
+import { LaxiiResumeVersions } from "./LaxiiResumeVersions";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -419,8 +420,10 @@ export function LaxiiResumePanel({
   const [missing, setMissing] = useState<string[]>([]);
   const [dirty, setDirty] = useState(false);
 
+  // M33.5-C: tailored copy state (JD privacy toggle + busy flag)
+  const [saveFullJd, setSaveFullJd] = useState(false);
   // Action state
-  const [busyAction, setBusyAction] = useState<"" | "generate" | "tailor" | "rephrase" | "save" | "export">("");
+  const [busyAction, setBusyAction] = useState<"" | "generate" | "tailor" | "rephrase" | "tailor_copy" | "save" | "export">("");
   const [exportFormat, setExportFormat] = useState<"pdf" | "docx">("pdf");
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -596,6 +599,34 @@ export function LaxiiResumePanel({
       toast.success("Resume tailored to the job description.");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Tailoring failed.");
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  /** M33.5-C: create a job-specific copy; the master resume stays untouched. */
+  async function runTailorCopy() {
+    if (!conversationId) return;
+    if (!jobDescription.trim()) {
+      toast.error("Paste the job description first — the copy is tailored against it.");
+      return;
+    }
+    setBusyAction("tailor_copy");
+    try {
+      const res = await laxiiApi.resumeTailorCopy({
+        conversationId,
+        jobDescription,
+        ...(targetTitle ? { targetTitle } : {}),
+        saveFullJobDescription: saveFullJd,
+      });
+      setNotes(res.notes);
+      setAiTouched(res.aiTouched);
+      setDirty(false);
+      onOpenConversation(res.conversationId);
+      onLibraryChanged();
+      toast.success("Tailored copy created — your master resume was not modified.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not create the tailored copy.");
     } finally {
       setBusyAction("");
     }
@@ -992,6 +1023,11 @@ export function LaxiiResumePanel({
           </>
         ) : (
           <>
+            {detail?.variantKind === "tailored" ? (
+              <p className="rounded-xl border border-primary/25 bg-primary/[0.06] px-3 py-2 text-[11px] leading-relaxed text-primary" data-testid="laxii-resume-variant-badge">
+                Tailored copy — the master resume it came from is unchanged and stays in your library.
+              </p>
+            ) : null}
             {/* Document editor — every section editable */}
             <SectionCard
               title="Template"
@@ -1144,12 +1180,38 @@ export function LaxiiResumePanel({
               />
             ))}
 
+            {conversationId ? (
+              <LaxiiResumeVersions
+                conversationId={conversationId}
+                liveData={data}
+                onRestored={(resume) => {
+                  setData(resume);
+                  setDirty(false);
+                  toast.success("Version restored — the previous state was saved as a new version first.");
+                }}
+              />
+            ) : null}
+
             <SectionCard title="Tailor to a job" icon={<Wand2 className="size-4" aria-hidden />}>
               <Area label="Job description" value={jobDescription} onChange={setJobDescription} rows={4} placeholder="Paste the posting — emphasis will be aligned using only your real experience." />
               <Button onClick={runTailor} disabled={busyAction !== ""} variant="outline" className="mt-2.5 h-9 w-full gap-2 border-primary/40 bg-primary/10 text-primary hover:bg-primary/20" data-testid="laxii-resume-tailor">
                 {busyAction === "tailor" ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <Wand2 className="size-3.5" aria-hidden />}
-                Tailor resume to this job
+                Tailor this resume in place
               </Button>
+              <div className="mt-3 rounded-xl border border-dashed border-white/15 p-2.5">
+                <p className="text-[11px] font-medium text-foreground/80">Keep the master — create a separate tailored copy</p>
+                <Button onClick={() => void runTailorCopy()} disabled={busyAction !== ""} variant="outline" className="mt-2 h-9 w-full gap-2 border-primary/40 bg-primary/10 text-primary hover:bg-primary/20" data-testid="laxii-resume-tailor-copy">
+                  {busyAction === "tailor_copy" ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <Layers className="size-3.5" aria-hidden />}
+                  Create tailored copy
+                </Button>
+                <label className="mt-2 flex items-start gap-2 text-[10.5px] leading-relaxed text-muted-foreground">
+                  <input type="checkbox" checked={saveFullJd} onChange={(e) => setSaveFullJd(e.target.checked)} className="mt-0.5 accent-[#C9A24B]" />
+                  <span>
+                    Save the full job description text with this copy. Off by default — only its hash is stored, so the
+                    posting text stays on your device unless you opt in.
+                  </span>
+                </label>
+              </div>
             </SectionCard>
 
             <div className="flex gap-2">
