@@ -14,7 +14,7 @@
  * "verified". Every value stays editable inside the facts form afterwards.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { CircleAlert, FileText, Sparkles, TriangleAlert } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -113,10 +113,11 @@ export function LaxiiResumeImportReview({
   const [awards, setAwards] = useState<{ accepted: boolean; value: ResumeAwardItem }[]>([]);
   const [seededFor, setSeededFor] = useState<string | null>(null);
 
-  // Seed the local (editable) review state once per proposal.
+  // Seed the local (editable) review state once per proposal — React's
+  // documented "adjusting state when a prop changes" render-phase pattern
+  // (guarded by seededFor, so it converges immediately).
   const seedKey = proposal ? `${proposal.schemaVersion}:${proposal.source.fileName}:${proposal.source.charCount}` : null;
-  useEffect(() => {
-    if (!proposal || !open || !seedKey || seededFor === seedKey) return;
+  if (proposal && open && seedKey && seededFor !== seedKey) {
     const seedBasics: Record<string, { accepted: boolean; value: string }> = {};
     const put = (k: string, f: ImportProposalField | null) => {
       if (f) seedBasics[k] = { accepted: f.confidence === "high", value: String(f.value ?? "") };
@@ -136,7 +137,7 @@ export function LaxiiResumeImportReview({
     setCertificates(proposal.certificates.map((c) => ({ accepted: false, value: { ...c.value } })));
     setAwards(proposal.awards.map((a) => ({ accepted: false, value: { ...a.value } })));
     setSeededFor(seedKey);
-  }, [proposal, open, seedKey, seededFor]);
+  }
 
   const counts = useMemo(() => {
     const accepted =
