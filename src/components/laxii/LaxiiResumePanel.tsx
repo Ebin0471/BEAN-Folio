@@ -72,6 +72,7 @@ import {
 import { RESUME_TYPES, RESUME_DEFAULT_ORDER, RESUME_CORE_TITLES } from "@/lib/laxii/resume-schema";
 import { LaxiiResumePreview } from "./LaxiiResumePreview";
 import { LaxiiResumeImportReview, type ApplyPayload } from "./LaxiiResumeImportReview";
+import { LaxiiResumeAnalysisPanel } from "./LaxiiResumeAnalysisPanel";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1205,6 +1206,7 @@ export function LaxiiResumePanel({
 
         {isExisting ? (
           <>
+            {conversationId ? <LaxiiResumeAnalysisPanel conversationId={conversationId} savedJobDescription={detail?.jobDescription ?? ""} /> : null}
             <LaxiiResumePreview data={data} template={template} />
             <p className="flex items-start gap-1.5 rounded-xl border border-white/10 bg-white/[0.03] p-3 text-[11px] leading-relaxed text-muted-foreground">
               <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-primary" aria-hidden />
