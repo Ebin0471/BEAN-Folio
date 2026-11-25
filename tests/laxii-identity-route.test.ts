@@ -22,6 +22,7 @@
  * Run: bun test tests/laxii-identity-route.test.ts
  */
 import { describe, expect, test, beforeAll, afterAll, mock } from "bun:test";
+import { readFileSync } from "node:fs";
 import { NextRequest } from "next/server";
 
 let cookieToken: string | undefined;
@@ -33,56 +34,23 @@ mock.module("next/headers", () => ({
   }),
 }));
 
-// Deterministic pipeline stand-in: the route contract does not re-test the
-// matting math (that lives in tests/laxii-identity-lock.test.ts with the
-// real MODNet weights).
-const TINY_PNG = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
-  "base64"
-);
-let pipelineCalls = 0;
-mock.module("@/lib/laxii/avatar-identity", () => ({
-  buildMaskPreview: async () => ({
-    ok: true,
-    reason: null,
-    maskPng: TINY_PNG,
-    sourceWidth: 512,
-    sourceHeight: 512,
-    coverage: 0.57,
-    bbox: { x: 100, y: 100, width: 300, height: 320 },
-    bounds: { minCoverage: 0.02, maxCoverage: 0.92, minBboxArea: 0.01 },
-  }),
-  runIdentityLockPipeline: async () => {
-    pipelineCalls += 1;
-    return {
-      png: TINY_PNG,
-      width: 512,
-      height: 512,
-      manifest: {
-        mode: "PRESERVE_PIXEL",
-        canvas: { width: 512, height: 512 },
-        sourceSha256: "test-hash",
-        sourceDims: { width: 512, height: 512 },
-        mask: { coverage: 0.57, bbox: null, modelResolution: { width: 512, height: 512 } },
-        background: { attempts: 1, provider: "managed", model: "test", personGateCoverage: 0 },
-        verification: {
-          coreMaxDelta: 0,
-          featherMaxDelta: 1,
-          backgroundMaxDelta: 0,
-          corePixelsChecked: 1,
-          featherPixelsChecked: 1,
-          backgroundPixelsChecked: 1,
-          passed: true,
-        },
-      },
-    };
-  },
-}));
+// NO module mocking here: bun's mock.module is process-global and would
+// poison the REAL pipeline suite (tests/laxii-identity-lock.test.ts) when
+// both files run in one worker. Instead this suite exercises the REAL route
+// boundary: the preview phase runs the actual local MODNet segmentation on
+// a real fixture; the confirmed-generate test uses an undersized source so
+// the REAL pipeline fails closed at validation BEFORE any provider call —
+// which is itself the honesty contract under test.
 
 import { db } from "@/lib/db";
 import { createSession, hashPassword } from "@/lib/auth";
 import { putObject, deleteObject } from "@/lib/storage";
 import { POST as identityRoute } from "@/app/api/laxii/avatar-identity/route";
+
+const TINY_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+  "base64"
+);
 
 const STAMP = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const EMAIL_A = `laxii-id-a-${STAMP}@test.beanfolio.local`;
@@ -92,6 +60,7 @@ let userAId: string;
 let userBId: string;
 let mediaAId: string;
 const storageKeyA = `uploads/qa-identity-${STAMP}/reference.png`;
+const storageKeySmall = `uploads/qa-identity-${STAMP}/too-small.png`;
 
 function post(body: unknown): Promise<Response> {
   const req = new NextRequest("http://localhost/api/laxii/avatar-identity", {
@@ -111,14 +80,15 @@ beforeAll(async () => {
     data: { email: EMAIL_B, passwordHash: await hashPassword("identity-route-pass"), name: "Identity B" },
   });
   userBId = userB.id;
-  await putObject(storageKeyA, TINY_PNG, "image/png");
+  const fixture = readFileSync("tests/fixtures/laxii/person-plate.png");
+  await putObject(storageKeyA, fixture, "image/png");
   const media = await db.mediaAsset.create({
     data: {
       ownerId: userAId,
       kind: "IMAGE",
       filename: "reference.png",
       mime: "image/png",
-      size: TINY_PNG.length,
+      size: fixture.length,
       width: 512,
       height: 512,
       status: "READY",
@@ -157,10 +127,13 @@ describe("POST /api/laxii/avatar-identity — route contract", () => {
     cookieToken = await createSession(userAId);
     const res = await post({ sourceMediaId: mediaAId, scenePrompt: "a calm studio backdrop", phase: "preview" });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { ok: boolean; coverage: number; maskDataUrl: string; phase: string };
+    const body = (await res.json()) as { ok: boolean; coverage: number; maskDataUrl: string; phase: string; bounds: { minCoverage: number } };
     expect(body.phase).toBe("preview");
+    // REAL local MODNet segmentation on the real portrait fixture.
     expect(body.ok).toBe(true);
-    expect(body.coverage).toBeGreaterThan(0);
+    expect(body.coverage).toBeGreaterThan(0.2);
+    expect(body.coverage).toBeLessThan(0.92);
+    expect(body.bounds.minCoverage).toBe(0.02);
     expect(body.maskDataUrl).toMatch(/^data:image\/png;base64,/);
     const conversations = await db.laxiiConversation.count({ where: { userId: userAId } });
     expect(conversations).toBe(0);
@@ -172,14 +145,30 @@ describe("POST /api/laxii/avatar-identity — route contract", () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
     expect(body.error).toMatch(/review/i);
-    expect(pipelineCalls).toBe(0);
+    expect(await db.laxiiConversation.count({ where: { userId: userAId } })).toBe(0);
   });
 
-  test("a confirmed job runs, stores a PRIVATE result version, and never touches the public profile", async () => {
+  test("a confirmed job creates the durable RUNNING claim on a private AVATAR conversation; a fail-closed pipeline marks it FAILED without publishing anything", async () => {
     cookieToken = await createSession(userAId);
+    // Undersized source: the REAL pipeline rejects it at validation — before
+    // any provider call — which exercises the honest-failure path end to end.
+    await putObject(storageKeySmall, TINY_PNG, "image/png");
+    const small = await db.mediaAsset.create({
+      data: {
+        ownerId: userAId,
+        kind: "IMAGE",
+        filename: "too-small.png",
+        mime: "image/png",
+        size: TINY_PNG.length,
+        width: 1,
+        height: 1,
+        status: "READY",
+        storagePath: storageKeySmall,
+      },
+    });
     const before = await db.user.findUnique({ where: { id: userAId }, select: { avatarMediaId: true } });
     const res = await post({
-      sourceMediaId: mediaAId,
+      sourceMediaId: small.id,
       scenePrompt: "a calm studio backdrop",
       phase: "generate",
       confirmed: true,
@@ -189,35 +178,32 @@ describe("POST /api/laxii/avatar-identity — route contract", () => {
     expect(body.status).toBe("RUNNING");
     expect(body.mode).toBe("PRESERVE_PIXEL");
     expect(body.identityLock).toBe("preserved-original-pixels");
-
-    // Wait for the (mocked, immediate) worker to finish.
-    let done = false;
-    for (let i = 0; i < 20; i += 1) {
-      await new Promise((r) => setTimeout(r, 250));
-      const row = await db.laxiiMessage.findUnique({ where: { id: body.messageId } });
-      if (row?.status === "DONE") {
-        done = true;
-        break;
-      }
-    }
-    expect(done).toBe(true);
-
-    const msg = await db.laxiiMessage.findUnique({
-      where: { id: body.messageId },
-      include: { versions: { include: { media: true } } },
-    });
-    expect(msg?.versions.length).toBe(1);
-    const version = msg!.versions[0];
-    expect(version.media.ownerId).toBe(userAId);
-    expect(version.media.kind).toBe("IMAGE");
-    expect(version.operation).toBe("IDENTITY_LOCK");
-    // The conversation is a private AVATAR conversation owned by A.
     const convo = await db.laxiiConversation.findUnique({ where: { id: body.conversationId } });
     expect(convo?.kind).toBe("AVATAR");
     expect(convo?.userId).toBe(userAId);
+    const row = await db.laxiiMessage.findUnique({ where: { id: body.messageId } });
+    expect(row?.status).toBe("RUNNING");
+
+    // The worker fails closed at the validation gate (no provider call, no
+    // stored version, nothing published).
+    let terminal = "";
+    for (let i = 0; i < 40; i += 1) {
+      await new Promise((r) => setTimeout(r, 250));
+      const fresh = await db.laxiiMessage.findUnique({ where: { id: body.messageId } });
+      if (fresh && fresh.status !== "RUNNING") {
+        terminal = fresh.status;
+        break;
+      }
+    }
+    expect(terminal).toBe("FAILED");
+    const failed = await db.laxiiMessage.findUnique({ where: { id: body.messageId } });
+    expect(failed?.error).toMatch(/decodable|decoded|small/i);
+    expect(await db.laxiiImageVersion.count({ where: { messageId: body.messageId } })).toBe(0);
 
     // The public profile was NOT touched by the pipeline or worker.
     const after = await db.user.findUnique({ where: { id: userAId }, select: { avatarMediaId: true } });
     expect(after?.avatarMediaId).toBe(before?.avatarMediaId ?? null);
+    await db.mediaAsset.delete({ where: { id: small.id } }).catch(() => undefined);
+    await deleteObject(storageKeySmall).catch(() => undefined);
   });
 });
