@@ -79,6 +79,22 @@ to reuse BEAN's source).
   benchmark before any adoption.
 - Assessment detail: `docs/oss/AGENT_FRAMEWORK_ASSESSMENTS.md`.
 
+### pdf-parse 2.4.5 — Apache-2.0 — Adopted (pre-existing dependency; exercised by M33.5 import/round-trip)
+- Source: npm `pdf-parse` (v2 line); licence file `Apache-2.0` in the installed package (2.4.5).
+- Use: text extraction from selectable-text PDFs in `/api/laxii/resume/parse`, `/api/laxii/resume/import` (M33.5-A) and the M33.5-B/C/D export round-trip verifications. Runs on user-owned uploads only; no network access, no external entities resolved; metadata-only failure logs.
+- Note: image-only/scanned PDFs yield no text and keep the honest unsupported message — no OCR is claimed (M33.5 decision, `docs/reports/M33.5_CAPABILITY_GAP_REPORT.md` §4). Tesseract.js/Tika were evaluated and NOT adopted (licence/asset-audit + runtime budget; see gap report).
+
+### mammoth 1.13.0 — BSD-2-Clause — Adopted (pre-existing dependency; exercised by M33.5 import/round-trip)
+- Source: npm `mammoth` 1.13.0; licence BSD-2-Clause (installed package).
+- Use: DOCX raw-text extraction in the same resume routes and round-trip verifications. Same privacy bounds as pdf-parse.
+
+### docx 9.15.1 — MIT — Adopted (pre-existing dependency; exercised by M33.5-D cover-letter export)
+- Source: npm `docx` 9.15.1 (dolanmiu/docx); licence MIT (installed package).
+- Use: semantic Word paragraphs for resume (pre-existing) and cover-letter (M33.5-D) exports.
+
+### pdfkit 0.20.2 — MIT — Adopted (pre-existing dependency; exercised by M33.5-D cover-letter export)
+- Source: npm `pdfkit` 0.20.2; licence MIT (installed package); standard-14 fonts (selectable text, no font asset embedding).
+
 ### onnxruntime-node 1.31.1 — https://github.com/microsoft/onnxruntime — MIT — ADOPTED (M33.4-C, LAXII identity pipeline)
 
 - Verified: in-package LICENSE file (MIT) at the pinned version; runtime is
