@@ -1267,7 +1267,9 @@ export function LaxiiResumePanel({
               </div>
             </SectionCard>
 
-            <div className="flex gap-2">
+            {/* flex-wrap: three nowrap-labelled buttons cannot fit 390px on one
+                line — they must wrap, never clip (spec §8.8 mobile rule). */}
+            <div className="flex flex-wrap gap-2 [&>*]:min-w-[7.5rem]">
               <Button onClick={() => void saveEdits()} disabled={busyAction !== "" || !dirty} variant="outline" className="h-10 flex-1 gap-2 border-white/15 bg-white/[0.04]" data-testid="laxii-resume-save">
                 {busyAction === "save" ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Save className="size-4" aria-hidden />}
                 {dirty ? "Save changes" : "Saved"}

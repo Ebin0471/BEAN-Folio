@@ -104,7 +104,14 @@ export function findUnverifiableLetterContent(input: LetterGuardInput): { entiti
   for (const w of facts.work) {
     if (w.company.trim()) knownEntities.push(w.company);
   }
-  for (const e of facts.education) if (e.institution.trim()) knownEntities.push(e.institution);
+  for (const e of facts.education) {
+    if (e.institution.trim()) knownEntities.push(e.institution);
+    // Field of study is confirmed fact material too — letters legitimately
+    // mention it ("Computer Science"); without this the guard would reject
+    // traceable education context (live E2E finding, 2026-11-25).
+    if (e.area.trim()) knownEntities.push(e.area);
+    if (e.studyType.trim()) knownEntities.push(e.studyType);
+  }
   // Certificate/award NAMES are fact material too (e.g. "AWS Certified Cloud
   // Practitioner") — not just issuers.
   for (const c of facts.certificates) {
@@ -123,6 +130,11 @@ export function findUnverifiableLetterContent(input: LetterGuardInput): { entiti
   if (resumeDoc) {
     for (const p of resumeDoc.projects) if (p.name.trim()) knownEntities.push(p.name);
     for (const w of resumeDoc.work) if (w.company.trim()) knownEntities.push(w.company);
+    for (const e of resumeDoc.education) {
+      if (e.institution.trim()) knownEntities.push(e.institution);
+      if (e.area.trim()) knownEntities.push(e.area);
+      if (e.studyType.trim()) knownEntities.push(e.studyType);
+    }
   }
   const knownNorm = new Set(knownEntities.map(normalizeEntity).filter(Boolean));
   const jdNorm = normalizeEntity(jdText);
@@ -377,6 +389,15 @@ export async function generateCoverLetter(opts: {
     location: facts.basics.location || resumeDoc.basics.location || "",
     website: facts.basics.website || resumeDoc.basics.website || "",
   };
+  const salutation = (opts.salutation || "Dear Hiring Manager").slice(0, 120);
+  // Deterministic de-duplication (E2E finding 2026-11-25): the model sometimes
+  // repeats the salutation inside the opening paragraph ("Dear Hiring Manager,
+  // I am writing…"). The salutation is rendered as its own line — a duplicated
+  // greeting in the exported letter is a defect, so strip it from the opening.
+  const stripSalutation = (text: string): string => {
+    const esc = salutation.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return text.replace(new RegExp(`^\\s*${esc}\\s*,?\\s*`, "i"), "").trim();
+  };
   const letter: CoverLetterData = coverLetterDataSchema.parse({
     schemaVersion: 1,
     basics,
@@ -385,8 +406,8 @@ export async function generateCoverLetter(opts: {
     companyName: opts.companyName.slice(0, 160), // exactly what the user supplied — empty stays empty
     hiringContactName: opts.hiringContactName.slice(0, 160),
     date: (opts.date || new Date().toISOString().slice(0, 10)).slice(0, 40),
-    salutation: (opts.salutation || "Dear Hiring Manager").slice(0, 120),
-    opening: draft.opening,
+    salutation,
+    opening: stripSalutation(draft.opening),
     bodyParagraphs: draft.bodyParagraphs,
     closing: draft.closing,
     signatureName: basics.name,

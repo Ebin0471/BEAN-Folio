@@ -20,7 +20,9 @@ import { describe, expect, test, beforeAll, afterAll, mock } from "bun:test";
 import { NextRequest } from "next/server";
 
 const CLEAN_DRAFT = {
-  opening: "I am writing to apply for the Senior Frontend Engineer role at Meridian Labs.",
+  // The model sometimes repeats the salutation inside the opening — the
+  // service must de-duplicate it deterministically (salutation renders once).
+  opening: "Dear Hiring Manager, I am writing to apply for the Senior Frontend Engineer role at Meridian Labs.",
   bodyParagraphs: [
     "At Zeta Systems I built design-system components used across product teams.",
     "I work with React and TypeScript every day.",
@@ -152,6 +154,9 @@ describe("POST /api/laxii/cover-letter — generate", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { letterId: string; letter: CoverLetterData; notes: string[] };
     expect(body.letter.opening).toContain("Meridian Labs");
+    // Salutation de-duplication: the greeting renders ONCE (its own line).
+    expect(body.letter.salutation.toLowerCase()).toBe("dear hiring manager");
+    expect(body.letter.opening.toLowerCase()).not.toContain("dear hiring manager");
     expect(body.letter.basics.name).toBe("Asha Verma");
     expect(body.letter.aiTouched.length).toBeGreaterThan(0);
     expect(body.letter.jobDescriptionHash).toHaveLength(64);

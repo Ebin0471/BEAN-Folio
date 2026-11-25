@@ -87,6 +87,31 @@ describe("letter anti-fabrication guards", () => {
     expect(g.metrics.join(" ")).not.toContain("40%");
   });
 
+
+  test("field-of-study mentions trace to confirmed education facts (E2E regression 2026-11-25)", () => {
+    const facts = sampleFacts();
+    facts.education = [
+      { institution: "Visvesvaraya National Institute of Technology", area: "Computer Science", studyType: "B.Tech", startDate: "2015", endDate: "2019", score: "8.6 CGPA" },
+    ];
+    // Standalone field-of-study mentions previously failed the guard even
+    // though they trace to confirmed facts (live E2E finding).
+    const g = findUnverifiableLetterContent({
+      letterText: "My degree in Computer Science prepared me for this role.",
+      facts,
+      resumeDoc: sampleResume(),
+      jdText: "",
+    });
+    expect(g.entities).toEqual([]);
+    // An unrelated credential is still rejected — the widening is traceable-only.
+    const g2 = findUnverifiableLetterContent({
+      letterText: "I hold an Autodesk Certified Professional credential.",
+      facts,
+      resumeDoc: sampleResume(),
+      jdText: "",
+    });
+    expect(g2.entities).toEqual(["Autodesk Certified Professional"]);
+  });
+
   test("sender's own name is never an entity violation", () => {
     const g = findUnverifiableLetterContent({
       letterText: "Asha Verma brings five years of frontend work.",
