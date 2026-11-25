@@ -360,3 +360,131 @@ export function checkGlyphCoverage(family: string, text: string): GlyphCoverage 
 export function provisionedFontCount(): number {
   return PROVISIONED_BANNER_FONTS.length;
 }
+
+// ---------------------------------------------------------------------
+// Brand/audience-aware font recommendations (spec M33.4-B §3.3)
+//
+// Visual TONE recommendations from EXPLICIT user inputs (brand adjectives,
+// audience, purpose) mapped to design conventions — never psychological
+// inference, never sensitive-trait profiling. Recommendations are advisory:
+// the user's explicit choice always wins (they can select any SITE_FONTS id;
+// server rendering then resolves/falls back per resolveServerFont).
+// Only PROVISIONED families are recommended for banner rendering — a family
+// without a server-side file is never recommended as if it would render.
+// ---------------------------------------------------------------------
+
+export interface FontPairingRecommendation {
+  headline: { fontId: string; family: string; why: string };
+  body: { fontId: string; family: string; why: string };
+  /** Design-convention rationale referencing the user's stated tone. */
+  rationale: string;
+  notes: string[];
+}
+
+interface ToneRule {
+  match: (tone: string[]) => boolean;
+  pairing: (tone: string[]) => FontPairingRecommendation;
+}
+
+const TONE_RULES: ToneRule[] = [
+  {
+    match: (t) => t.some((w) => ["premium", "luxury", "elegant", "sophisticated", "high-end"].includes(w)),
+    pairing: (t) => ({
+      headline: { fontId: "fraunces", family: "Fraunces", why: "Warm characterful serif — the classic premium/editorial display register" },
+      body: { fontId: "lato", family: "Lato", why: "Quiet humanist sans keeps supporting text calm and legible" },
+      rationale: `Premium tones conventionally pair a high-contrast serif display with a restrained sans body (stated tone: ${t.join(", ") || "premium"}).`,
+      notes: [],
+    }),
+  },
+  {
+    match: (t) => t.some((w) => ["editorial", "literary", "documentary", "storytelling", "journalistic"].includes(w)),
+    pairing: () => ({
+      headline: { fontId: "merriweather", family: "Merriweather", why: "Sturdy reading serif with an editorial voice" },
+      body: { fontId: "inter", family: "Inter", why: "Neutral, superbly legible sans for supporting copy" },
+      rationale: "Editorial tones conventionally pair a text serif display with a neutral sans body.",
+      notes: [],
+    }),
+  },
+  {
+    match: (t) => t.some((w) => ["bold", "impactful", "energetic", "loud", "punchy", "poster"].includes(w)),
+    pairing: () => ({
+      headline: { fontId: "anton", family: "Anton", why: "Condensed poster impact for short headlines" },
+      body: { fontId: "inter", family: "Inter", why: "Stable neutral sans keeps the loud display readable" },
+      rationale: "High-impact tones conventionally use a condensed display face with a quiet sans body; keep headlines short.",
+      notes: ["Anton ships a single weight (400) — size and casing carry the emphasis."],
+    }),
+  },
+  {
+    match: (t) => t.some((w) => ["technical", "modern", "minimal", "clean", "precise", "corporate"].includes(w)),
+    pairing: () => ({
+      headline: { fontId: "inter", family: "Inter", why: "Precise neutral sans — the modern product-design standard" },
+      body: { fontId: "lato", family: "Lato", why: "Approachable humanist sans softens the technical register" },
+      rationale: "Technical/minimal tones conventionally stay in one or two neutral sans families with clear hierarchy.",
+      notes: [],
+    }),
+  },
+  {
+    match: (t) => t.some((w) => ["friendly", "warm", "playful", "handcrafted", "personal"].includes(w)),
+    pairing: () => ({
+      headline: { fontId: "caveat", family: "Caveat", why: "Casual marker script adds a personal, hand-made voice" },
+      body: { fontId: "inter", family: "Inter", why: "Neutral sans body keeps the script readable in context" },
+      rationale: "Warm/personal tones conventionally use a handwritten display accent with a stable sans body; keep script use to short headings.",
+      notes: ["Script faces reduce small-size legibility — use for short headlines only."],
+    }),
+  },
+  {
+    match: (t) => t.some((w) => ["multilingual", "devanagari", "hindi", "marathi", "nepali"].includes(w)),
+    pairing: () => ({
+      headline: { fontId: "kalam", family: "Kalam", why: "Devanagari-capable handwriting face for bilingual headings" },
+      body: { fontId: "inter", family: "Inter", why: "Latin body copy; Devanagari glyphs fall back to a covered system font with an explicit warning" },
+      rationale: "Multilingual briefs need verified glyph coverage — Kalam covers Devanagari; Inter covers Latin only.",
+      notes: ["Devanagari text in Inter is reported as uncovered glyphs and renders through a system fallback."],
+    }),
+  },
+];
+
+const DEFAULT_PAIRING: FontPairingRecommendation = {
+  headline: { fontId: "fraunces", family: "Fraunces", why: "The BEAN Folio signature serif — distinctive without a stated tone" },
+  body: { fontId: "inter", family: "Inter", why: "Neutral workhorse sans for supporting copy" },
+  rationale: "No explicit tone words supplied — the default pairing follows the product's own brand conventions.",
+  notes: [],
+};
+
+/**
+ * Deterministic, explainable font-pairing recommendations from explicit
+ * brand adjectives / audience words. Returns a primary pairing plus one
+ * alternate; every recommended family is PROVISIONED (a real file exists
+ * server-side). Pure advisory — user selection always wins.
+ */
+export function recommendBannerFontPairing(input: {
+  toneWords?: string[];
+  audience?: string;
+  purpose?: string;
+}): { primary: FontPairingRecommendation; alternate: FontPairingRecommendation } {
+  const tone = (input.toneWords ?? []).map((w) => w.toLowerCase().trim()).filter(Boolean);
+  const contextWords = [
+    ...tone,
+    ...(input.audience ?? "").toLowerCase().split(/[^a-z]+/),
+    ...(input.purpose ?? "").toLowerCase().split(/[^a-z]+/),
+  ].filter(Boolean);
+
+  const matched: FontPairingRecommendation[] = [];
+  for (const rule of TONE_RULES) {
+    if (rule.match(tone) || rule.match(contextWords)) matched.push(rule.pairing(tone));
+  }
+  const primary = matched[0] ?? DEFAULT_PAIRING;
+  // Alternate: the next distinct match, else the default pairing for contrast.
+  const alternate = matched.find((m) => m.headline.fontId !== primary.headline.fontId) ?? DEFAULT_PAIRING;
+  const notes = [
+    ...new Set([
+      ...primary.notes,
+      ...(matched.length === 0 && (tone.length > 0 || contextWords.length > 0)
+        ? [`No convention rule matched the stated tone (${tone.join(", ") || contextWords.slice(0, 4).join(", ")}) — the default pairing was used. The user's explicit choice always wins.`]
+        : []),
+    ]),
+  ];
+  return {
+    primary: { ...primary, notes: [...primary.notes, ...notes] },
+    alternate,
+  };
+}

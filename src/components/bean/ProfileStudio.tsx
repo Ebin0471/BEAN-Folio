@@ -557,23 +557,63 @@ function AvatarStudio({ currentUrl, onApplied }: { currentUrl: string | null; on
     minimal_luxury: "corporate-executive",
   };
 
+  // Identity-lock mask review (spec §4.3): preview the locally-computed
+  // subject mask, then the user explicitly confirms before anything is
+  // generated. Cancelling keeps the original photo untouched.
+  const [maskReview, setMaskReview] = useState<{
+    coverage: number;
+    ok: boolean;
+    reason: string | null;
+    maskDataUrl: string;
+    scenePrompt: string;
+  } | null>(null);
+  const [reviewLoading, setReviewLoading] = useState(false);
+
+  const reviewMaskAndPrepare = async () => {
+    if (!source || !style) return;
+    setReviewLoading(true);
+    try {
+      const scenePrompt = [
+        AVATAR_STYLES.find((st) => st.id === style)?.description ?? "professional portrait backdrop",
+        instructions.trim() || "calm premium environment, soft key light",
+      ].join(". ");
+      const res = await api<{
+        ok: boolean;
+        reason: string | null;
+        coverage: number;
+        maskDataUrl: string;
+      }>("/api/laxii/avatar-identity", {
+        method: "POST",
+        json: { sourceMediaId: source.id, scenePrompt, phase: "preview" },
+      });
+      setMaskReview({ ...res, scenePrompt });
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Could not segment the reference photo");
+    } finally {
+      setReviewLoading(false);
+    }
+  };
+
+  const confirmIdentityLock = () => {
+    if (!maskReview) return;
+    const body = {
+      sourceMediaId: source?.id,
+      scenePrompt: maskReview.scenePrompt,
+      phase: "generate" as const,
+      confirmed: true,
+    };
+    setMaskReview(null);
+    void generate({ url: "/api/laxii/avatar-identity", body });
+  };
+
   const regenerate = () => {
     if (!source || !style) return;
     const instruction = instructions.trim();
     if (identityMode === "PRESERVE") {
-      // Identity-lock pipeline (M33.4-C): local segmentation, prompt-only
-      // background generation, original subject pixels preserved. The scene
-      // description is a PROMPT ONLY — the source pixels are never sent.
-      void generate({
-        url: "/api/laxii/avatar-identity",
-        body: {
-          sourceMediaId: source.id,
-          scenePrompt: [
-            AVATAR_STYLES.find((s) => s.id === style)?.description ?? "professional portrait backdrop",
-            instruction || "calm premium environment, soft key light",
-          ].join(". "),
-        },
-      });
+      // Identity-lock pipeline (M33.4-C): mask review first, then the
+      // confirmed job. The scene description is a PROMPT ONLY — the source
+      // pixels are never sent to any model.
+      void reviewMaskAndPrepare();
       return;
     }
     // AI restyle (experimental, likeness NOT guaranteed) — the live
@@ -609,6 +649,41 @@ function AvatarStudio({ currentUrl, onApplied }: { currentUrl: string | null; on
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      {/* Identity-lock mask review — the user sees the proposed subject mask
+          and explicitly confirms; nothing is generated before confirmation. */}
+      <Dialog open={Boolean(maskReview) || reviewLoading} onOpenChange={(v) => { if (!v) setMaskReview(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-sm">Review the subject mask</DialogTitle>
+            <DialogDescription className="text-xs">
+              Local segmentation keeps everything white below as YOUR original pixels (bit-exact) and replaces only the dark area. Confirm to continue, or cancel to keep your photo untouched.
+            </DialogDescription>
+          </DialogHeader>
+          {reviewLoading && !maskReview ? (
+            <div className="flex items-center justify-center py-8 text-xs text-muted-foreground">
+              <RefreshCw className="mr-2 size-4 animate-spin" aria-hidden /> Segmenting locally…
+            </div>
+          ) : maskReview ? (
+            <div className="space-y-3">
+              <img src={maskReview.maskDataUrl} alt="Proposed subject mask — white areas are preserved original pixels" className="w-full rounded-lg border border-border/60" />
+              <p className="text-[11px] text-muted-foreground">
+                Subject covers {(maskReview.coverage * 100).toFixed(1)}% of the frame.
+                {maskReview.ok
+                  ? " The mask passed the sanity bounds."
+                  : ` Uncertain mask: ${maskReview.reason ?? "unusable"} — the job will refuse to run.`}
+              </p>
+              <div className="flex justify-end gap-2">
+                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setMaskReview(null)}>
+                  Cancel — keep my photo
+                </Button>
+                <Button size="sm" className="h-7 text-xs" disabled={!maskReview.ok} onClick={confirmIdentityLock}>
+                  Confirm &amp; generate
+                </Button>
+              </div>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3 sm:px-5">
         <ReferenceBox source={source} onUploaded={setSource} label="Upload a reference photo" />
 

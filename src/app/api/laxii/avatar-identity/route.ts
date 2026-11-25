@@ -7,7 +7,7 @@ import { handler, ok, err, ERR, rateLimit } from "@/lib/api-helpers";
 import { getObject } from "@/lib/storage";
 
 import { storeGeneratedMedia } from "@/lib/laxii/service";
-import { runIdentityLockPipeline } from "@/lib/laxii/avatar-identity";
+import { buildMaskPreview, runIdentityLockPipeline } from "@/lib/laxii/avatar-identity";
 import { safeGenerationError } from "@/lib/laxii/jobs";
 
 export const dynamic = "force-dynamic";
@@ -18,6 +18,14 @@ const bodySchema = z.object({
   sourceMediaId: z.string().min(1),
   /** Scene description for the replacement background — prompt only. */
   scenePrompt: z.string().min(4).max(1200),
+  /**
+   * "preview" = user-reviewable segmentation mask ONLY (nothing generated,
+   * nothing stored). "generate" = run the full pipeline; requires
+   * confirmed:true — the explicit user confirmation that they reviewed the
+   * proposed mask (spec §4.3 steps 5–6). No silent progression.
+   */
+  phase: z.enum(["preview", "generate"]).default("generate"),
+  confirmed: z.boolean().optional(),
 });
 
 /**
@@ -49,12 +57,35 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
 
   const parsed = bodySchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return err("Invalid identity-lock request.", 400);
-  const { sourceMediaId, scenePrompt } = parsed.data;
+  const { sourceMediaId, scenePrompt, phase, confirmed } = parsed.data;
 
   const media = await db.mediaAsset.findUnique({ where: { id: sourceMediaId } });
   if (!media || media.ownerId !== user.id) return ERR.notFound();
   if (media.kind !== "IMAGE") return err("The identity-lock source must be an image.", 400);
   if (media.status !== "READY") return err("The source image is no longer available.", 400);
+
+  // Mask review phase: local segmentation + mask visualization ONLY. No
+  // generation, no storage, no job — the user confirms or cancels next.
+  if (phase === "preview") {
+    const source = await getObject(media.storagePath);
+    const preview = await buildMaskPreview(source);
+    return ok({
+      phase: "preview",
+      ok: preview.ok,
+      reason: preview.reason,
+      coverage: preview.coverage,
+      bbox: preview.bbox,
+      sourceWidth: preview.sourceWidth,
+      sourceHeight: preview.sourceHeight,
+      bounds: preview.bounds,
+      maskDataUrl: `data:image/png;base64,${preview.maskPng.toString("base64")}`,
+    });
+  }
+
+  // The pipeline must not finalise without the user's explicit mask review.
+  if (!confirmed) {
+    return err("Review the proposed subject mask first (phase 'preview'), then confirm it to start the identity-lock job.", 400);
+  }
 
   // One running identity job per user (the RUNNING row is the durable claim).
   const running = await db.laxiiMessage.findFirst({

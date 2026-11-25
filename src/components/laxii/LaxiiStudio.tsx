@@ -67,7 +67,8 @@ import { IntegrationRequestDialog } from "./IntegrationRequestDialog";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 
@@ -119,6 +120,15 @@ export function LaxiiStudio() {
 
   // Banner composer state — canvas resolved from the versioned preset registry.
   const [bannerPreset, setBannerPreset] = useState(BEAN_BANNER_SLUG);
+  // Strictly-bounded custom canvas entry (M33.4 spec §2.4): the typed
+  // dimensions are validated live; the server rejects out-of-limits values
+  // with the documented bounds rather than clamping.
+  const [customW, setCustomW] = useState("1600");
+  const [customH, setCustomH] = useState("900");
+  const isCustomBanner = bannerPreset === "custom";
+  const customWNum = Number.parseInt(customW, 10);
+  const customHNum = Number.parseInt(customH, 10);
+  const customValid = Number.isFinite(customWNum) && Number.isFinite(customHNum) && customWNum >= 64 && customHNum >= 64 && customWNum <= 4096 && customHNum <= 4096 && customWNum * customHNum <= 4_194_304;
 
   // Conversational engine controls (Phase 4/5): LAXII V1 is the single
   // user-facing image engine (no engine picker — the server refuses any
@@ -583,7 +593,11 @@ export function LaxiiStudio() {
           quality: (quality || undefined) as "1K" | "2K" | "4K" | undefined,
           referenceMediaIds: refs.map((r) => r.mediaId),
           parentVersionId: !isBanner && operation !== "GENERATE" && operation !== "AUTO" ? parent?.id : undefined,
-          banner: isBanner ? { presetSlug: bannerPreset } : undefined,
+          banner: isBanner
+            ? isCustomBanner
+              ? { presetSlug: "bean-folio-banner", customWidth: customWNum, customHeight: customHNum }
+              : { presetSlug: bannerPreset }
+            : undefined,
           avatar: isAvatar && avatarPreset !== "custom" ? { presetSlug: avatarPreset } : undefined,
           style: activeStyle && cm === "image" && (operation === "AUTO" || operation === "GENERATE") ? { slug: activeStyle } : undefined,
         },
@@ -1253,15 +1267,54 @@ export function LaxiiStudio() {
                         <SelectTrigger className="h-8 w-64 border-white/10 bg-white/[0.04] text-xs" aria-label="Banner size" data-testid="laxii-banner-size">
                           <SelectValue />
                         </SelectTrigger>
-                        <SelectContent>
-                          {(caps?.bannerPresets ?? [FALLBACK_BANNER_PRESET]).map((p) => (
-                            <SelectItem key={p.slug} value={p.slug}>
-                              {p.label} · {p.width} × {p.height}
-                            </SelectItem>
-                          ))}
+                        <SelectContent className="max-h-80">
+                          {(["site", "platform", "campaign"] as const).map((family) => {
+                            const group = (caps?.bannerPresets ?? [FALLBACK_BANNER_PRESET as never]).filter((p) => (p as { family?: string }).family === family || p.slug === BEAN_BANNER_SLUG && family === "site");
+                            if (group.length === 0) return null;
+                            const label = family === "site" ? "BEAN Folio & website" : family === "platform" ? "Platform covers" : "Campaign & social";
+                            return (
+                              <SelectGroup key={family}>
+                                <SelectLabel className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</SelectLabel>
+                                {group.map((p) => (
+                                  <SelectItem key={p.slug} value={p.slug}>
+                                    {p.label} · {p.width} × {p.height}
+                                  </SelectItem>
+                                ))}
+                              </SelectGroup>
+                            );
+                          })}
+                          <SelectGroup>
+                            <SelectLabel className="text-[10px] uppercase tracking-wide text-muted-foreground">Custom</SelectLabel>
+                            <SelectItem value="custom">Custom size…</SelectItem>
+                          </SelectGroup>
                         </SelectContent>
                       </Select>
-                      <span className="text-muted-foreground">{activePreset?.description}</span>
+                      {isCustomBanner ? (
+                        <span className="flex items-center gap-1.5">
+                          <Input
+                            value={customW}
+                            onChange={(e) => setCustomW(e.target.value.replace(/[^0-9]/g, ""))}
+                            inputMode="numeric"
+                            aria-label="Custom width in pixels"
+                            className="h-8 w-20 border-white/10 bg-white/[0.04] text-xs"
+                            data-testid="laxii-banner-custom-w"
+                          />
+                          <span aria-hidden>×</span>
+                          <Input
+                            value={customH}
+                            onChange={(e) => setCustomH(e.target.value.replace(/[^0-9]/g, ""))}
+                            inputMode="numeric"
+                            aria-label="Custom height in pixels"
+                            className="h-8 w-20 border-white/10 bg-white/[0.04] text-xs"
+                            data-testid="laxii-banner-custom-h"
+                          />
+                          <span className={cn("text-[11px]", customValid ? "text-muted-foreground" : "text-destructive")}>
+                            {customValid ? `ratio ${(customWNum / customHNum).toFixed(2)}:1` : "64–4096 px per side, ≤ 4,194,304 px total"}
+                          </span>
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground">{activePreset?.description}</span>
+                      )}
                     </div>
                   ) : null}
 
@@ -1347,7 +1400,7 @@ export function LaxiiStudio() {
                     />
                     <Button
                       onClick={() => sendComposer()}
-                      disabled={busy || Boolean(caps?.engine && !caps.engine.available)}
+                      disabled={busy || Boolean(caps?.engine && !caps.engine.available) || (cm === "banner" && isCustomBanner && !customValid)}
                       aria-label={cm === "banner" ? "Generate banner" : cm === "avatar" ? "Generate avatar" : editParent ? "Apply edit" : "Create"}
                       title={caps?.engine && !caps.engine.available ? caps.engine.note : undefined}
                       className="h-10 shrink-0 gap-1.5 bg-primary px-4 text-primary-foreground hover:bg-primary/90"

@@ -23,6 +23,7 @@ import { describe, expect, test } from "bun:test";
 import {
   BANNER_PRESETS,
   BANNER_SPEC_CHECKED_AT,
+  bannerAspectRatio,
   CUSTOM_BANNER_SLUG,
   CUSTOM_CANVAS_LIMITS,
   bannerPreset,
@@ -74,6 +75,31 @@ describe("banner registry — registry integrity", () => {
       "portrait-post",
       "story-reel",
     ]);
+  });
+
+  test("every preset carries version, derived aspect, formats and transparency metadata", () => {
+    for (const p of BANNER_PRESETS) {
+      expect(p.version).toBe(1);
+      expect(bannerAspectRatio(p)).toBeCloseTo(p.width / p.height, 12);
+      expect(p.formats).toEqual(["PNG", "JPEG", "WEBP"]);
+      expect(p.transparency).toBe(false);
+      for (const nsa of p.namedSafeAreas) {
+        expect(nsa.label.length).toBeGreaterThan(3);
+        expect(nsa.rect.x).toBeGreaterThanOrEqual(0);
+        expect(nsa.rect.y).toBeGreaterThanOrEqual(0);
+        expect(nsa.rect.width).toBeGreaterThan(0);
+        expect(nsa.rect.height).toBeGreaterThan(0);
+        expect(nsa.rect.x + nsa.rect.width).toBeLessThanOrEqual(p.width);
+        expect(nsa.rect.y + nsa.rect.height).toBeLessThanOrEqual(p.height);
+      }
+    }
+    // Facebook documents two distinct crops — both must be named.
+    expect(findBannerPreset("facebook-page-cover")!.namedSafeAreas.map((n) => n.label)).toEqual([
+      "desktop crop (16:9)",
+      "mobile crop (2.4:1)",
+    ]);
+    // Presets without documented alternate crops carry none.
+    expect(findBannerPreset("bean-folio-banner")!.namedSafeAreas).toEqual([]);
   });
 
   test("every preset is dimension-bounded and its safe area fits the canvas", () => {
@@ -129,14 +155,20 @@ describe("banner registry — registry integrity", () => {
     expect(findBannerPreset("twitter-header")).toBeNull();
   });
 
-  test("the client projection mirrors every preset with its real byte cap", () => {
+  test("the client projection mirrors every preset with its real metadata", () => {
     const client = bannerPresetsForClient();
     expect(client.length).toBe(BANNER_PRESETS.length);
     for (const [i, c] of client.entries()) {
       expect(c.id).toBe(BANNER_PRESETS[i].slug);
+      expect(c.version).toBe(BANNER_PRESETS[i].version);
+      expect(c.aspectRatio).toBeCloseTo(BANNER_PRESETS[i].width / BANNER_PRESETS[i].height, 12);
       expect(c.maxBytes).toBe(BANNER_PRESETS[i].maxBytes);
-      expect(c.formats).toEqual(["PNG", "JPEG", "WEBP"]);
+      expect(c.formats).toEqual(BANNER_PRESETS[i].formats);
+      expect(c.transparency).toBe(BANNER_PRESETS[i].transparency);
+      expect(c.official).toBe(BANNER_PRESETS[i].official);
+      expect(c.checkedAt).toBe(BANNER_PRESETS[i].checkedAt);
       expect(c.safeArea?.w).toBe(BANNER_PRESETS[i].safeArea.width);
+      expect(c.namedSafeAreas).toEqual(BANNER_PRESETS[i].namedSafeAreas);
     }
     // The server-side compositionHint never leaves the server.
     expect(JSON.stringify(client)).not.toContain("compositionHint");

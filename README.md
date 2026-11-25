@@ -176,6 +176,7 @@ unconfigured features degrade honestly (never fake results). Per-user consent + 
 | [docs/ops/MILESTONE_EXECUTION_PROTOCOL.md](docs/ops/MILESTONE_EXECUTION_PROTOCOL.md) | Binding engineering workflow & publishing policy |
 | [docs/GIFTZ_UNIVERSAL_CREATIVE_STUDIO_GUIDE.md](docs/GIFTZ_UNIVERSAL_CREATIVE_STUDIO_GUIDE.md) | M33+ product/engineering north star for the universal creative studio (GIFTZ · LAXII · RIISHE) |
 | [docs/UNIVERSAL_STUDIO_CAPABILITY_MATRIX.md](docs/UNIVERSAL_STUDIO_CAPABILITY_MATRIX.md) | Source-backed capability/gap matrix + licence/model/font provenance register (machine-checked by `tests/universal-studio-capability-matrix.test.ts`) |
+| [docs/M33.4_UNIVERSAL_LAXII_CREATIVE_SYSTEM.md](docs/M33.4_UNIVERSAL_LAXII_CREATIVE_SYSTEM.md) | M33.4 implementation spec: universal banner registry, deterministic typography, identity-lock avatar pipeline |
 
 ## Verified vs not (honest status)
 

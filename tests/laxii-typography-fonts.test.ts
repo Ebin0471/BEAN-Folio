@@ -27,6 +27,7 @@ import {
   checkGlyphCoverage,
   ensureBannerFontsInstalled,
   provisionedFontCount,
+  recommendBannerFontPairing,
   resolveServerFont,
 } from "@/lib/laxii/font-assets";
 import { renderTypographyLayer, verifyInkApplied } from "@/lib/laxii/typography";
@@ -249,6 +250,48 @@ describe("renderTypographyLayer with resolved fonts", () => {
     }
   });
 
+  test("combining marks render as one glyph cluster with real ink", async () => {
+    // e + COMBINING ACUTE ACCENT (decomposed form) must render identically
+    // in intent to the precomposed é — real ink, exact codepoints preserved.
+    const brief = makeBrief({ items: [{ text: "cafe\u0301 — re\u0301sume\u0301", role: "headline", font: "sans", fontId: "inter" }] });
+    const typo = await renderTypographyLayer(brief, await flatScene(), null);
+    expect(typo).not.toBeNull();
+    expect(typo!.plan.lines[0].text).toBe("cafe\u0301 — re\u0301sume\u0301");
+    expect(typo!.plan.lines[0].ink.width).toBeGreaterThan(0);
+    expect(typo!.checks[0].glyphCoverage.covered).toBe(true);
+  });
+
+  test("right-to-left text renders with real ink and an honest coverage warning when the family lacks the script", async () => {
+    const brief = makeBrief({ items: [{ text: "استوديو الشمال", role: "headline", font: "sans", fontId: "inter" }] });
+    const typo = await renderTypographyLayer(brief, await flatScene(), null);
+    expect(typo).not.toBeNull();
+    // Inter has no Arabic — the renderer still renders (Pango falls back to
+    // a covered system font) and the check reports the gap explicitly.
+    expect(typo!.checks[0].glyphCoverage.covered).toBe(false);
+    expect(typo!.checks[0].glyphCoverage.missingCount).toBeGreaterThan(0);
+    expect(typo!.plan.lines[0].ink.width).toBeGreaterThan(0);
+    expect(typo!.plan.lines[0].text).toBe("استوديو الشمال");
+  });
+
+  test("mixed-script text (Latin + Devanagari) renders with a covering family", async () => {
+    const brief = makeBrief({ items: [{ text: "Studio नमस्ते", role: "headline", font: "script", fontId: "kalam" }] });
+    const typo = await renderTypographyLayer(brief, await flatScene(), null);
+    expect(typo).not.toBeNull();
+    expect(typo!.plan.lines[0].family).toBe("Kalam");
+    // Kalam covers both the Latin and Devanagari ranges of this string.
+    expect(typo!.checks[0].glyphCoverage.covered).toBe(true);
+    expect(typo!.plan.lines[0].ink.width).toBeGreaterThan(0);
+  });
+
+  test("emoji are reported uncovered and render through the system fallback", async () => {
+    const brief = makeBrief({ items: [{ text: "Studio 🎬 North", role: "headline", font: "sans", fontId: "inter" }] });
+    const typo = await renderTypographyLayer(brief, await flatScene(), null);
+    expect(typo).not.toBeNull();
+    expect(typo!.checks[0].glyphCoverage.covered).toBe(false);
+    expect(typo!.checks[0].glyphCoverage.missingSample.some((m) => m.startsWith("U+1F3"))).toBe(true);
+    expect(typo!.plan.lines[0].ink.width).toBeGreaterThan(0);
+  });
+
   test("verifyInkApplied proves the layer really landed on the composite", async () => {
     const { default: sharp } = await import("sharp");
     const brief = makeBrief();
@@ -262,5 +305,44 @@ describe("renderTypographyLayer with resolved fonts", () => {
     // reports NOT applied.
     const none = await verifyInkApplied(scene, scene, typo!.plan.lines);
     for (const a of none) expect(a.applied).toBe(false);
+  });
+});
+
+describe("recommendBannerFontPairing — tone conventions, never profiling", () => {
+  test("premium tones recommend a serif display + quiet sans from the PROVISIONED set", () => {
+    const r = recommendBannerFontPairing({ toneWords: ["premium", "elegant"], audience: "clients" });
+    const provisionedIds = new Set(PROVISIONED_BANNER_FONTS.map((f) => f.fontId));
+    expect(provisionedIds.has(r.primary.headline.fontId)).toBe(true);
+    expect(provisionedIds.has(r.primary.body.fontId)).toBe(true);
+    expect(r.primary.rationale).toContain("premium");
+  });
+
+  test("each tone rule produces its documented pairing deterministically", () => {
+    expect(recommendBannerFontPairing({ toneWords: ["bold"] }).primary.headline.fontId).toBe("anton");
+    expect(recommendBannerFontPairing({ toneWords: ["technical"] }).primary.headline.fontId).toBe("inter");
+    expect(recommendBannerFontPairing({ toneWords: ["editorial"] }).primary.headline.fontId).toBe("merriweather");
+    expect(recommendBannerFontPairing({ toneWords: ["friendly"] }).primary.headline.fontId).toBe("caveat");
+    expect(recommendBannerFontPairing({ toneWords: ["devanagari"] }).primary.headline.fontId).toBe("kalam");
+    // Deterministic: same inputs → same output.
+    const a = recommendBannerFontPairing({ toneWords: ["premium"], audience: "galleries", purpose: "exhibition" });
+    const b = recommendBannerFontPairing({ toneWords: ["premium"], audience: "galleries", purpose: "exhibition" });
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+  });
+
+  test("unmatched tones fall back with an explicit note; empty input uses the default pairing", () => {
+    const r = recommendBannerFontPairing({ toneWords: ["wibble"], audience: "" });
+    expect(r.primary.headline.fontId).toBe("fraunces");
+    expect(r.primary.notes.some((n) => n.includes("No convention rule matched"))).toBe(true);
+    const empty = recommendBannerFontPairing({});
+    expect(empty.primary.headline.fontId).toBe("fraunces");
+    expect(empty.primary.notes).toEqual([]);
+  });
+
+  test("recommendations are advisory — the user's explicit override still resolves", () => {
+    // The recommender suggests fraunces for premium; an explicit user choice
+    // of a different provisioned family is honoured by the resolver.
+    const override = resolveServerFont("anton", 400, "display");
+    expect(override.ok).toBe(true);
+    expect(override.family).toBe("Anton");
   });
 });

@@ -189,6 +189,54 @@ export function compositePreservePixels(inputs: CompositeInputs): CompositeVerif
 
 const MAX_PLATE_ATTEMPTS = 3;
 
+export interface MaskPreview {
+  /** Mask visualization PNG (subject white, background black) as raw bytes. */
+  maskPng: Buffer;
+  sourceWidth: number;
+  sourceHeight: number;
+  coverage: number;
+  bbox: { x: number; y: number; width: number; height: number } | null;
+  /** The documented bounds the mask was validated against. */
+  bounds: typeof MASK_BOUNDS;
+}
+
+/**
+ * User-reviewable foreground matte (Guide/spec §4.3 step 5): segments the
+ * source LOCALLY and renders the alpha matte as a black/white mask image.
+ * Nothing is generated, stored or applied in this phase — the caller shows
+ * the mask for review and the user confirms or cancels before the pipeline
+ * runs. Uncertain masks are reported here (ok=false) so the user can stop
+ * before spending a generation.
+ */
+export async function buildMaskPreview(source: Buffer): Promise<MaskPreview & { ok: boolean; reason: string | null }> {
+  const probe = probeImage(source);
+  if (!probe || probe.width < 256 || probe.height < 256) {
+    throw new LaxiiError("The reference image could not be decoded or is too small (minimum 256×256).");
+  }
+  const matte = await runPortraitMatte(source);
+  const check = validateMask(matte);
+  const maskRaw = Buffer.alloc(matte.width * matte.height * 3);
+  for (let i = 0; i < matte.width * matte.height; i += 1) {
+    const v = Math.max(0, Math.min(255, Math.round(matte.alpha[i] * 255)));
+    maskRaw[i * 3] = v;
+    maskRaw[i * 3 + 1] = v;
+    maskRaw[i * 3 + 2] = v;
+  }
+  const maskPng = await sharp(maskRaw, { raw: { width: matte.width, height: matte.height, channels: 3 } })
+    .png()
+    .toBuffer();
+  return {
+    ok: check.ok,
+    reason: check.reason,
+    maskPng,
+    sourceWidth: probe.width,
+    sourceHeight: probe.height,
+    coverage: check.coverage,
+    bbox: check.bbox,
+    bounds: MASK_BOUNDS,
+  };
+}
+
 export interface IdentityPipelineDeps {
   generate?: typeof runLaxiiOperation;
   userId: string;

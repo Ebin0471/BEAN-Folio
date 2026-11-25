@@ -26,14 +26,24 @@ import { BANNER_PRESET_SLUG, BANNER_WIDTH, BANNER_HEIGHT } from "@/lib/banner";
 /** Re-exported for consumers that resolve the canonical canvas by slug. */
 export { BANNER_PRESET_SLUG };
 
+export interface NamedSafeArea {
+  /** Device/context label (e.g. "desktop crop", "mobile crop", "TV safe"). */
+  label: string;
+  rect: { x: number; y: number; width: number; height: number };
+}
+
 export interface LaxiiBannerPreset {
   slug: string;
+  /** Registry schema version of THIS entry (bump when its geometry changes so saved projects can migrate knowingly). */
+  version: 1;
   label: string;
   description: string;
   width: number;
   height: number;
-  /** Fully-visible guide rectangle in canvas pixels. */
+  /** Fully-visible guide rectangle in canvas pixels (the primary/default safe area). */
   safeArea: { x: number; y: number; width: number; height: number };
+  /** Additional device/context safe areas where a platform documents distinct crops. */
+  namedSafeAreas: NamedSafeArea[];
   /** Extra composition guidance appended to banner prompts. */
   compositionHint: string;
   /** Canvas family this preset belongs to (drives grouping in the UI). */
@@ -46,6 +56,15 @@ export interface LaxiiBannerPreset {
   sourceUrl: string | null;
   /** Platform file-size cap in bytes when the platform documents one; null = no documented cap. */
   maxBytes: number | null;
+  /** Export formats the export pipeline actually supports for this canvas. */
+  formats: ("PNG" | "JPEG" | "WEBP")[];
+  /** Whether the pipeline can emit transparency for this canvas (banners are opaque compositions). */
+  transparency: false;
+}
+
+/** Derived aspect ratio (never stored — always consistent with width/height). */
+export function bannerAspectRatio(p: { width: number; height: number }): number {
+  return p.width / p.height;
 }
 
 const centerSafe = (w: number, h: number, fx: number, fy: number) => ({
@@ -67,6 +86,7 @@ export const BANNER_SPEC_CHECKED_AT = "2026-11-25";
 export const BANNER_PRESETS: LaxiiBannerPreset[] = [
   {
     slug: BANNER_PRESET_SLUG,
+    version: 1,
     label: "BEAN Folio banner",
     description: `2048×687 platform-standard portfolio banner (≈3:1) for BEAN Folio profiles, covers and published sites.`,
     width: BANNER_WIDTH,
@@ -79,9 +99,13 @@ export const BANNER_PRESETS: LaxiiBannerPreset[] = [
     checkedAt: null,
     sourceUrl: null,
     maxBytes: null,
+    namedSafeAreas: [],
+    formats: ["PNG", "JPEG", "WEBP"],
+    transparency: false,
   },
   {
     slug: "website-hero",
+    version: 1,
     label: "Website hero",
     description: "1920×1080 (16:9) full-width hero/cover canvas for website headers and page tops.",
     width: 1920,
@@ -94,9 +118,13 @@ export const BANNER_PRESETS: LaxiiBannerPreset[] = [
     checkedAt: null,
     sourceUrl: null,
     maxBytes: null,
+    namedSafeAreas: [],
+    formats: ["PNG", "JPEG", "WEBP"],
+    transparency: false,
   },
   {
     slug: "open-graph-card",
+    version: 1,
     label: "Link preview (Open Graph)",
     description:
       "1200×630 (≈1.91:1) social/link-preview card. Official spec (Meta Sharing): ≥1200×630 recommended, 8MB max, 200×200 hard minimum.",
@@ -110,9 +138,13 @@ export const BANNER_PRESETS: LaxiiBannerPreset[] = [
     checkedAt: BANNER_SPEC_CHECKED_AT,
     sourceUrl: "https://developers.facebook.com/docs/sharing/webmasters/images/",
     maxBytes: 8_000_000,
+    namedSafeAreas: [],
+    formats: ["PNG", "JPEG", "WEBP"],
+    transparency: false,
   },
   {
     slug: "youtube-channel-banner",
+    version: 1,
     label: "YouTube channel banner",
     description:
       "2560×1440 channel art with the official 1235×338 TV/desktop text-safe area centered; 6MB max. Verified against Google's current channel-art guidance.",
@@ -127,9 +159,13 @@ export const BANNER_PRESETS: LaxiiBannerPreset[] = [
     checkedAt: BANNER_SPEC_CHECKED_AT,
     sourceUrl: "https://support.google.com/youtube/answer/10456525",
     maxBytes: 6_000_000,
+    namedSafeAreas: [],
+    formats: ["PNG", "JPEG", "WEBP"],
+    transparency: false,
   },
   {
     slug: "youtube-thumbnail",
+    version: 1,
     label: "YouTube thumbnail",
     description:
       "1280×720 (16:9) video thumbnail — meets the official 16:9 rule and 640px minimum width (uploads up to 50MB accepted; Google now recommends up to 3840×2160 for maximum quality, which exceeds the managed engine's render bound).",
@@ -143,9 +179,13 @@ export const BANNER_PRESETS: LaxiiBannerPreset[] = [
     checkedAt: BANNER_SPEC_CHECKED_AT,
     sourceUrl: "https://support.google.com/youtube/answer/72431",
     maxBytes: null,
+    namedSafeAreas: [],
+    formats: ["PNG", "JPEG", "WEBP"],
+    transparency: false,
   },
   {
     slug: "linkedin-profile-cover",
+    version: 1,
     label: "LinkedIn profile cover",
     description: "1584×396 (4:1) profile background/cover image; official recommended size, under 8MB.",
     width: 1584,
@@ -158,9 +198,13 @@ export const BANNER_PRESETS: LaxiiBannerPreset[] = [
     checkedAt: BANNER_SPEC_CHECKED_AT,
     sourceUrl: "https://www.linkedin.com/help/linkedin/answer/a568217",
     maxBytes: 8_000_000,
+    namedSafeAreas: [],
+    formats: ["PNG", "JPEG", "WEBP"],
+    transparency: false,
   },
   {
     slug: "linkedin-page-cover",
+    version: 1,
     label: "LinkedIn page cover",
     description: "1512×256 company/page cover banner; official minimum-equals-recommended size, 3MB cap for page images.",
     width: 1512,
@@ -173,9 +217,13 @@ export const BANNER_PRESETS: LaxiiBannerPreset[] = [
     checkedAt: BANNER_SPEC_CHECKED_AT,
     sourceUrl: "https://www.linkedin.com/help/linkedin/answer/a563309",
     maxBytes: 3_000_000,
+    namedSafeAreas: [],
+    formats: ["PNG", "JPEG", "WEBP"],
+    transparency: false,
   },
   {
     slug: "facebook-page-cover",
+    version: 1,
     label: "Facebook page cover",
     description:
       "851×315 page cover photo (official recommended size; minimum 400×150; 16:9 on desktop, 2.4:1 on mobile — the safe area protects the shared center band).",
@@ -183,6 +231,12 @@ export const BANNER_PRESETS: LaxiiBannerPreset[] = [
     height: 315,
     // Conservative centered zone that survives BOTH documented crops (16:9 desktop window vs 2.4:1 mobile).
     safeArea: { x: Math.round((851 - 680) / 2), y: Math.round((315 - 240) / 2), width: 680, height: 240 },
+    namedSafeAreas: [
+      // Desktop shows the cover in a 16:9 window: the centered full-height slice.
+      { label: "desktop crop (16:9)", rect: { x: Math.round((851 - Math.round(315 * (16 / 9))) / 2), y: 0, width: Math.round(315 * (16 / 9)), height: 315 } },
+      // Mobile shows a 2.4:1 band: the centered full-height slice.
+      { label: "mobile crop (2.4:1)", rect: { x: Math.round((851 - Math.round(315 * 2.4)) / 2), y: 0, width: Math.round(315 * 2.4), height: 315 } },
+    ],
     compositionHint:
       "Facebook page cover 851×315: the frame is cropped differently on desktop (16:9) and mobile (2.4:1) — keep all text, logos and the subject inside the central safe area so nothing critical is cut.",
     family: "platform",
@@ -190,9 +244,12 @@ export const BANNER_PRESETS: LaxiiBannerPreset[] = [
     checkedAt: BANNER_SPEC_CHECKED_AT,
     sourceUrl: "https://www.facebook.com/help/125379114252045",
     maxBytes: null,
+    formats: ["PNG", "JPEG", "WEBP"],
+    transparency: false,
   },
   {
     slug: "square-campaign",
+    version: 1,
     label: "Square campaign tile",
     description:
       "1080×1080 square campaign/product tile — inside Instagram's officially documented 1080px-width range (1.91:1 to 3:4 height bounds).",
@@ -206,9 +263,13 @@ export const BANNER_PRESETS: LaxiiBannerPreset[] = [
     checkedAt: BANNER_SPEC_CHECKED_AT,
     sourceUrl: "https://help.instagram.com/1631821640426723",
     maxBytes: null,
+    namedSafeAreas: [],
+    formats: ["PNG", "JPEG", "WEBP"],
+    transparency: false,
   },
   {
     slug: "portrait-post",
+    version: 1,
     label: "Portrait post (4:5)",
     description:
       "1080×1350 (4:5) portrait feed post — the 4:5 ratio is explicitly documented in Instagram's official placement guidance within the 1080px-width range.",
@@ -222,9 +283,13 @@ export const BANNER_PRESETS: LaxiiBannerPreset[] = [
     checkedAt: BANNER_SPEC_CHECKED_AT,
     sourceUrl: "https://help.instagram.com/1631821640426723",
     maxBytes: null,
+    namedSafeAreas: [],
+    formats: ["PNG", "JPEG", "WEBP"],
+    transparency: false,
   },
   {
     slug: "story-reel",
+    version: 1,
     label: "Story / Reel cover",
     description:
       "1080×1920 (9:16) full-screen vertical story/reel cover; official recommended size, 30MB photo cap documented for Stories placements.",
@@ -239,6 +304,9 @@ export const BANNER_PRESETS: LaxiiBannerPreset[] = [
     checkedAt: BANNER_SPEC_CHECKED_AT,
     sourceUrl: "https://www.facebook.com/business/help/2222978001316177",
     maxBytes: 30_000_000,
+    namedSafeAreas: [],
+    formats: ["PNG", "JPEG", "WEBP"],
+    transparency: false,
   },
 ];
 
@@ -274,6 +342,7 @@ export function resolveCustomBannerCanvas(
   if (width * height > maxAreaPx) return null;
   return {
     slug: CUSTOM_BANNER_SLUG,
+    version: 1,
     label: "Custom canvas",
     description: `Custom ${width}×${height} canvas (within the ${minSide}–${maxSide}px per-side and ${maxAreaPx.toLocaleString("en-US")}-pixel limits).`,
     width,
@@ -286,6 +355,9 @@ export function resolveCustomBannerCanvas(
     checkedAt: null,
     sourceUrl: null,
     maxBytes: null,
+    namedSafeAreas: [],
+    formats: ["PNG", "JPEG", "WEBP"],
+    transparency: false,
   };
 }
 
@@ -321,20 +393,32 @@ export function bannerPresetsForClient(): {
   id: string;
   label: string;
   description: string;
+  version: number;
   width: number;
   height: number;
+  aspectRatio: number;
   safeArea: { x: number; y: number; w: number; h: number } | null;
+  namedSafeAreas: { label: string; rect: { x: number; y: number; width: number; height: number } }[];
   formats: ("PNG" | "JPEG" | "WEBP")[];
+  transparency: boolean;
+  official: boolean;
+  checkedAt: string | null;
   maxBytes: number | null;
 }[] {
   return BANNER_PRESETS.map((p) => ({
     id: p.slug,
     label: p.label,
     description: p.description,
+    version: p.version,
     width: p.width,
     height: p.height,
+    aspectRatio: bannerAspectRatio(p),
     safeArea: { x: p.safeArea.x, y: p.safeArea.y, w: p.safeArea.width, h: p.safeArea.height },
-    formats: ["PNG", "JPEG", "WEBP"],
+    namedSafeAreas: p.namedSafeAreas,
+    formats: p.formats,
+    transparency: p.transparency,
+    official: p.official,
+    checkedAt: p.checkedAt,
     maxBytes: p.maxBytes,
   }));
 }
