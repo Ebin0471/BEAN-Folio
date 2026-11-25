@@ -2,7 +2,7 @@ import { db } from "@/lib/db";
 import { LaxiiError, type LaxiiAspect, type LaxiiRequestOperation } from "@/lib/laxii/types";
 import { startGenerationJob, type LaxiiJobSpec } from "@/lib/laxii/jobs";
 import { loadOwnedMediaAsReferences } from "@/lib/laxii/service";
-import { bannerPreset, BANNER_PRESETS } from "@/lib/laxii/banner-presets";
+import { bannerPreset, canonicalBannerPreset, resolveCustomBannerCanvas, CUSTOM_BANNER_SLUG } from "@/lib/laxii/banner-presets";
 
 /**
  * LAXII conversational creative studio — conversation glue (§Phase 3).
@@ -461,16 +461,44 @@ export async function planTurn(
     }
     case "BANNER": {
       // Resolve the requested preset; unknown/absent slugs fall back to the
-      // site's own preset (the "website-promo" slug this fallback used to
-      // name no longer exists in the single-preset registry).
-      const preset = bannerPreset(settings.bannerPreset) ?? BANNER_PRESETS[0]!;
-      const width = Math.max(16, Math.min(4096, Math.round(settings.bannerWidth ?? preset.width)));
-      const height = Math.max(16, Math.min(4096, Math.round(settings.bannerHeight ?? preset.height)));
+      // canonical BEAN Folio preset resolved BY SLUG (never by array index),
+      // with an honest warning when a configured slug no longer resolves.
+      const requestedSlug = settings.bannerPreset ?? null;
+      const requested = bannerPreset(requestedSlug);
+      const preset = requested ?? canonicalBannerPreset();
+      if (requestedSlug && !requested && requestedSlug !== CUSTOM_BANNER_SLUG) {
+        planned.extraWarnings.push(
+          `The configured banner canvas "${settings.bannerPreset}" is no longer available — the canonical BEAN Folio canvas was used instead.`
+        );
+      }
+      let width = preset.width;
+      let height = preset.height;
+      let slug = preset.slug;
+      // Explicit dimension settings form a strictly-bounded CUSTOM canvas
+      // when they differ from the resolved preset. Out-of-bounds requests
+      // are NOT silently clamped into a fake match — the preset canvas is
+      // kept and an honest warning is attached.
+      if (settings.bannerWidth != null || settings.bannerHeight != null) {
+        const requestedW = Math.round(settings.bannerWidth ?? preset.width);
+        const requestedH = Math.round(settings.bannerHeight ?? preset.height);
+        if (requestedW !== preset.width || requestedH !== preset.height) {
+          const custom = resolveCustomBannerCanvas(requestedW, requestedH);
+          if (custom) {
+            width = custom.width;
+            height = custom.height;
+            slug = CUSTOM_BANNER_SLUG;
+          } else {
+            planned.extraWarnings.push(
+              `Requested banner canvas ${requestedW}×${requestedH} is outside the documented custom-canvas limits — the ${preset.label} canvas (${preset.width}×${preset.height}) was kept instead.`
+            );
+          }
+        }
+      }
       planned.requestOperation = "BANNER";
       planned.engineOperation = "GENERATE"; // banner runs as generation + exact-canvas composite
       planned.styleSlug = settings.bannerStyle ?? null;
       planned.aspect = nearestAspect(width, height);
-      planned.bannerCanvas = { width, height, presetSlug: preset.slug };
+      planned.bannerCanvas = { width, height, presetSlug: slug };
       break;
     }
   }

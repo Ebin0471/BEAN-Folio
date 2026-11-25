@@ -225,11 +225,17 @@ export function compileBriefPrompt(brief: DesignBrief): string {
     parts.push(`Strictly avoid:\n${list(brief.avoid.map((a) => a))}`);
   }
 
+  // Orientation-aware canvas description — the registry now covers square,
+  // portrait and custom canvases, not only the ultra-wide canonical banner.
+  const ratio = brief.canvas.width / brief.canvas.height;
+  const orientation =
+    ratio >= 2 ? "ultra-wide banner" : ratio > 1.1 ? "landscape banner" : ratio >= 0.9 ? "square banner" : "portrait banner";
   parts.push(
     [
-      `Output canvas: exactly ${brief.canvas.width}×${brief.canvas.height} px (ultra-wide banner).`,
-      `Keep the entire composition — subject, key shapes, color weight — inside the vertical center`,
-      `band of the frame with calm margins above and below; keep critical elements inside the`,
+      `Output canvas: exactly ${brief.canvas.width}×${brief.canvas.height} px (${orientation}).`,
+      ratio >= 1.1
+        ? `Keep the entire composition — subject, key shapes, color weight — inside the vertical center band of the frame with calm margins above and below; keep critical elements inside the`
+        : `Keep the entire composition — subject, key shapes, color weight — centered in the frame with calm margins on all sides; keep critical elements inside the`,
       `centered safe zone (${brief.safeArea.width}×${brief.safeArea.height} px).`,
       `Photorealistic lighting, coherent single scene, crisp focus, no frame edges visible,`,
       `full-bleed edge-to-edge composition.`,

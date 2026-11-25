@@ -80,8 +80,11 @@ const ASPECTS = ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9"
  */
 const PROMPT_MAX = LAXII_PROMPT_MAX;
 
-/** The single fixed banner canvas — must match BANNER_PRESETS in src/lib/laxii/banner-presets.ts. */
+/** The canonical banner canvas slug — matches BANNER_PRESET_SLUG in src/lib/laxii/banner-presets.ts. */
 const BEAN_BANNER_SLUG = "bean-folio-banner";
+
+/** Minimal fallback shape when /api/laxii/capabilities has not loaded yet. */
+const FALLBACK_BANNER_PRESET = { slug: BEAN_BANNER_SLUG, label: "BEAN Folio banner", width: 2048, height: 687 };
 
 /** sessionStorage key carrying a Riishe→LAXII brief taskId across the handoff navigation. */
 const BRIEF_STORAGE_KEY = "bean:laxii-pending-brief";
@@ -114,7 +117,7 @@ export function LaxiiStudio() {
   // Edit context — the version the next operation will build on.
   const [editParent, setEditParent] = useState<LaxiiVersion | null>(null);
 
-  // Banner composer state — one fixed BEAN Folio canvas (2048×687).
+  // Banner composer state — canvas resolved from the versioned preset registry.
   const [bannerPreset, setBannerPreset] = useState(BEAN_BANNER_SLUG);
 
   // Conversational engine controls (Phase 4/5): LAXII V1 is the single
@@ -1251,7 +1254,7 @@ export function LaxiiStudio() {
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          {(caps?.bannerPresets ?? [{ slug: BEAN_BANNER_SLUG, label: "BEAN Folio banner", width: 2048, height: 687 }]).map((p) => (
+                          {(caps?.bannerPresets ?? [FALLBACK_BANNER_PRESET]).map((p) => (
                             <SelectItem key={p.slug} value={p.slug}>
                               {p.label} · {p.width} × {p.height}
                             </SelectItem>
@@ -1589,7 +1592,7 @@ const MODE_INTRO: Record<CreationMode, { title: string; blurb: string; features:
   banner: {
     title: "Banner studio",
     blurb:
-      "Design the BEAN Folio portfolio banner at exactly 2048 × 687 px with a built-in text-safe guide. Describe the banner below — LAXII renders it to size.",
+      "Design professional banners on versioned canvas presets — the canonical BEAN Folio 2048 × 687 profile banner, platform covers and campaign formats — each with a built-in text-safe guide. Describe the banner below; LAXII renders it to the selected canvas size.",
     features: [],
     icon: <RectangleHorizontal className="size-6 text-primary" aria-hidden />,
   },
@@ -1654,9 +1657,9 @@ function WorkspaceIntro({
             </span>
             <div className="min-w-0 flex-1">
               <h3 className="text-sm font-semibold">Create banner using LAXII</h3>
-              <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">Create professional portfolio banners with LAXII.</p>
+              <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">Create professional banners on versioned canvas presets with LAXII.</p>
             </div>
-            <span className="shrink-0 rounded-md bg-primary/15 px-2 py-1 text-[10px] font-medium text-primary">2048 × 687</span>
+            <span className="shrink-0 rounded-md bg-primary/15 px-2 py-1 text-[10px] font-medium text-primary">versioned presets</span>
           </div>
         </section>
       ) : null}

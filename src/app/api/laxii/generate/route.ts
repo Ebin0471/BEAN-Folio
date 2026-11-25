@@ -14,6 +14,7 @@ import { classifyLaxiiIntent, compileEditInstruction, buildConversationContext, 
 import { compileStyleRecipe } from "@/lib/laxii/styles";
 import { loadBriefTask, setBriefTaskStatus } from "@/lib/intelligence/delegation";
 import { compileBriefPrompt, type DesignBrief } from "@/lib/laxii/design-brief";
+import { BANNER_PRESET_SLUG, canonicalBannerPreset, findBannerPreset, resolveCustomBannerCanvas, customCanvasLimitsText } from "@/lib/laxii/banner-presets";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // only job CREATION runs here — the engine runs in the job worker
@@ -294,23 +295,51 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
 
   if (!conversation) {
     if (operation === "BANNER" && (body.banner || briefSpec)) {
-      const { findBannerPreset } = await import("@/lib/laxii/banner-presets");
       // Bootstrap only runs for NEW conversations — those must carry a valid
-      // preset (always the BEAN Folio canvas from the studio, or the brief's
-      // pre-validated canvas in the brief-driven path). Fail with a clean 400
-      // instead of an unhandled throw outside the generation try.
-      const bootstrapSlug = briefSpec ? briefSpec.brief.canvas.presetSlug : body.banner!.presetSlug;
-      if (!findBannerPreset(bootstrapSlug)) return err("Unknown banner preset.", 400);
-      const { resolveBannerCanvas } = await import("@/lib/laxii/service");
-      const canvas = resolveBannerCanvas(bootstrapSlug);
+      // canvas: a registry preset (validated by slug + exact dimensions), a
+      // strictly-bounded custom canvas (explicit width AND height), or the
+      // brief's pre-validated canvas in the brief-driven path. Fail with a
+      // clean 400 instead of an unhandled throw outside the generation try.
+      let bootstrapCanvas: { slug: string; width: number; height: number };
+      if (briefSpec) {
+        const briefPreset = findBannerPreset(briefSpec.brief.canvas.presetSlug);
+        if (
+          !briefPreset ||
+          briefPreset.width !== briefSpec.brief.canvas.width ||
+          briefPreset.height !== briefSpec.brief.canvas.height
+        ) {
+          return err("Unknown banner preset for the brief canvas.", 400);
+        }
+        bootstrapCanvas = {
+          slug: briefPreset.slug,
+          width: briefPreset.width,
+          height: briefPreset.height,
+        };
+      } else if (
+        body.banner!.customWidth != null ||
+        body.banner!.customHeight != null
+      ) {
+        const custom = resolveCustomBannerCanvas(body.banner!.customWidth, body.banner!.customHeight);
+        if (!custom) {
+          return err(
+            `Custom banner dimensions rejected: both ${customCanvasLimitsText()} must be supplied.`,
+            400
+          );
+        }
+        bootstrapCanvas = { slug: custom.slug, width: custom.width, height: custom.height };
+      } else {
+        const preset = findBannerPreset(body.banner!.presetSlug);
+        if (!preset) return err("Unknown banner preset.", 400);
+        bootstrapCanvas = { slug: preset.slug, width: preset.width, height: preset.height };
+      }
       conversation = await db.laxiiConversation.create({
         data: {
           userId: user.id,
           title: briefSpec ? briefSpec.brief.request.slice(0, 60) : prompt ? prompt.slice(0, 60) : "New banner",
           kind: "BANNER",
-          bannerKind: canvas.preset.slug,
-          canvasWidth: canvas.width,
-          canvasHeight: canvas.height,
+          bannerKind: bootstrapCanvas.slug,
+          canvasWidth: bootstrapCanvas.width,
+          canvasHeight: bootstrapCanvas.height,
         },
       });
     } else {
@@ -407,19 +436,23 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
         count = 1;
       } else {
       // Canvas truth: an existing BANNER conversation keeps its own stored
-      // canvas (including conversations created under legacy presets); a NEW
-      // conversation always resolves to the single BEAN Folio 2048×687 canvas.
-      // Prompt guidance falls back to the BEAN Folio preset when the request
-      // or the conversation carries a removed legacy slug.
-      const guidance =
-        findBannerPreset(body.banner!.presetSlug) ??
-        findBannerPreset(conversation?.bannerKind ?? "") ??
-        BANNER_PRESETS[0];
+      // canvas AND slug (registry presets, the strictly-bounded "custom"
+      // canvas family, or legacy slugs); a NEW conversation resolves the
+      // requested preset — prompt guidance falls back to the canonical BEAN
+      // Folio preset BY SLUG when the request carries a removed legacy slug.
+      const requestedPreset =
+        findBannerPreset(body.banner!.presetSlug) ?? findBannerPreset(conversation?.bannerKind ?? "");
+      const guidance = requestedPreset ?? canonicalBannerPreset();
+      const storedSlug = conversation?.bannerKind ?? null;
       const canvas =
         conversation && conversation.kind === "BANNER" && conversation.canvasWidth && conversation.canvasHeight
-          ? { width: conversation.canvasWidth, height: conversation.canvasHeight }
-          : { width: guidance.width, height: guidance.height };
-      bannerCanvas = { width: canvas.width, height: canvas.height, presetSlug: guidance.slug };
+          ? {
+              width: conversation.canvasWidth,
+              height: conversation.canvasHeight,
+              slug: storedSlug ?? guidance.slug,
+            }
+          : { width: guidance.width, height: guidance.height, slug: guidance.slug };
+      bannerCanvas = { width: canvas.width, height: canvas.height, presetSlug: canvas.slug };
       aspect = nearestAspect(canvas.width / canvas.height);
       // Quality upgrade: when the canvas matches the authoritative preset,
       // the plain composer request runs through the SAME professional
@@ -430,7 +463,10 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
       // (cover-fit composite) instead of failing the pipeline's preset check.
       const { buildPlainBannerBrief, canvasMatchesPreset } = await import("@/lib/laxii/banner-request");
       if (canvasMatchesPreset(bannerCanvas)) {
-        plainBannerBrief = buildPlainBannerBrief(prompt, guidance.slug);
+        plainBannerBrief = buildPlainBannerBrief(prompt, bannerCanvas.presetSlug, {
+          width: bannerCanvas.width,
+          height: bannerCanvas.height,
+        });
         promptFinal = compileBriefPrompt(plainBannerBrief);
       } else {
         promptFinal = [prompt, `Banner design for: ${guidance.label} (canvas ${canvas.width}×${canvas.height}px).`, guidance.compositionHint]
@@ -450,7 +486,7 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
       bannerCanvas = {
         width: conversation.canvasWidth,
         height: conversation.canvasHeight,
-        presetSlug: conversation.bannerKind ?? "bean-folio-banner",
+        presetSlug: conversation.bannerKind ?? BANNER_PRESET_SLUG,
       };
       aspect = nearestAspect(conversation.canvasWidth / conversation.canvasHeight);
     }

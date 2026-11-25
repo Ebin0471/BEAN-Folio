@@ -29,7 +29,7 @@ import {
   type DesignBrief,
   type BriefRevision,
 } from "@/lib/laxii/design-brief";
-import { BANNER_PRESETS } from "@/lib/laxii/banner-presets";
+import { canonicalBannerPreset } from "@/lib/laxii/banner-presets";
 
 export type DelegationKind = "BANNER_DESIGN" | "AVATAR_DESIGN" | "WEBSITE_DESIGN";
 
@@ -176,7 +176,7 @@ export async function buildStructuredBannerBrief(
   user: User,
   userMessage: string
 ): Promise<{ brief: DesignBrief; portfolioSummary: string[] }> {
-  const preset = BANNER_PRESETS[0]; // the single authoritative BEAN Folio canvas
+  const preset = canonicalBannerPreset(); // the authoritative BEAN Folio canvas, resolved by slug — never an array index
   const ctx = await buildPortfolioContext(user);
   const identity = await loadSiteIdentity(user.id);
 

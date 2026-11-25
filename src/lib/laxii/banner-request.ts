@@ -19,15 +19,35 @@
 
 import { extractQuotedTypography, detectArtDirection } from "./art-direction";
 import { BRIEF_SCHEMA_VERSION, type DesignBrief } from "./design-brief";
-import { findBannerPreset } from "./banner-presets";
+import { CUSTOM_BANNER_SLUG, CUSTOM_CANVAS_LIMITS, findBannerPreset } from "./banner-presets";
 
 /**
  * Compile a plain banner request into a synthetic USER-sourced brief.
  * Throws when the preset slug is unknown (the caller validated it already).
+ * Custom canvases pass `canvasOverride` (both dimensions required, enforced
+ * against the documented limits); registry slugs ignore the override unless
+ * it disagrees with the preset, in which case they throw.
  */
-export function buildPlainBannerBrief(prompt: string, presetSlug: string): DesignBrief {
+export function buildPlainBannerBrief(
+  prompt: string,
+  presetSlug: string,
+  canvasOverride?: { width: number; height: number }
+): DesignBrief {
   const preset = findBannerPreset(presetSlug);
-  if (!preset) throw new Error(`Unknown banner preset "${presetSlug}" — refusing to compile a banner brief.`);
+  if (preset) {
+    if (canvasOverride && (canvasOverride.width !== preset.width || canvasOverride.height !== preset.height)) {
+      throw new Error(`Canvas override disagrees with the authoritative "${presetSlug}" preset — refusing to guess dimensions.`);
+    }
+  } else if (presetSlug === CUSTOM_BANNER_SLUG) {
+    if (!canvasOverride) throw new Error("Custom banner canvases require explicit width and height.");
+    if (!canvasMatchesPreset({ presetSlug: CUSTOM_BANNER_SLUG, ...canvasOverride })) {
+      throw new Error("Custom banner canvas is outside the documented dimension limits.");
+    }
+  } else {
+    throw new Error(`Unknown banner preset "${presetSlug}" — refusing to compile a banner brief.`);
+  }
+  const width = preset ? preset.width : canvasOverride!.width;
+  const height = preset ? preset.height : canvasOverride!.height;
   const trimmed = prompt.trim();
   const quoted = extractQuotedTypography(trimmed);
   const direction = detectArtDirection(trimmed);
@@ -35,7 +55,7 @@ export function buildPlainBannerBrief(prompt: string, presetSlug: string): Desig
   const directionBlock = [
     direction ? `Professional direction: ${direction.label}.` : "Professional direction: premium portfolio banner.",
     direction?.directive ?? "",
-    "Banner-specific composition: one coherent horizontal band; subject and key elements anchored in the vertical center half; calm margins above and below; full-bleed, edge-to-edge scene.",
+    `Canvas composition: anchor the subject and key elements in the vertical center band of the ${width}×${height} canvas; calm margins at the top and bottom; full-bleed, edge-to-edge scene.`,
   ]
     .filter(Boolean)
     .join("\n");
@@ -68,8 +88,15 @@ export function buildPlainBannerBrief(prompt: string, presetSlug: string): Desig
         ? ["Exact wording from the user's composer request — rendered by the deterministic typography layer, never re-spelled by the model."]
         : [],
     },
-    canvas: { presetSlug: preset.slug, width: preset.width, height: preset.height },
-    safeArea: preset.safeArea,
+    canvas: { presetSlug, width, height },
+    safeArea: preset
+      ? preset.safeArea
+      : {
+          x: Math.round((width * (1 - 0.86)) / 2),
+          y: Math.round((height * (1 - 0.9)) / 2),
+          width: Math.round(width * 0.86),
+          height: Math.round(height * 0.9),
+        },
     referenceMediaIds: [],
     preserve: [],
     avoid: [],
@@ -82,12 +109,27 @@ export function buildPlainBannerBrief(prompt: string, presetSlug: string): Desig
 }
 
 /**
- * Whether a (possibly legacy) stored banner canvas can run through the
- * professional pipeline: the pipeline is authoritative about preset
- * dimensions and refuses mismatches, so plain requests on legacy canvases
- * keep the direct path (cover-fit composite) instead of failing.
+ * Whether a (possibly legacy or custom) stored banner canvas can run through
+ * the professional pipeline. Registry presets must match their authoritative
+ * dimensions exactly; the strictly-bounded custom canvas family is valid when
+ * the stored dimensions are inside the documented limits. Unknown/legacy
+ * slugs keep the direct path (cover-fit composite) instead of failing.
  */
 export function canvasMatchesPreset(canvas: { width: number; height: number; presetSlug: string }): boolean {
   const preset = findBannerPreset(canvas.presetSlug);
-  return Boolean(preset && preset.width === canvas.width && preset.height === canvas.height);
+  if (preset) return preset.width === canvas.width && preset.height === canvas.height;
+  if (canvas.presetSlug === CUSTOM_BANNER_SLUG) {
+    const { minSide, maxSide, maxAreaPx } = CUSTOM_CANVAS_LIMITS;
+    const { width, height } = canvas;
+    return (
+      Number.isInteger(width) &&
+      Number.isInteger(height) &&
+      width >= minSide &&
+      height >= minSide &&
+      width <= maxSide &&
+      height <= maxSide &&
+      width * height <= maxAreaPx
+    );
+  }
+  return false;
 }

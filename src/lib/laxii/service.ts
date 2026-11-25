@@ -14,7 +14,7 @@ import { putObject, buildStorageKey } from "@/lib/storage";
 
 import type { LaxiiReferenceImage } from "./types";
 import { LaxiiError } from "./types";
-import { findBannerPreset, type LaxiiBannerPreset } from "./banner-presets";
+import { BANNER_PRESET_SLUG, findBannerPreset, type LaxiiBannerPreset } from "./banner-presets";
 
 /**
  * Prompt budget shared by every LAXII entry point (studio composer, API,
@@ -351,7 +351,7 @@ export async function retryJob(userId: string, id: string): Promise<LaxiiJobRowV
     quality: "1K",
     bannerCanvas:
       original.conversation.kind === "BANNER" && original.conversation.canvasWidth && original.conversation.canvasHeight
-        ? { width: original.conversation.canvasWidth, height: original.conversation.canvasHeight, presetSlug: original.conversation.bannerKind ?? "bean-folio-banner" }
+        ? { width: original.conversation.canvasWidth, height: original.conversation.canvasHeight, presetSlug: original.conversation.bannerKind ?? BANNER_PRESET_SLUG }
         : null,
     extraWarnings: ["Retried from an earlier failed generation — some original settings may differ."],
     parentVersionId: null,

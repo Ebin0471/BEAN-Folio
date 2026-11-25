@@ -13,8 +13,9 @@
  *   b) every src/docs/tests evidence path cited in the matrix exists on disk;
  *   c) the "Unsupported (today)" claims about RIISHE tool families are true
  *      against the live RIISHE_TOOLS keys;
- *   d) the canonical LAXII banner preset is exactly the registered one
- *      (2048×687) and no expanded registry exists;
+ *   d) the canonical LAXII banner preset (2048×687) stays registry entry 0
+ *      unchanged and the M33.4 expanded registry is versioned/bounded, with
+ *      no unverified platform preset;
  *   e) the schema's 17th section types (featured/reel) omitted by the old
  *      stale prompt text are present, and the stale strings are gone;
  *   f) the guide + matrix + historical LAXII banner + README index links
@@ -141,10 +142,34 @@ describe("capability matrix — negative claims are true", () => {
     expect(MATRIX).toMatch(/Registered `laxii\.\*` tools/);
   });
 
-  test("exactly ONE banner preset exists and it is the canonical 2048×687", () => {
-    expect(BANNER_PRESETS.length).toBe(1);
+  test("the canonical 2048×687 preset stays FIRST and unchanged; the expanded registry is versioned and bounded (M33.4)", () => {
+    // Canonical contract: registry entry 0, exact slug/dimensions, unchanged.
+    expect(BANNER_PRESETS[0].slug).toBe("bean-folio-banner");
     expect(BANNER_PRESETS[0].width).toBe(2048);
     expect(BANNER_PRESETS[0].height).toBe(687);
+    expect(BANNER_PRESETS[0].safeArea).toEqual({ x: 143, y: 34, width: 1761, height: 618 });
+    // The M33.4 registry expansion: platform/campaign canvases exist and all
+    // entries carry the versioned metadata (family/official/checkedAt).
+    expect(BANNER_PRESETS.length).toBeGreaterThanOrEqual(11);
+    const slugs = new Set(BANNER_PRESETS.map((p) => p.slug));
+    expect(slugs.size).toBe(BANNER_PRESETS.length);
+    for (const p of BANNER_PRESETS) {
+      expect(p.safeArea.x).toBeGreaterThanOrEqual(0);
+      expect(p.safeArea.y).toBeGreaterThanOrEqual(0);
+      expect(p.safeArea.x + p.safeArea.width).toBeLessThanOrEqual(p.width);
+      expect(p.safeArea.y + p.safeArea.height).toBeLessThanOrEqual(p.height);
+      expect(["site", "platform", "campaign"]).toContain(p.family);
+      if (p.official) {
+        expect(p.checkedAt).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+        expect(p.sourceUrl).toMatch(/^https:\/\//);
+      } else {
+        expect(p.checkedAt).toBeNull();
+        expect(p.sourceUrl).toBeNull();
+      }
+    }
+    // The unverified platform surface (X/Twitter header) must NOT ship as an
+    // official preset — its spec page was unreachable at check time.
+    expect(slugs.has("x-header")).toBe(false);
   });
 
   test("SECTION_TYPES includes featured and reel (the types the old stale prompt omitted)", () => {

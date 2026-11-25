@@ -207,8 +207,12 @@ export async function runBannerPipeline(
   const maxAttempts = deps.maxAttempts ?? maxAttemptsConfigured();
 
   // 1–2. Brief + canvas truth. The pipeline NEVER changes the required size.
-  const { BANNER_PRESETS } = await import("./banner-presets");
-  const preset = BANNER_PRESETS.find((p) => p.slug === brief.canvas.presetSlug);
+  const { findBannerPreset, resolveCustomBannerCanvas, CUSTOM_BANNER_SLUG } = await import("./banner-presets");
+  const preset =
+    findBannerPreset(brief.canvas.presetSlug) ??
+    (brief.canvas.presetSlug === CUSTOM_BANNER_SLUG
+      ? resolveCustomBannerCanvas(brief.canvas.width, brief.canvas.height)
+      : null);
   if (!preset) throw new Error(`Unknown banner canvas "${brief.canvas.presetSlug}" — the brief must carry a real preset.`);
   if (preset.width !== brief.canvas.width || preset.height !== brief.canvas.height) {
     throw new Error("Brief canvas does not match the authoritative preset — refusing to guess dimensions.");

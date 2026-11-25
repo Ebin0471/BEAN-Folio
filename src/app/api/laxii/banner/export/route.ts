@@ -9,6 +9,7 @@ import { getObject } from "@/lib/storage";
 import { fitToCanvas } from "@/lib/laxii/image-ops";
 import { probeImage, pngHasAlpha } from "@/lib/laxii/validate";
 import { storeGeneratedMedia } from "@/lib/laxii/service";
+import { findBannerPreset, resolveCustomBannerCanvas, CUSTOM_BANNER_SLUG } from "@/lib/laxii/banner-presets";
 import { loadBriefTask } from "@/lib/intelligence/delegation";
 
 export const dynamic = "force-dynamic";
@@ -53,6 +54,19 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
   const canvasHeight = version.conversation.canvasHeight;
   if (!canvasWidth || !canvasHeight) return err("This conversation has no banner canvas size.", 400);
 
+  // Registry truth: when the conversation carries a KNOWN preset slug, the
+  // stored canvas must still match that preset's authoritative dimensions
+  // (a tampered row is refused, not exported). The strictly-bounded custom
+  // family must sit inside the documented limits. Legacy slugs that predate
+  // the registry keep exporting at their stored size.
+  const storedPreset = findBannerPreset(version.conversation.bannerKind ?? "");
+  if (storedPreset && (storedPreset.width !== canvasWidth || storedPreset.height !== canvasHeight)) {
+    return err("This conversation's stored canvas no longer matches its banner preset — export refused.", 400);
+  }
+  if (version.conversation.bannerKind === CUSTOM_BANNER_SLUG && !resolveCustomBannerCanvas(canvasWidth, canvasHeight)) {
+    return err("This conversation's custom canvas is outside the documented dimension limits — export refused.", 400);
+  }
+
   // Source must decode before we export it.
   const source = await getObject(version.media.storagePath);
   const probe = probeImage(source);
@@ -73,7 +87,37 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
     }
   }
 
-  const out = await fitToCanvas(source, canvasWidth, canvasHeight, format);
+  // Platform file-size caps: enforced where the platform documents one.
+  // JPEG/WebP step quality down deterministically before failing; PNG has no
+  // quality knob, so an over-cap PNG is refused with an honest suggestion
+  // instead of being emitted oversized.
+  const maxBytes = storedPreset?.maxBytes ?? null;
+  const qualityLadder = [92, 78, 64, 50, 38];
+  let out = await fitToCanvas(source, canvasWidth, canvasHeight, format);
+  if (maxBytes != null && out.bytes.length > maxBytes) {
+    if (format === "png") {
+      return err(
+        `The exported PNG (${(out.bytes.length / 1_000_000).toFixed(1)}MB) exceeds the platform cap of ${(maxBytes / 1_000_000).toFixed(1)}MB for this canvas. Choose JPEG or WebP instead.`,
+        400
+      );
+    }
+    let accepted: Awaited<ReturnType<typeof fitToCanvas>> | null = null;
+    for (const q of qualityLadder) {
+      const candidate = await fitToCanvas(source, canvasWidth, canvasHeight, format, q);
+      if (candidate.bytes.length <= maxBytes) {
+        accepted = candidate;
+        break;
+      }
+    }
+    if (!accepted) {
+      return err(
+        `This image cannot be exported under the platform's ${(maxBytes / 1_000_000).toFixed(1)}MB cap even at reduced quality. Simplify the composition and try again.`,
+        400
+      );
+    }
+    out = accepted;
+  }
+
   const verify = probeImage(out.bytes);
   if (!verify || verify.width !== canvasWidth || verify.height !== canvasHeight) {
     return err("Export failed the size verification. Please try again.", 500);

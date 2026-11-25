@@ -84,7 +84,7 @@ Baseline: `main` at `74123a5` (PR #7 merge, 2026-11-24). North star:
 
 | Registry | Count | Source of truth |
 | --- | --- | --- |
-| Banner canvas presets (`BANNER_PRESETS`) | 1 (canonical 2048×687) | `src/lib/laxii/banner-presets.ts` |
+| Banner canvas presets (`BANNER_PRESETS`) | 11 (canonical 2048×687 first + 10 versioned site/platform/campaign canvases) | `src/lib/laxii/banner-presets.ts` |
 | Avatar style presets (`AVATAR_PRESETS`) | 10 | `src/lib/laxii/avatar-presets.ts` |
 | Style-registry presets (`STYLE_PRESETS`) | 15 | `src/lib/laxii/styles.ts` |
 | Resume formats (`RESUME_TYPES`) | 17 | `src/lib/laxii/resume-schema.ts` |
@@ -115,7 +115,7 @@ Baseline: `main` at `74123a5` (PR #7 merge, 2026-11-24). North star:
 
 | Gap | Priority | Notes |
 | --- | --- | --- |
-| Versioned banner canvas preset registry (hero/campaign/square/story + bounds) preserving canonical 2048×687 | M33.4 | Registry currently 1 preset. |
+| Versioned banner canvas registry (hero/platform covers/campaign formats + strict custom bounds) preserving canonical 2048×687 | Existing (M33.4) | `src/lib/laxii/banner-presets.ts` — 11 presets; platform entries carry `official`/`checkedAt`/`sourceUrl` verified 2026-11-25 against each platform's own docs; custom canvases via `resolveCustomBannerCanvas` (64–4096 per side, ≤2^22 px area, never silently clamped); export enforces registry dims + documented platform byte caps. X/Twitter header deliberately absent (official page unverifiable at check time). |
 | Numeric regression tests proving protected-region pixels unchanged (future preserve-pixel path) | M33.4 | Blocked: no preserve-pixel engine exists; rebuild requires design + owner approval. |
 | Deterministic typography with user-selected approved font families + glyph coverage checks | M33.4 | `src/lib/laxii/typography.ts` currently uses built-in fonts; SITE_FONTS integration pending. |
 | Cover-letter drafting grounded in the same facts (only after tests) | M33.5 | Zero code today. |
