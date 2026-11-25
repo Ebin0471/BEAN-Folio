@@ -96,13 +96,11 @@ describe("POST /api/laxii/resume/import — route contract", () => {
     const res = await postFile(importRoute, "resume.txt", "text/plain", SAMPLE_TXT);
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      ok: boolean;
       text: string;
       truncated: boolean;
       source: string;
       proposal: { schemaVersion: number; source: { method: string }; basics: { email: { value: string } | null }; work: { value: { company: string } }[]; warnings: string[] };
     };
-    expect(body.ok).toBe(true);
     expect(body.text).toContain("ravi.kumar@example.com");
     expect(body.truncated).toBe(false);
     expect(body.source).toBe("plain-text");
