@@ -381,11 +381,13 @@ The runtime must be a different trust boundary from GIFTZ preview/published stat
 
 ## 6. LAXII — face-preserving portraits, premium banners and creative production
 
-### 6.1 Existing engine and honest identity model
+### 6.1 Identity pipeline and honest identity model
 
-Existing LAXII code lives under `src/lib/laxii/*` with API routes under `src/app/api/laxii/*`. The current source documentation describes managed inference and an optional separately hosted Diffusers worker. The user-facing generate API currently pins provider selection to the managed path; do not claim the local Diffusers worker is user-selectable unless the real API/UI has been changed and tested.
+LAXII code lives under `src/lib/laxii/*` with API routes under `src/app/api/laxii/*`. The user-facing generate API pins provider selection to the managed path; do not claim the local Diffusers worker is user-selectable unless the real API/UI has been changed and tested.
 
-**Preserve-pixel avatar mode (the correct strict no-face-change option):**
+> **M33.4 correction (2026-11):** the preserve-pixel engine this section originally described was REMOVED from the codebase in the Phase-6 dead-cluster audit (the historic `engine.ts`/`pipeline/*` modules, the `LaxiiJob` model and the elliptical-mask compositing no longer exist — see `tests/laxii-backdrop.test.ts.disabled` for the removed-engine provenance). M33.4 then built a NEW deterministic subject-preservation pipeline from scratch (`src/lib/laxii/avatar-identity.ts` + `src/lib/laxii/segmentation.ts`, exposed by `POST /api/laxii/avatar-identity`). The contract below describes that NEW implementation — it is not an audit of an existing engine.
+
+**Preserve-pixel avatar mode (identity lock, the strict no-face-change option):**
 
 - Keep the original subject pixels and composite a newly generated background around a segmented foreground. The documented formula is `output = original_subject × alpha + generated_background × (1 − alpha)`.
 - Do not run face regeneration, face swap, face restoration, diffusion re-rendering, expression change, eye/skin enhancement or generative fill on the protected face/subject region.
@@ -602,13 +604,13 @@ Do not attempt every module in one enormous unreviewable PR. Deliver thin, teste
 - Add real browser QA at 390/768/1024/1440, reduced motion and low bandwidth.
 - Keep proposal approval, rollback and versioning unchanged.
 
-### M33.4 — LAXII no-face-change and banner expansion
+### M33.4 — LAXII no-face-change and banner expansion (implemented M33.4-A/B/C)
 
-- Audit existing Preserve-pixel implementation and add direct regression tests proving face/subject core pixels remain unchanged under supported transforms.
-- Expose clear identity-locked vs experimental re-render mode labels.
-- Add versioned banner canvas presets while preserving canonical 2048×687.
-- Improve deterministic typography with user-selected approved font families, glyph coverage and export round-trip checks.
-- Benchmark provider/model hardware requirements; no model adoption before licence and quality gates.
+- Build the NEW deterministic subject-preservation pipeline (the historic engine was removed, not audited) and add direct numerical regression tests proving face/subject core pixels remain bit-identical, with fail-closed mask/plate/verification gates.
+- Expose clear identity-locked vs AI-restyle labels; AI-restyle never claims guaranteed identity.
+- Versioned banner canvas registry (platform/campaign canvases + strict custom bounds) while preserving canonical 2048×687.
+- Deterministic typography with user-selected licence-audited font families, measured glyph coverage and fallback honesty.
+- Model/licence gates before any adoption: MODNet ONNX weights verified (Apache-2.0, sha256-pinned) and executed locally via onnxruntime-node (MIT); no research-only checkpoints; no ComfyUI GPL code in product code.
 
 ### M33.5 — Resume quality and portfolio integration
 

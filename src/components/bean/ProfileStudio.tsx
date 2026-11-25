@@ -369,13 +369,15 @@ function useJobPolling() {
   );
 
   const generate = useCallback(
-    async (payload: Record<string, unknown>) => {
+    async (request: { url: string; body: Record<string, unknown> }) => {
       setSubmitting(true);
       setJob({ id: "", status: "QUEUED", stage: "Queued", progress: 1, error: null, results: [] });
       try {
-        const res = await api<{ job: LaxiiJobState }>("/api/laxii/jobs", { method: "POST", json: payload });
-        setJob(res.job);
-        poll(res.job.id);
+        const res = await api<{ messageId?: string; conversationId?: string }>(request.url, { method: "POST", json: request.body });
+        const jobId = res.messageId;
+        if (!jobId) throw new ApiError("The studio did not return a job id — nothing was started.", 500);
+        setJob({ id: jobId, status: "RUNNING", stage: "Starting", progress: 2, error: null, results: [] });
+        poll(jobId);
       } catch (e) {
         setJob(null);
         toast.error(e instanceof ApiError ? e.message : "Could not start the job");
@@ -476,7 +478,9 @@ function ResultGrid({
       {selected && (
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant="outline" className="rounded-full text-[10px] font-normal text-muted-foreground">
-            {selected.width}×{selected.height} · {selected.format} · {(selected.bytes / 1024).toFixed(0)} KB · sharpness {selected.sharpness}/100
+            {selected.width ? `${selected.width}×${selected.height} · ` : ""}
+            {selected.format ? `${selected.format} · ` : ""}
+            {(selected.bytes / 1024).toFixed(0)} KB
           </Badge>
           <div className="ml-auto flex gap-2">
             <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={() => void downloadMedia(selected.mediaAssetId, "result", selected.format)}>
@@ -542,19 +546,50 @@ function AvatarStudio({ currentUrl, onApplied }: { currentUrl: string | null; on
 
   const canGenerate = Boolean(source && style);
 
+  // AVATAR_STYLES (this view's curated list) → the engine's AVATAR_PRESETS
+  // slugs for the AI-restyle path (identityMode AI_GUIDED).
+  const AI_RESTYLE_PRESET_BY_STYLE: Record<string, string> = {
+    corporate_headshot: "professional-headshot",
+    editor_portrait: "editorial-fashion",
+    cinematic_portrait: "cinematic-portrait",
+    studio_portrait: "studio-portrait",
+    creative_professional: "outdoor-portrait",
+    minimal_luxury: "corporate-executive",
+  };
+
   const regenerate = () => {
     if (!source || !style) return;
+    const instruction = instructions.trim();
+    if (identityMode === "PRESERVE") {
+      // Identity-lock pipeline (M33.4-C): local segmentation, prompt-only
+      // background generation, original subject pixels preserved. The scene
+      // description is a PROMPT ONLY — the source pixels are never sent.
+      void generate({
+        url: "/api/laxii/avatar-identity",
+        body: {
+          sourceMediaId: source.id,
+          scenePrompt: [
+            AVATAR_STYLES.find((s) => s.id === style)?.description ?? "professional portrait backdrop",
+            instruction || "calm premium environment, soft key light",
+          ].join(". "),
+        },
+      });
+      return;
+    }
+    // AI restyle (experimental, likeness NOT guaranteed) — the live
+    // generation route with the reference as a best-effort likeness guide.
     void generate({
-      kind: "AVATAR",
-      style,
-      identityMode,
-      subject,
-      variations,
-      format,
-      instructions: instructions.trim() || undefined,
-      sourceAssetId: source.id,
-      size: { width: size, height: size },
-      provider: "auto",
+      url: "/api/laxii/generate",
+      body: {
+        operation: "GENERATE",
+        prompt: [
+          AVATAR_STYLES.find((s) => s.id === style)?.label ?? "professional portrait",
+          instruction,
+        ].filter(Boolean).join(". "),
+        referenceMediaIds: [source.id],
+        avatar: { presetSlug: AI_RESTYLE_PRESET_BY_STYLE[style] ?? "professional-headshot" },
+        aspect: "4:5",
+      },
     });
   };
 
@@ -590,10 +625,10 @@ function AvatarStudio({ currentUrl, onApplied }: { currentUrl: string | null; on
             )}
           >
             <span className="flex items-center gap-1.5 text-xs font-medium">
-              Preserved-pixel portrait <Badge className="rounded-full bg-primary/15 text-[9px] font-normal text-primary">Recommended</Badge>
+              Identity-locked (preserve pixels) <Badge className="rounded-full bg-primary/15 text-[9px] font-normal text-primary">Recommended</Badge>
             </span>
             <span className="mt-1 block text-[11px] leading-snug text-muted-foreground">
-              Your real face pixels are kept and layered onto a generated studio scene. Identity is genuinely yours.
+              Local segmentation keeps your original subject pixels (bit-exact) and composites them onto a generated studio scene. Uncertain masks fail safely instead of exporting a degraded result.
             </span>
           </button>
           <button
@@ -607,10 +642,10 @@ function AvatarStudio({ currentUrl, onApplied }: { currentUrl: string | null; on
             )}
           >
             <span className="flex items-center gap-1.5 text-xs font-medium">
-              AI-guided <Badge variant="outline" className="rounded-full text-[9px] font-normal text-amber-500">Experimental</Badge>
+              AI restyle <Badge variant="outline" className="rounded-full text-[9px] font-normal text-amber-500">Experimental</Badge>
             </span>
             <span className="mt-1 block text-[11px] leading-snug text-muted-foreground">
-              The model repaints the whole photo from your reference. Identity is NOT guaranteed to survive — always review.
+              The model repaints the whole photo from your reference. Likeness is best-effort and NOT guaranteed — always review before use.
             </span>
           </button>
         </div>
@@ -621,30 +656,6 @@ function AvatarStudio({ currentUrl, onApplied }: { currentUrl: string | null; on
             <StyleGrid styles={AVATAR_STYLES} value={style} onChange={setStyle} />
           </div>
         </div>
-
-        {identityMode === "PRESERVE" && (
-          <Collapsible className="rounded-lg border border-border/60 bg-background/40">
-            <CollapsibleTrigger className="group flex w-full items-center justify-between gap-2 px-2.5 py-2 text-left">
-              <span>
-                <span className="block text-xs font-medium">Advanced settings</span>
-                <span className="mt-0.5 block text-[11px] leading-snug text-muted-foreground">
-                  Subject position &amp; size for the manual mask fallback.
-                </span>
-              </span>
-              <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" aria-hidden />
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <div className="border-t border-border/60 p-2.5">
-                <SubjectWindow
-                  title="Subject window (manual mask fallback)"
-                  hint="The subject is detected automatically and kept pixel-original while the background is replaced. If auto-detection is unavailable, this window becomes the manual mask — original pixels are kept inside it, everything outside is replaced."
-                  subject={subject}
-                  onChange={setSubject}
-                />
-              </div>
-            </CollapsibleContent>
-          </Collapsible>
-        )}
 
         <OptionsRow variations={variations} onVariations={setVariations} format={format} onFormat={setFormat}>
           <div className="w-32">
@@ -747,18 +758,27 @@ function BannerStudio({ currentUrl, onApplied }: { currentUrl: string | null; on
   };
 
   const regenerate = () => {
-    if (!style) return;
+    if (!source || !style) return;
+    // Cover restyle routes through the LIVE generation route as an EDIT of
+    // the uploaded cover. The keep-zone selection is composed into the
+    // prompt as preservation guidance for the region that must survive.
+    const dim = dims();
     void generate({
-      kind: "BANNER",
-      style,
-      variations,
-      format,
-      instructions: instructions.trim() || undefined,
-      ...(source && keepZone
-        ? { sourceAssetId: source.id, subject: keepZone }
-        : {}),
-      size: dims(),
-      provider: "auto",
+      url: "/api/laxii/generate",
+      body: {
+        operation: "EDIT",
+        prompt: [
+          BANNER_STYLES.find((s) => s.id === style)?.label ?? "professional banner restyle",
+          BANNER_STYLES.find((s) => s.id === style)?.description ?? "",
+          instructions.trim(),
+          keepZone
+            ? `Keep the region around x=${keepZone.x}%..${keepZone.x + keepZone.w}%, y=${keepZone.y}%..${keepZone.y + keepZone.h}% visually unchanged.`
+            : "",
+          `Canvas ${dim.width}×${dim.height}px.`,
+        ].filter(Boolean).join(" "),
+        referenceMediaIds: [source.id],
+        banner: { presetSlug: "bean-folio-banner" },
+      },
     });
   };
 

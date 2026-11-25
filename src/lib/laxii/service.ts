@@ -241,7 +241,13 @@ type JobMessageRow = {
   error: string | null;
   metaJson: string | null;
   createdAt: Date;
-  versions: { mediaId: string; createdAt: Date }[];
+  versions: {
+    mediaId: string;
+    createdAt: Date;
+    width: number | null;
+    height: number | null;
+    media: { size: number; mime: string; status: string } | null;
+  }[];
 };
 
 function jobStatusOf(row: { status: string }): LaxiiJobRowView["status"] {
@@ -266,9 +272,26 @@ function toJobView(row: JobMessageRow): LaxiiJobRowView {
     style: (meta.style as string | undefined) ?? null,
     status,
     stage: (meta.stage as string | undefined) ?? null,
-    progress: status === "SUCCEEDED" ? 100 : 0,
+    // Live progress when the worker reports one (e.g. identity-lock stages);
+    // otherwise the completed/empty default.
+    progress:
+      typeof meta.progress === "number"
+        ? Math.max(0, Math.min(100, Math.round(meta.progress)))
+        : status === "SUCCEEDED"
+          ? 100
+          : 0,
     paramsJson: JSON.stringify({ aspect: meta.aspect ?? null, refs: meta.refs ?? [], banner: meta.banner ?? null, style: meta.style ?? null }),
-    resultsJson: JSON.stringify(row.versions.map((v) => ({ mediaAssetId: v.mediaId }))),
+    // Results carry the REAL stored media metadata (dims/bytes/format) — the
+    // UI never invents numbers it was not given.
+    resultsJson: JSON.stringify(
+      row.versions.map((v) => ({
+        mediaAssetId: v.mediaId,
+        width: v.width ?? null,
+        height: v.height ?? null,
+        bytes: v.media?.size ?? null,
+        format: v.media?.mime ? v.media.mime.replace("image/", "").toUpperCase() : null,
+      }))
+    ),
     error: row.error,
     attempt: 1, // the current pipeline is single-attempt per message (retry creates a new job)
     createdAt: row.createdAt,
@@ -291,7 +314,7 @@ export async function listJobs(userId: string, limit = 12): Promise<LaxiiJobRowV
     where: { role: "ASSISTANT", conversation: { userId } },
     orderBy: { createdAt: "desc" },
     take: Math.min(Math.max(1, limit), 60),
-    include: { versions: { select: { mediaId: true, createdAt: true }, orderBy: { createdAt: "asc" } } },
+    include: { versions: { select: { mediaId: true, createdAt: true, width: true, height: true, media: { select: { size: true, mime: true, status: true } } }, orderBy: { createdAt: "asc" } } },
   });
   return rows.map(toJobView);
 }
@@ -300,7 +323,7 @@ export async function listJobs(userId: string, limit = 12): Promise<LaxiiJobRowV
 export async function getJob(userId: string, id: string): Promise<LaxiiJobRowView | null> {
   const row = await db.laxiiMessage.findFirst({
     where: { id, role: "ASSISTANT", conversation: { userId } },
-    include: { versions: { select: { mediaId: true, createdAt: true }, orderBy: { createdAt: "asc" } } },
+    include: { versions: { select: { mediaId: true, createdAt: true, width: true, height: true, media: { select: { size: true, mime: true, status: true } } }, orderBy: { createdAt: "asc" } } },
   });
   return row ? toJobView(row) : null;
 }
@@ -382,7 +405,7 @@ export async function retryJob(userId: string, id: string): Promise<LaxiiJobRowV
 export async function cancelJob(userId: string, id: string): Promise<LaxiiJobRowView | null> {
   const row = await db.laxiiMessage.findFirst({
     where: { id, role: "ASSISTANT", conversation: { userId } },
-    include: { versions: { select: { mediaId: true, createdAt: true }, orderBy: { createdAt: "asc" } } },
+    include: { versions: { select: { mediaId: true, createdAt: true, width: true, height: true, media: { select: { size: true, mime: true, status: true } } }, orderBy: { createdAt: "asc" } } },
   });
   if (!row) return null;
   if (row.status === "DONE") throw new LaxiiError("A finished generation cannot be cancelled — its results belong to you");

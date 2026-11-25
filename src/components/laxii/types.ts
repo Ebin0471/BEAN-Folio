@@ -104,7 +104,7 @@ export const CHAT_OPERATIONS = [
   { id: "GENERATE", label: "Create", hint: "Text-to-image (optionally with references)" },
   { id: "EDIT", label: "Edit", hint: "Instruction edit of the selected image" },
   { id: "VARIATIONS", label: "Variations", hint: "Fresh takes on the selected image" },
-  { id: "REMOVE_BG", label: "Remove BG", hint: "Transparent PNG cutout (local MODNet)" },
+  { id: "REMOVE_BG", label: "Remove BG", hint: "Transparent PNG cutout of the subject" },
   { id: "OUTPAINT", label: "Expand", hint: "Generative canvas expansion" },
   { id: "UPSCALE", label: "Upscale", hint: "2× / 4× resolution" },
   { id: "BANNER", label: "Banner", hint: "Platform banner with safe areas" },

@@ -79,6 +79,35 @@ to reuse BEAN's source).
   benchmark before any adoption.
 - Assessment detail: `docs/oss/AGENT_FRAMEWORK_ASSESSMENTS.md`.
 
+### onnxruntime-node 1.31.1 — https://github.com/microsoft/onnxruntime — MIT — ADOPTED (M33.4-C, LAXII identity pipeline)
+
+- Verified: in-package LICENSE file (MIT) at the pinned version; runtime is
+  Microsoft's official ONNX Runtime Node binding (npm `onnxruntime-node`).
+- **Used by:** `src/lib/laxii/segmentation.ts` — local CPU execution of the
+  pinned MODNet ONNX portrait-matting model (identity-lock avatar pipeline).
+  No model downloads at generation time; weights are tracked in-repo and
+  sha256-pinned (see next entry).
+- Scope: server-side inference only. No telemetry, no network calls from the
+  runtime during inference.
+
+### MODNet portrait-matting weights (`Xenova/modnet`, ONNX port) — Apache-2.0 — ADOPTED (M33.4-C)
+
+- Provenance verified 2026-11-25:
+  - HF model card `https://huggingface.co/Xenova/modnet` declares
+    `license: apache-2.0`; repo commit
+    `fa2fa546052fba4c08921230a26cc69a333fca12` (lastModified 2025-10-26).
+  - Local tracked file `data/laxii-models/Xenova/modnet/onnx/model.onnx`
+    sha256 `07c308cf0fc7e6e8b2065a12ed7fc07e1de8febb7dc7839d7b7f15dd66584df9`
+    equals the Hub LFS oid for `onnx/model.onnx` at that commit.
+  - Upstream model: `https://github.com/ZHKKKe/MODNet` (LICENSE: Apache-2.0,
+    including the released pretrained weights) — a commercial-use-permitted
+    checkpoint, UNLIKE the research-only InsightFace/InstantID families the
+    guide prohibits.
+- **Used by:** `src/lib/laxii/segmentation.ts` (portrait matting for the
+  identity-lock pipeline: subject mask, plate person-gate). CPU inference
+  only. NO ComfyUI/GPL code is involved anywhere in this path.
+- Runtime dependency: onnxruntime-node (entry above, MIT).
+
 ---
 
 ## Register maintenance

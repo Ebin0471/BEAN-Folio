@@ -20,6 +20,7 @@ import { db } from "@/lib/db";
 
 import {
   LaxiiCapabilityError,
+  LaxiiError,
   LaxiiProviderError,
   type LaxiiAspect,
   type LaxiiOperation,
@@ -101,6 +102,8 @@ const SAFE_ERROR_BY_REASON: Record<string, string> = {
 export function safeGenerationError(e: unknown): string {
   if (e instanceof LaxiiCapabilityError) return e.message;
   if (e instanceof LaxiiProviderError) return SAFE_ERROR_BY_REASON[e.reason] ?? SAFE_ERROR_BY_REASON.provider;
+  // LaxiiError carries a user-verbatim message (pipeline honesty failures).
+  if (e instanceof LaxiiError) return e.message;
   return "Something went wrong while generating. Please try again.";
 }
 

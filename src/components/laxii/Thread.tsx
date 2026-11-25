@@ -74,7 +74,7 @@ export function Thread({
             </li>
             <li className="rounded-lg border border-border/60 bg-card/60 px-3 py-2">
               <Scissors className="mr-2 inline size-3.5 text-primary" aria-hidden />
-              “Remove the background” — transparent PNG cutout via local MODNet matting
+              “Remove the background” — transparent PNG cutout of the subject
             </li>
           </ul>
         </div>

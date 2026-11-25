@@ -89,7 +89,7 @@ Baseline: `main` at `74123a5` (PR #7 merge, 2026-11-24). North star:
 | Style-registry presets (`STYLE_PRESETS`) | 15 | `src/lib/laxii/styles.ts` |
 | Resume formats (`RESUME_TYPES`) | 17 | `src/lib/laxii/resume-schema.ts` |
 | Resume profession families (`RESUME_PROFESSION_FAMILIES`) | 26 | `src/lib/laxii/resume-professions.ts` |
-| LAXII API route files under `src/app/api/laxii/` | 21 | route-tree count |
+| LAXII API route files under `src/app/api/laxii/` | 22 | route-tree count (21 at the M33.3 baseline + `src/app/api/laxii/avatar-identity/route.ts` added in M33.4-C) |
 
 ### 2.2 Capability table
 
@@ -98,7 +98,7 @@ Baseline: `main` at `74123a5` (PR #7 merge, 2026-11-24). North star:
 | Image generation via managed gateway (the only user-selectable provider) | Existing | `src/app/api/laxii/generate/route.ts` (schema pins `provider: z.literal("managed")`), `src/lib/laxii/router.ts` | `resolveProvider()` refuses any non-managed pin and never silently reroutes; Gemini/OpenAI/Diffusers adapters exist as internal plumbing, not user options. |
 | Banner pipeline with deterministic typography | Existing | `src/lib/laxii/banner-pipeline.ts`, `src/lib/laxii/typography.ts`, `src/lib/laxii/font-assets.ts` | Exact-canvas output, measured ink (`verifyInkApplied`), WCAG text color choice, bounded refinement (≤3), quality eval. M33.4-B: user-selectable SITE_FONTS families via a licence-audited 9-family provisioned set (OFL files pinned by sha256 in `data/laxii-fonts/`), real weights (measured on pixels), measured glyph coverage, last-resort measured wrapping — unprovisioned families fall back with explicit warnings, never silently. |
 | Exact-canvas banner export (PNG/JPEG/WebP) | Existing | `src/app/api/laxii/banner/export/route.ts` | Decode-verified dimensions. |
-| Preserve-pixel / identity-locked avatar compositing | **Removed** | `tests/laxii-backdrop.test.ts.disabled` records the removed engine; no segmentation/compositing code exists under `src/` | The MODNet weights on disk are referenced by **zero** code. Any UI/doc claiming "Preserved-pixel portrait" is stale. Identity note is honest: `AVATAR_IDENTITY_NOTE` in `src/lib/laxii/avatar-presets.ts`. |
+| Preserve-pixel / identity-locked avatar compositing | Existing (M33.4-C — NEW implementation) | `src/lib/laxii/avatar-identity.ts`, `src/lib/laxii/segmentation.ts`, `src/app/api/laxii/avatar-identity/route.ts` | The historic engine is gone; this is a NEW pipeline: local MODNet ONNX matting (Apache-2.0 weights pinned+sha256-verified, onnxruntime-node MIT, CPU), `output = original_subject × alpha + plate × (1 − alpha)` on the source's own frame (1:1, no resampling), strict mask sanity bounds (uncertain = fail-closed), plate person-gate (ported from the documented production incident), per-pixel numerical verification with SEPARATE feather-band counters before anything is exported. Results are private MediaAssets + LaxiiImageVersion rows; the profile is touched only by the user's explicit PATCH /api/me/profile. |
 | AI-styled portrait presets (likeness best-effort, clearly labelled) | Existing | `src/lib/laxii/avatar-presets.ts` | Prompt-level styling only; review-before-use warning shipped. |
 | Subject isolation → transparent cutout | Partial | `src/lib/laxii/image-ops.ts` (`extractTransparency`) | Generative isolation prompt + border flood-fill alpha extraction with 8–95% subject-coverage sanity — **not** segmentation. |
 | Resume generation with anti-fabrication guard | Existing | `src/lib/laxii/resume-service.ts` (`findInventedEntities`, `filterInventedSkills`) | One corrective retry, then honest failure; custom sections merged verbatim from user facts; `aiTouched` provenance. |
@@ -116,7 +116,7 @@ Baseline: `main` at `74123a5` (PR #7 merge, 2026-11-24). North star:
 | Gap | Priority | Notes |
 | --- | --- | --- |
 | Versioned banner canvas registry (hero/platform covers/campaign formats + strict custom bounds) preserving canonical 2048×687 | Existing (M33.4) | `src/lib/laxii/banner-presets.ts` — 11 presets; platform entries carry `official`/`checkedAt`/`sourceUrl` verified 2026-11-25 against each platform's own docs; custom canvases via `resolveCustomBannerCanvas` (64–4096 per side, ≤2^22 px area, never silently clamped); export enforces registry dims + documented platform byte caps. X/Twitter header deliberately absent (official page unverifiable at check time). |
-| Numeric regression tests proving protected-region pixels unchanged (future preserve-pixel path) | M33.4 | Blocked: no preserve-pixel engine exists; rebuild requires design + owner approval. |
+| Numeric regression tests proving protected-region pixels unchanged (future preserve-pixel path) | Existing (M33.4-C) | `tests/laxii-identity-lock.test.ts` — 13 cases: bit-identical core (max delta 0), exact feather equation ±1/255 with SEPARATE band counters, 1:1 no-clip mapping, dimension/corrupt/uncertain-mask fail-closed, source sha256 immutability, plate person-gate (3 attempts), real-model segmentation integration. |
 | Deterministic typography with user-selected approved font families + glyph coverage checks | Existing (M33.4-B) | `src/lib/laxii/font-assets.ts` — 9-family provisioned subset of SITE_FONTS (Fraunces, Inter, Anton, Oswald, Lato, Merriweather, Caveat, Pacifico, Kalam), each family's own OFL.txt tracked beside its sha256-pinned file; measured charset coverage (`checkGlyphCoverage`); kind fallbacks are system DejaVu with explicit warnings. |
 | Cover-letter drafting grounded in the same facts (only after tests) | M33.5 | Zero code today. |
 | ATS-oriented parsing checks + job-keyword gap reporting | M33.5 | Honest gap reporting only; never an ATS score. |
@@ -211,7 +211,7 @@ licence: each artefact class is audited separately.
 | React Bits | MIT + Commons Clause (BEAN review) | **Reference-only**; never copy/bundle. |
 | Google Fonts (129-family library) | Families are individually OFL/UFL/Apache — **not uniform** | Current loading = on-demand Google Fonts CDN; per-family licence audit is a hard prerequisite for any self-hosting move. |
 | LAXII provisioned banner fonts (9 families, M33.4-B) | Each family's own OFL-1.1 text tracked at `data/laxii-fonts/<id>/OFL.txt`; binaries sha256-pinned by `scripts/laxii/prefetch-banner-fonts.ts` | **Keep (server-side rendering only).** OFL permits embedding/server use with attribution; per-family licence text ships beside the file. Provisioned subset only — other SITE_FONTS families still resolve via CDN for websites and never claim server-side rendering. |
-| Removed MODNet weights on disk | Apache-2.0 (historic) | Unused by code; retained only as inert files pending owner cleanup decision — no capability claim. |
+| MODNet weights on disk (`data/laxii-models/`) | Apache-2.0 (verified 2026-11-25) | **Now USED again (M33.4-C)**: `Xenova/modnet@fa2fa54` ONNX weights (sha256 `07c308cf…` verified equal to the Hub LFS oid; model card Apache-2.0; upstream ZHKKKe/MODNet Apache-2.0 including released weights) executed locally by `src/lib/laxii/segmentation.ts` via onnxruntime-node `1.31.1` (MIT). Registered in `docs/oss/THIRD_PARTY_COMPONENTS.md`. |
 
 ---
 
@@ -228,6 +228,12 @@ licence: each artefact class is audited separately.
    removed preserve-pixel engine, the removed `LaxiiJob` model and a 13-preset
    banner registry that no longer exist. Current LAXII truth lives in this
    matrix + `docs/ai-transformation/04-laxii-realism-capabilities.md`.
+   M33.4-C rebuilt the identity-lock capability as a NEW pipeline
+   (`src/lib/laxii/avatar-identity.ts` + `src/lib/laxii/segmentation.ts`);
+   the removed-engine provenance stays documented in
+   `tests/laxii-backdrop.test.ts.disabled`, whose captured fixtures
+   (`tests/fixtures/laxii/`) now feed the NEW pipeline's person-gate and
+   segmentation regression tests.
 
 ## 7. Machine-checked honesty (this milestone's test)
 

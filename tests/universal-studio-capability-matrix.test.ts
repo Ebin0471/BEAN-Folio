@@ -178,9 +178,15 @@ describe("capability matrix — negative claims are true", () => {
     expect(SECTION_TYPES.length).toBe(17);
   });
 
-  test("preserve-pixel compositing is labelled Removed, never Existing", () => {
-    expect(MATRIX).toMatch(/\*\*Removed\*\*/);
-    expect(MATRIX).toMatch(/zero.*code|referenced by \*\*zero\*\*/);
+  test("preserve-pixel compositing is the NEW M33.4-C implementation (historic engine stays gone)", () => {
+    // The historic engine is documented as removed; the CURRENT row must say
+    // it is a NEW implementation, and the disabled-backdrop provenance note
+    // stays in the doc.
+    expect(MATRIX).toMatch(/Existing \(M33\.4-C — NEW implementation\)/);
+    expect(MATRIX).toMatch(/The historic engine is gone/);
+    expect(MATRIX).toMatch(/onnxruntime-node/);
+    // The disabled provenance suite is still cited somewhere in the matrix.
+    expect(MATRIX).toMatch(/laxii-backdrop\.test\.ts\.disabled/);
   });
 });
 
