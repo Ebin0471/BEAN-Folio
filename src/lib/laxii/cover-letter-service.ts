@@ -81,6 +81,11 @@ export interface LetterGuardInput {
   resumeDoc: ResumeData | null;
   jdText: string;
   /**
+   * The uploaded source document text stored with the linked resume (if any)
+   * — user-provided material, so entities/numbers found there are traceable.
+   */
+  sourceText?: string;
+  /**
    * User-supplied names the letter may legitimately contain (target role,
    * company, hiring contact) — exempt from the invented-entity check.
    */
@@ -100,17 +105,28 @@ export function findUnverifiableLetterContent(input: LetterGuardInput): { entiti
     if (w.company.trim()) knownEntities.push(w.company);
   }
   for (const e of facts.education) if (e.institution.trim()) knownEntities.push(e.institution);
-  for (const c of facts.certificates) if (c.issuer.trim()) knownEntities.push(c.issuer);
-  for (const a of facts.awards) if (a.awarder.trim()) knownEntities.push(a.awarder);
+  // Certificate/award NAMES are fact material too (e.g. "AWS Certified Cloud
+  // Practitioner") — not just issuers.
+  for (const c of facts.certificates) {
+    if (c.name.trim()) knownEntities.push(c.name);
+    if (c.issuer.trim()) knownEntities.push(c.issuer);
+  }
+  for (const a of facts.awards) {
+    if (a.title.trim()) knownEntities.push(a.title);
+    if (a.awarder.trim()) knownEntities.push(a.awarder);
+  }
   for (const c of facts.custom) for (const e of c.entries) {
     if (e.title.trim()) knownEntities.push(e.title);
     if (e.subtitle.trim()) knownEntities.push(e.subtitle);
   }
+  for (const sk of normalizeSkills(facts)) if (sk.name.trim()) knownEntities.push(sk.name);
   if (resumeDoc) {
     for (const p of resumeDoc.projects) if (p.name.trim()) knownEntities.push(p.name);
+    for (const w of resumeDoc.work) if (w.company.trim()) knownEntities.push(w.company);
   }
   const knownNorm = new Set(knownEntities.map(normalizeEntity).filter(Boolean));
   const jdNorm = normalizeEntity(jdText);
+  const srcNorm = normalizeEntity(input.sourceText ?? "");
   const bodyText = letterText;
 
   const entities: string[] = [];
@@ -127,12 +143,21 @@ export function findUnverifiableLetterContent(input: LetterGuardInput): { entiti
     if (knownNorm.has(n)) continue;
     // A known entity as the mention's tail ("Zeta Systems" in "At Zeta Systems").
     if (knownEntities.some((k) => n.endsWith(` ${normalizeEntity(k)}`) && normalizeEntity(k))) continue;
-    // Traceable when the JD itself names it (the recipient's company/role).
+    // Traceable when the JD itself names it (the recipient's company/role) or
+    // when it comes from the resume's uploaded source document.
     if (jdNorm && jdNorm.includes(n)) continue;
+    if (srcNorm && srcNorm.includes(n)) continue;
     // Traceable when it is the sender's own name.
     if (normalizeEntity(facts.basics.name) === n) continue;
-    // Single generic words are not entities.
-    if (!mention.includes(" ") && !/[A-Z].*[A-Z]/.test(mention)) continue;
+    // Neutral greetings/placeholders are never entities.
+    if (/^(dear|hiring manager|hello|to whom it may concern|dear hiring team)/.test(n)) continue;
+    // Single generic words are not entities — acronyms (CGPA, AWS…) are
+    // common standalone terms rather than organization names, so single-word
+    // mentions are skipped in both classes.
+    if (!mention.includes(" ")) continue;
+    // A multi-word mention that is a prefix/subset of a known fact entity
+    // ("Visvesvaraya National Institute" of "…Institute of Technology") traces.
+    if (Array.from(knownNorm).some((k) => k.startsWith(n))) continue;
     entities.push(mention);
   }
 
@@ -158,6 +183,7 @@ export function findUnverifiableLetterContent(input: LetterGuardInput): { entiti
     for (const h of e.highlights) collectNumbers(h);
   }
   collectNumbers(jdText);
+  collectNumbers(input.sourceText ?? "");
   if (resumeDoc) {
     for (const w of resumeDoc.work) {
       collectNumbers(w.summary);
@@ -234,7 +260,14 @@ async function getOwnedResumeContext(userId: string, sourceResumeConversationId:
   const facts = factsParsed.success
     ? factsParsed.data
     : resumeFactsSchema.parse({ basics: { name: data.basics.name || "Candidate" } });
-  return { resumeRow: row, resumeDoc: data, facts };
+  // Uploaded source document text stored with the resume (user-provided
+  // material) — traceable corpus for the letter guard.
+  let sourceText = "";
+  if (factsRaw && typeof factsRaw === "object") {
+    const v = (factsRaw as Record<string, unknown>).sourceText;
+    if (typeof v === "string") sourceText = v;
+  }
+  return { resumeRow: row, resumeDoc: data, facts, sourceText };
 }
 
 function sha256(s: string): string {
@@ -275,7 +308,7 @@ export async function generateCoverLetter(opts: {
   if (!opts.jobDescription.trim()) {
     throw new CoverLetterError("Paste the job description the letter answers to.", 400);
   }
-  const { resumeDoc, facts } = await getOwnedResumeContext(opts.userId, opts.sourceResumeConversationId);
+  const { resumeDoc, facts, sourceText } = await getOwnedResumeContext(opts.userId, opts.sourceResumeConversationId);
   const jdHash = sha256(opts.jobDescription.replace(/\s+/g, " ").trim());
 
   const requestDraft = async (): Promise<{ opening: string; bodyParagraphs: string[]; closing: string }> => {
@@ -301,7 +334,8 @@ export async function generateCoverLetter(opts: {
       facts,
       resumeDoc,
       jdText: opts.jobDescription,
-      allowedNames: [opts.targetRole, opts.companyName, opts.hiringContactName, facts.basics.name],
+      sourceText,
+      allowedNames: [opts.targetRole, opts.companyName, opts.hiringContactName, facts.basics.name, opts.salutation],
     });
   };
 
