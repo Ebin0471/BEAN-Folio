@@ -107,6 +107,8 @@ model User {
   laxiiConversations LaxiiConversation[]
   laxiiUsage        LaxiiUsage[]
   laxiiResumes      LaxiiResume[]
+  laxiiResumeRevisions LaxiiResumeRevision[]
+  laxiiCoverLetters LaxiiCoverLetter[]
   projects          Project[]
   collections       Collection[]
   savedProjects     SavedProject[]
@@ -1075,8 +1077,63 @@ model LaxiiResume {
   aiTouchedJson  String            @default("[]") // section keys whose wording the AI touched
   targetTitle    String?
   jobDescription String?
+  // M33.5-C additive variant model: a master resume stays untouched; a
+  // job-specific TAILORED COPY is a new row linked back to its source.
+  variantKind        String  @default("master") // master | tailored
+  parentConversationId String? // conversationId of the master resume when variantKind = tailored
+  jobDescriptionHash String? // sha256 of the JD used for tailoring (full JD text stored only with explicit user consent)
   createdAt      DateTime          @default(now())
   updatedAt      DateTime          @updatedAt
+
+  revisions LaxiiResumeRevision[]
+
+  @@index([userId, updatedAt])
+  @@index([parentConversationId])
+}
+
+// M33.5-C — bounded revision history. Snapshots are created transactionally
+// BEFORE any document mutation (tailor / rephrase / restore / manual save),
+// so an overwritten document always has a recoverable snapshot. Retention is
+// bounded (oldest unpinned pruned); the current master and user-pinned
+// snapshots are never pruned.
+model LaxiiResumeRevision {
+  id               String      @id @default(cuid())
+  resumeId         String
+  resume           LaxiiResume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+  userId           String
+  user             User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parentRevisionId String?
+  label            String      @default("") // user-supplied name (e.g. "Acme application v1")
+  provenance       String      @default("user") // user | ai
+  operation        String      @default("SAVE") // SAVE | RESUME_GENERATE | RESUME_TAILOR | RESUME_REPHRASE | TAILOR_COPY | RESTORE
+  targetTitle      String?
+  resumeType       String      @default("ats")
+  template         String      @default("classic")
+  dataJson         String
+  factsJson        String      @default("{}")
+  contentHash      String      @default("") // sha256 of dataJson — change detection
+  pinned           Boolean     @default(false)
+  createdAt        DateTime    @default(now())
+
+  @@index([resumeId, createdAt])
+  @@index([userId, createdAt])
+}
+
+// M33.5-D — first-class private cover letters. Isolated additive design:
+// NOT an overload of LaxiiResume.dataJson and NOT a LaxiiConversation kind —
+// each letter is a user-owned row (cascade-deleted with the user), linked
+// optionally to a source resume conversation (owner-checked on every read).
+model LaxiiCoverLetter {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  schemaVersion  Int      @default(1)
+  dataJson       String // validated cover-letter document (see src/lib/laxii/cover-letter-schema.ts)
+  // Optional provenance link to the resume it was written for (owner-checked).
+  sourceResumeConversationId String?
+  jobDescriptionHash          String? // sha256 of the target JD (full text NOT stored by default)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   @@index([userId, updatedAt])
 }
