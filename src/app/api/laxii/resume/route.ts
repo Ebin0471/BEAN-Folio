@@ -14,12 +14,14 @@ import {
 } from "@/lib/laxii/resume-schema";
 import {
   ResumeServiceError,
+  RevisionServiceError,
   generateResume,
   tailorResume,
   rephraseSection,
   saveResumeEdits,
   getResumeDetail,
   listResumes,
+  createTailoredCopy,
 } from "@/lib/laxii/resume-service";
 import { log } from "@/lib/logger";
 
@@ -91,6 +93,15 @@ const postSchema = z.discriminatedUnion("action", [
     targetTitle: z.string().max(160).optional(),
   }),
   z.object({
+    // M33.5-C: create a job-specific COPY — the master resume is untouched.
+    action: z.literal("tailor_copy"),
+    conversationId: z.string().min(1),
+    jobDescription: z.string().min(1).max(8000),
+    targetTitle: z.string().max(160).optional(),
+    // Full JD text stored ONLY with this explicit opt-in (privacy notice in UI).
+    saveFullJobDescription: z.boolean().optional(),
+  }),
+  z.object({
     action: z.literal("rephrase"),
     conversationId: z.string().min(1),
     section: z.enum(RESUME_SECTIONS),
@@ -144,6 +155,17 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
         conversationId: body.conversationId,
         jobDescription: body.jobDescription,
         targetTitle: body.targetTitle,
+      });
+      return ok(result);
+    }
+
+    if (body.action === "tailor_copy") {
+      const result = await createTailoredCopy({
+        userId: user.id,
+        conversationId: body.conversationId,
+        jobDescription: body.jobDescription,
+        targetTitle: body.targetTitle,
+        ...(typeof body.saveFullJobDescription === "boolean" ? { saveFullJobDescription: body.saveFullJobDescription } : {}),
       });
       return ok(result);
     }

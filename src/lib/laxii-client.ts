@@ -476,9 +476,27 @@ export interface ResumeFacts {
   custom: ResumeCustomSection[];
 }
 
+/** M33.5-C: one bounded revision snapshot (no document body in list responses). */
+export interface ResumeRevisionSummary {
+  id: string;
+  label: string;
+  provenance: "user" | "ai";
+  operation: string;
+  targetTitle: string | null;
+  resumeType: string;
+  template: string;
+  contentHash: string;
+  pinned: boolean;
+  parentRevisionId: string | null;
+  createdAt: string;
+}
+
 export interface ResumeDetail {
   conversation: { id: string; title: string; kind: "RESUME"; updatedAt: string };
   resumeType: string;
+  variantKind?: "master" | "tailored";
+  parentConversationId?: string | null;
+  jobDescriptionHash?: string | null;
   template: "classic" | "modern" | "minimal" | "creative";
   targetTitle: string | null;
   jobDescription: string | null;
@@ -492,6 +510,7 @@ export interface ResumeSummary {
   conversationId: string;
   title: string;
   resumeType: string;
+  variantKind?: "master" | "tailored";
   template: string;
   targetTitle: string | null;
   profession: string | null;
@@ -667,6 +686,57 @@ export const laxiiApi = {
     api<{ verification: ExportVerification }>("/api/laxii/resume/export/verify", {
       method: "POST",
       json: { conversationId, format },
+    }),
+
+  /** M33.5-C: create a job-specific tailored COPY (master stays untouched). */
+  resumeTailorCopy: (body: {
+    conversationId: string;
+    jobDescription: string;
+    targetTitle?: string;
+    saveFullJobDescription?: boolean;
+  }) =>
+    api<{
+      conversationId: string;
+      masterConversationId: string;
+      resume: ResumeData;
+      aiTouched: ResumeSectionKey[];
+      notes: string[];
+      diff: {
+        changedSections: string[];
+        removedWork: string[];
+        rewordedWork: string[];
+        removedEducation: string[];
+        removedSkills: string[];
+        addedSkills: string[];
+        skillsReordered: boolean;
+        summary: string[];
+      };
+      jobDescriptionHash: string;
+    }>("/api/laxii/resume", { method: "POST", json: { action: "tailor_copy", ...body } }),
+
+  /** M33.5-C: revision history (bounded; restore never erases the current state). */
+  resumeRevisions: (conversationId: string) =>
+    api<{ revisions: ResumeRevisionSummary[] }>(`/api/laxii/resume/revisions?conversationId=${encodeURIComponent(conversationId)}`),
+
+  resumeRevisionDetail: (conversationId: string, revisionId: string) =>
+    api<{ id: string; data: ResumeData } & Record<string, unknown>>(`/api/laxii/resume/revisions?conversationId=${encodeURIComponent(conversationId)}&revisionId=${encodeURIComponent(revisionId)}`),
+
+  resumeRevisionSave: (conversationId: string, label?: string) =>
+    api<{ revision: ResumeRevisionSummary }>("/api/laxii/resume/revisions", {
+      method: "POST",
+      json: { action: "save", conversationId, ...(label ? { label } : {}) },
+    }),
+
+  resumeRevisionPin: (conversationId: string, revisionId: string, pinned: boolean) =>
+    api<{ ok: boolean }>("/api/laxii/resume/revisions", {
+      method: "POST",
+      json: { action: "pin", conversationId, revisionId, pinned },
+    }),
+
+  resumeRevisionRestore: (conversationId: string, revisionId: string) =>
+    api<{ resume: ResumeData }>("/api/laxii/resume/revisions", {
+      method: "POST",
+      json: { action: "restore", conversationId, revisionId },
     }),
 
   resumeTailor: (conversationId: string, jobDescription: string, targetTitle?: string) =>

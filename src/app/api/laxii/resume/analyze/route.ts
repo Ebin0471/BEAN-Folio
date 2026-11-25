@@ -6,7 +6,7 @@ import { handler, ok, err, ERR, rateLimit, parseBody } from "@/lib/api-helpers";
 import { db } from "@/lib/db";
 
 import { resumeDataSchema, resumeFactsSchema } from "@/lib/laxii/resume-schema";
-import { analyzeReadability, mapJobRequirements, parseJobDescription } from "@/lib/laxii/resume-analysis";
+import { analyzeReadability, mapJobRequirements, parseJobDescription, jobEvidenceMapSchema, jobRequirementProfileSchema } from "@/lib/laxii/resume-analysis";
 import { log } from "@/lib/logger";
 
 export const dynamic = "force-dynamic";
@@ -56,8 +56,8 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
   const readability = analyzeReadability({ data, template: row.template });
 
   // Report B — Job Requirement Evidence Map (only when a JD is supplied).
-  let evidenceMap = null;
-  let profile = null;
+  let evidenceMap: z.infer<typeof jobEvidenceMapSchema> | null = null;
+  let profile: z.infer<typeof jobRequirementProfileSchema> | null = null;
   if (jobDescription && jobDescription.trim()) {
     profile = parseJobDescription(jobDescription);
     evidenceMap = mapJobRequirements(jobDescription, factsParsed.success ? factsParsed.data : resumeFactsSchema.parse({ basics: { name: data.basics.name || "Candidate" } }), data, profile);

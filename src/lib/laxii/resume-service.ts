@@ -19,6 +19,8 @@
 import { db } from "@/lib/db";
 import { aiComplete, parseJsonFromText, AiProviderError } from "@/lib/ai";
 
+import { createHash } from "node:crypto";
+
 import {
   resumeDataSchema,
   resumeFactsSchema,
@@ -30,6 +32,7 @@ import {
   type ResumeSectionKey,
 } from "./resume-schema";
 import { findResumeProfession, type ResumeCoreSectionKey } from "./resume-professions";
+import { diffResumeDocuments, type ResumeDiff } from "./resume-diff";
 import { log } from "@/lib/logger";
 
 const AI_PROVIDER_LABEL = "bean-ai";
@@ -516,16 +519,21 @@ export async function generateResume(opts: {
     if (skillRemovals.length > 0) {
       notes.push(`Removed ${skillRemovals.length} skill${skillRemovals.length === 1 ? "" : "s"} that were not in your input: ${skillRemovals.join(", ")}.`);
     }
-    await db.laxiiResume.update({
-      where: { id: row.id },
-      data: {
-        dataJson: JSON.stringify(draft),
-        factsJson: JSON.stringify({ ...opts.facts, skills: normalizeSkills(opts.facts), professionSlug, sourceText: opts.sourceText ?? (previousSourceText || null) }),
-        aiTouchedJson: JSON.stringify(aiTouched),
-        resumeType: type,
-        targetTitle: opts.targetTitle || row.targetTitle,
-        jobDescription: opts.jobDescription || row.jobDescription,
-      },
+    await db.$transaction(async (tx) => {
+      if (isRegeneration) {
+        await snapshotRevision(tx, { row, provenance: "user", operation: "RESUME_GENERATE", targetTitle: opts.targetTitle || row.targetTitle });
+      }
+      await tx.laxiiResume.update({
+        where: { id: row.id },
+        data: {
+          dataJson: JSON.stringify(draft),
+          factsJson: JSON.stringify({ ...opts.facts, skills: normalizeSkills(opts.facts), professionSlug, sourceText: opts.sourceText ?? (previousSourceText || null) }),
+          aiTouchedJson: JSON.stringify(aiTouched),
+          resumeType: type,
+          targetTitle: opts.targetTitle || row.targetTitle,
+          jobDescription: opts.jobDescription || row.jobDescription,
+        },
+      });
     });
     await appendResumeTurn({
       userId: opts.userId,
@@ -578,14 +586,24 @@ export async function tailorResume(opts: {
     if (skillRemovals.length > 0) {
       notes.push(`Removed ${skillRemovals.length} skill${skillRemovals.length === 1 ? "" : "s"} that were not in your input: ${skillRemovals.join(", ")}.`);
     }
-    await db.laxiiResume.update({
-      where: { id: row.id },
-      data: {
-        dataJson: JSON.stringify(draft),
-        aiTouchedJson: JSON.stringify(aiTouched),
-        ...(opts.jobDescription ? { jobDescription: opts.jobDescription } : {}),
-        ...(opts.targetTitle ? { targetTitle: opts.targetTitle } : {}),
-      },
+    // M33.5-C: snapshot + update are TRANSACTIONAL — an overwritten document
+    // always has a recoverable snapshot.
+    await db.$transaction(async (tx) => {
+      await snapshotRevision(tx, {
+        row,
+        provenance: "user",
+        operation: "RESUME_TAILOR",
+        targetTitle: opts.targetTitle ?? row.targetTitle,
+      });
+      await tx.laxiiResume.update({
+        where: { id: row.id },
+        data: {
+          dataJson: JSON.stringify(draft),
+          aiTouchedJson: JSON.stringify(aiTouched),
+          ...(opts.jobDescription ? { jobDescription: opts.jobDescription } : {}),
+          ...(opts.targetTitle ? { targetTitle: opts.targetTitle } : {}),
+        },
+      });
     });
     await appendResumeTurn({
       userId: opts.userId,
@@ -652,9 +670,12 @@ export async function rephraseSection(opts: {
     draft.data = { ...draft.data, custom: current.custom, order: current.order, titles: current.titles };
     const aiTouched = Array.from(new Set([...(JSON.parse(row.aiTouchedJson || "[]") as ResumeSectionKey[]), opts.section]));
     const notes = buildNotes(draft.data, [opts.section], "");
-    await db.laxiiResume.update({
-      where: { id: row.id },
-      data: { dataJson: JSON.stringify(draft.data), aiTouchedJson: JSON.stringify(aiTouched) },
+    await db.$transaction(async (tx) => {
+      await snapshotRevision(tx, { row, provenance: "user", operation: "RESUME_REPHRASE", targetTitle: row.targetTitle });
+      await tx.laxiiResume.update({
+        where: { id: row.id },
+        data: { dataJson: JSON.stringify(draft.data), aiTouchedJson: JSON.stringify(aiTouched) },
+      });
     });
     await appendResumeTurn({
       userId: opts.userId,
@@ -723,6 +744,10 @@ export async function getResumeDetail(userId: string, conversationId: string) {
     targetTitle: row.targetTitle,
     jobDescription: row.jobDescription,
     profession: professionSlug,
+    // M33.5-C variant metadata (master vs tailored copy).
+    variantKind: row.variantKind === "tailored" ? "tailored" : "master",
+    parentConversationId: row.parentConversationId,
+    jobDescriptionHash: row.jobDescriptionHash,
     aiTouched: JSON.parse(row.aiTouchedJson || "[]") as ResumeSectionKey[],
     missing: findMissingInfo(facts),
     data: resumeDataSchema.parse(JSON.parse(row.dataJson || "{}")),
@@ -753,7 +778,352 @@ export async function listResumes(userId: string) {
       template: r.template,
       targetTitle: r.targetTitle,
       profession: professionSlug,
+      variantKind: r.variantKind === "tailored" ? "tailored" : "master",
       updatedAt: r.conversation.updatedAt.toISOString(),
     };
   });
+}
+
+// ----------------------------------------------------- M33.5-C: revisions
+
+const MAX_REVISIONS_PER_RESUME = 30;
+
+export class RevisionServiceError extends Error {
+  status: number;
+  constructor(message: string, status = 400) {
+    super(message);
+    this.name = "RevisionServiceError";
+    this.status = status;
+  }
+}
+
+function contentHashOf(dataJson: string): string {
+  return createHash("sha256").update(dataJson).digest("hex");
+}
+
+type Tx = Parameters<Parameters<typeof db.$transaction>[0]>[0];
+
+interface SnapshotRow {
+  id: string;
+  userId: string;
+  resumeType: string;
+  template: string;
+  dataJson: string;
+  factsJson: string;
+  targetTitle: string | null;
+}
+
+/**
+ * Create a revision snapshot for a resume row. MUST be called inside the
+ * same transaction as the mutation it protects (spec §7).
+ */
+async function snapshotRevision(
+  tx: Tx,
+  opts: {
+    row: SnapshotRow;
+    provenance: "user" | "ai";
+    operation: string;
+    targetTitle: string | null;
+    parentRevisionId?: string | null;
+    label?: string;
+  }
+): Promise<string> {
+  const dataJson = opts.row.dataJson || "{}";
+  // Deduplicate: an identical snapshot (same content hash) taken for the
+  // same operation adds no recoverable state — skip noise, keep history clean.
+  const latest = await tx.laxiiResumeRevision.findFirst({
+    where: { resumeId: opts.row.id },
+    orderBy: { createdAt: "desc" },
+    select: { contentHash: true, operation: true },
+  });
+  const hash = contentHashOf(dataJson);
+  if (latest && latest.contentHash === hash && latest.operation === opts.operation) {
+    const any = await tx.laxiiResumeRevision.findFirst({ where: { resumeId: opts.row.id, contentHash: hash }, select: { id: true, label: true } });
+    if (any) {
+      // An explicit user label on an identical re-save still applies — the
+      // user asked for a named version and named versions must be findable.
+      if (opts.label && !any.label) {
+        await tx.laxiiResumeRevision.update({ where: { id: any.id }, data: { label: opts.label.slice(0, 80) } });
+      }
+      return any.id;
+    }
+  }
+  const rev = await tx.laxiiResumeRevision.create({
+    data: {
+      resumeId: opts.row.id,
+      userId: opts.row.userId,
+      parentRevisionId: opts.parentRevisionId ?? null,
+      label: (opts.label ?? "").slice(0, 80),
+      provenance: opts.provenance,
+      operation: opts.operation,
+      targetTitle: opts.targetTitle,
+      resumeType: opts.row.resumeType,
+      template: opts.row.template,
+      dataJson,
+      factsJson: opts.row.factsJson || "{}",
+      contentHash: hash,
+    },
+  });
+  await pruneRevisions(tx, opts.row.id);
+  return rev.id;
+}
+
+/** Bounded retention: never delete the newest, pinned, or the current state. */
+async function pruneRevisions(tx: Tx, resumeId: string): Promise<void> {
+  const all = await tx.laxiiResumeRevision.findMany({
+    where: { resumeId },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, pinned: true },
+  });
+  if (all.length <= MAX_REVISIONS_PER_RESUME) return;
+  const deletable = all.slice(MAX_REVISIONS_PER_RESUME).filter((r) => !r.pinned);
+  for (const r of deletable) {
+    await tx.laxiiResumeRevision.delete({ where: { id: r.id } }).catch(() => undefined);
+  }
+}
+
+export interface RevisionSummary {
+  id: string;
+  label: string;
+  provenance: "user" | "ai";
+  operation: string;
+  targetTitle: string | null;
+  resumeType: string;
+  template: string;
+  contentHash: string;
+  pinned: boolean;
+  parentRevisionId: string | null;
+  createdAt: string;
+}
+
+export async function listRevisions(userId: string, conversationId: string): Promise<RevisionSummary[]> {
+  const row = await getOwnedResume(userId, conversationId);
+  const revs = await db.laxiiResumeRevision.findMany({
+    where: { resumeId: row.id },
+    orderBy: { createdAt: "desc" },
+    take: MAX_REVISIONS_PER_RESUME,
+  });
+  return revs.map((r) => ({
+    id: r.id,
+    label: r.label,
+    provenance: r.provenance === "ai" ? "ai" : "user",
+    operation: r.operation,
+    targetTitle: r.targetTitle,
+    resumeType: r.resumeType,
+    template: r.template,
+    contentHash: r.contentHash,
+    pinned: r.pinned,
+    parentRevisionId: r.parentRevisionId,
+    createdAt: r.createdAt.toISOString(),
+  }));
+}
+
+export async function getRevisionDetail(userId: string, conversationId: string, revisionId: string) {
+  const row = await getOwnedResume(userId, conversationId);
+  const rev = await db.laxiiResumeRevision.findFirst({ where: { id: revisionId, resumeId: row.id, userId } });
+  if (!rev) throw new RevisionServiceError("Revision not found.", 404);
+  return {
+    ...({ id: rev.id, label: rev.label, provenance: rev.provenance, operation: rev.operation, targetTitle: rev.targetTitle, resumeType: rev.resumeType, template: rev.template, contentHash: rev.contentHash, pinned: rev.pinned, parentRevisionId: rev.parentRevisionId, createdAt: rev.createdAt.toISOString() } as RevisionSummary),
+    data: resumeDataSchema.parse(JSON.parse(rev.dataJson || "{}")),
+  };
+}
+
+export async function saveRevision(opts: { userId: string; conversationId: string; label?: string }): Promise<RevisionSummary> {
+  const row = await getOwnedResume(opts.userId, opts.conversationId);
+  const revId = await db.$transaction(async (tx) =>
+    snapshotRevision(tx, {
+      row,
+      provenance: "user",
+      operation: "SAVE",
+      targetTitle: row.targetTitle,
+      label: opts.label ?? "",
+    })
+  );
+  const rev = await db.laxiiResumeRevision.findUniqueOrThrow({ where: { id: revId } });
+  return {
+    id: rev.id,
+    label: rev.label,
+    provenance: "user",
+    operation: rev.operation,
+    targetTitle: rev.targetTitle,
+    resumeType: rev.resumeType,
+    template: rev.template,
+    contentHash: rev.contentHash,
+    pinned: rev.pinned,
+    parentRevisionId: rev.parentRevisionId,
+    createdAt: rev.createdAt.toISOString(),
+  };
+}
+
+export async function setRevisionPin(opts: { userId: string; conversationId: string; revisionId: string; pinned: boolean }): Promise<void> {
+  const row = await getOwnedResume(opts.userId, opts.conversationId);
+  const rev = await db.laxiiResumeRevision.findFirst({ where: { id: opts.revisionId, resumeId: row.id, userId: opts.userId } });
+  if (!rev) throw new RevisionServiceError("Revision not found.", 404);
+  await db.laxiiResumeRevision.update({ where: { id: rev.id }, data: { pinned: opts.pinned } });
+}
+
+/**
+ * RESTORE — never silently erases the newer document (spec §7): the CURRENT
+ * state is snapshotted first (operation RESTORE), then the selected revision
+ * content is copied back into the live document. The user can always restore
+ * forward again from the snapshot created here.
+ */
+export async function restoreRevision(opts: { userId: string; conversationId: string; revisionId: string }): Promise<{ resume: ResumeData }> {
+  const row = await getOwnedResume(opts.userId, opts.conversationId);
+  const rev = await db.laxiiResumeRevision.findFirst({ where: { id: opts.revisionId, resumeId: row.id, userId: opts.userId } });
+  if (!rev) throw new RevisionServiceError("Revision not found.", 404);
+  const restored = resumeDataSchema.parse(JSON.parse(rev.dataJson || "{}"));
+  await db.$transaction(async (tx) => {
+    await snapshotRevision(tx, { row, provenance: "user", operation: "RESTORE", targetTitle: row.targetTitle });
+    await tx.laxiiResume.update({
+      where: { id: row.id },
+      data: { dataJson: JSON.stringify(restored) },
+    });
+  });
+  await db.laxiiConversation.update({ where: { id: row.conversationId }, data: { updatedAt: new Date() } });
+  return { resume: restored };
+}
+
+// ---------------------------------------------- M33.5-C: tailored copies
+
+export interface TailoredCopyResult {
+  /** The NEW conversation (the tailored copy) — the master is untouched. */
+  conversationId: string;
+  masterConversationId: string;
+  resume: ResumeData;
+  aiTouched: ResumeSectionKey[];
+  notes: string[];
+  diff: ResumeDiff;
+  jobDescriptionHash: string;
+}
+
+function sha256(s: string): string {
+  return createHash("sha256").update(s).digest("hex");
+}
+
+/**
+ * Create a job-specific TAILORED COPY without mutating the master (spec §5.4):
+ *  1. master row is read (owner-checked) and NEVER updated;
+ *  2. a new RESUME conversation + LaxiiResume row is created transactionally
+ *     as a `tailored` variant linked to the master, copying the master's
+ *     document + facts snapshot verbatim;
+ *  3. the AI tailors ONLY the new copy (validated by the same anti-fabrication
+ *     guards — JD-only skills/achievements are dropped, not added);
+ *  4. a BEFORE snapshot (provenance user) + the tailored AFTER state are
+ *     recorded as revisions of the copy;
+ *  5. the JD is stored as a hash by default — full JD text only when the
+ *     user explicitly opts in (privacy notice in the UI).
+ */
+export async function createTailoredCopy(opts: {
+  userId: string;
+  conversationId: string;
+  jobDescription: string;
+  targetTitle?: string;
+  saveFullJobDescription?: boolean;
+}): Promise<TailoredCopyResult> {
+  if (!opts.jobDescription.trim()) throw new ResumeServiceError("Paste the job description to tailor against.", 400);
+  const master = await getOwnedResume(opts.userId, opts.conversationId);
+  const masterDoc = resumeDataSchema.parse(JSON.parse(master.dataJson || "{}"));
+  const factsRaw: unknown = JSON.parse(master.factsJson || "{}");
+  const factsParsed = resumeFactsSchema.safeParse(factsRaw);
+  const facts = factsParsed.success
+    ? factsParsed.data
+    : resumeFactsSchema.parse({ basics: { name: masterDoc.basics.name || (master.conversation.title || "Candidate").split("—")[0].trim() || "Candidate" } });
+  const professionSlug = professionFromFacts(factsRaw);
+  const jdHash = sha256(opts.jobDescription.replace(/\s+/g, " ").trim());
+
+  // 1+2: transactional copy creation (conversation + variant row together).
+  const copyConversation = await db.$transaction(async (tx) => {
+    // Every tailored copy starts from the master's CURRENT content —
+    // snapshot the master first so its state at copy time is recoverable.
+    await snapshotRevision(tx, { row: master, provenance: "user", operation: "SAVE", targetTitle: master.targetTitle });
+    const conv = await tx.laxiiConversation.create({
+      data: {
+        userId: opts.userId,
+        title: `${masterDoc.basics.name || "Resume"} — ${opts.targetTitle || master.targetTitle || "Tailored"}`.slice(0, 80),
+        kind: "RESUME",
+        resume: {
+          create: {
+            userId: opts.userId,
+            resumeType: master.resumeType,
+            template: master.template,
+            dataJson: master.dataJson || "{}",
+            factsJson: master.factsJson || "{}",
+            aiTouchedJson: "[]",
+            targetTitle: opts.targetTitle || master.targetTitle || null,
+            jobDescription: opts.saveFullJobDescription ? opts.jobDescription : null,
+            variantKind: "tailored",
+            parentConversationId: master.conversationId,
+            jobDescriptionHash: jdHash,
+          },
+        },
+      },
+    });
+    return conv;
+  });
+
+  const copyRow = await getOwnedResume(opts.userId, copyConversation.id);
+
+  // 3+4: tailor ONLY the copy; snapshot before (identical-to-master state is
+  // implicitly recoverable from the master) and record the after-state.
+  try {
+    const generated = await generateValidatedDraft(facts, copyRow.resumeType, opts.targetTitle || copyRow.targetTitle || "", opts.jobDescription, professionSlug, masterDoc);
+    const draft = assembleDocument(generated.draft, { ...facts, custom: masterDoc.custom }, copyRow.resumeType, professionSlug);
+    const skillRemovals = generated.skillRemovals;
+    const aiTouched = diffTouchedSections(facts, draft);
+    const notes = buildNotes(draft, aiTouched, opts.jobDescription);
+    if (skillRemovals.length > 0) {
+      notes.push(`Removed ${skillRemovals.length} skill${skillRemovals.length === 1 ? "" : "s"} that were not in your input: ${skillRemovals.join(", ")}.`);
+    }
+    const diff = diffResumeDocuments(masterDoc, draft);
+    for (const line of diff.summary) {
+      if (!notes.some((n) => n === line)) notes.push(line);
+    }
+    notes.push("The master resume was NOT modified — this is a separate tailored copy.");
+
+    await db.$transaction(async (tx) => {
+      const beforeId = await snapshotRevision(tx, { row: copyRow, provenance: "user", operation: "TAILOR_COPY", targetTitle: copyRow.targetTitle });
+      await tx.laxiiResume.update({
+        where: { id: copyRow.id },
+        data: {
+          dataJson: JSON.stringify(draft),
+          aiTouchedJson: JSON.stringify(aiTouched),
+          jobDescriptionHash: jdHash,
+        },
+      });
+      await snapshotRevision(tx, {
+        row: { ...copyRow, dataJson: JSON.stringify(draft) },
+        provenance: "ai",
+        operation: "TAILOR_COPY",
+        targetTitle: copyRow.targetTitle,
+        parentRevisionId: beforeId,
+      });
+    });
+    await appendResumeTurn({
+      userId: opts.userId,
+      conversationId: copyConversation.id,
+      userText: `Create tailored copy for ${opts.targetTitle || "a role"} (from master)`,
+      operation: "RESUME_TAILOR",
+      notes,
+    });
+    return {
+      conversationId: copyConversation.id,
+      masterConversationId: master.conversationId,
+      resume: draft,
+      aiTouched,
+      notes,
+      diff,
+      jobDescriptionHash: jdHash,
+    };
+  } catch (e) {
+    const message = e instanceof ResumeServiceError ? e.message : "Tailoring failed. Please try again.";
+    await appendResumeTurn({
+      userId: opts.userId,
+      conversationId: copyConversation.id,
+      userText: "Create tailored copy",
+      operation: "RESUME_TAILOR",
+      failed: message,
+    });
+    throw e instanceof ResumeServiceError ? e : new ResumeServiceError(message, 502);
+  }
 }
