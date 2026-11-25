@@ -74,6 +74,7 @@ import { LaxiiResumePreview } from "./LaxiiResumePreview";
 import { LaxiiResumeImportReview, type ApplyPayload } from "./LaxiiResumeImportReview";
 import { LaxiiResumeAnalysisPanel } from "./LaxiiResumeAnalysisPanel";
 import { LaxiiResumeVersions } from "./LaxiiResumeVersions";
+import { LaxiiCoverLetterPanel } from "./LaxiiCoverLetterPanel";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -422,6 +423,8 @@ export function LaxiiResumePanel({
 
   // M33.5-C: tailored copy state (JD privacy toggle + busy flag)
   const [saveFullJd, setSaveFullJd] = useState(false);
+  // M33.5-D: career-document workspace tab ("resume" | "cover-letter").
+  const [workspaceTab, setWorkspaceTab] = useState<string>("resume");
   // Action state
   const [busyAction, setBusyAction] = useState<"" | "generate" | "tailor" | "rephrase" | "tailor_copy" | "save" | "export">("");
   const [exportFormat, setExportFormat] = useState<"pdf" | "docx">("pdf");
@@ -723,12 +726,46 @@ export function LaxiiResumePanel({
 
   const isExisting = Boolean(detail);
 
+  if (workspaceTab === "cover-letter") {
+    return <LaxiiCoverLetterPanel onBackToResume={() => setWorkspaceTab("resume")} />;
+  }
+
   return (
     <div
       className="mx-auto grid h-full w-full max-w-7xl grid-rows-[minmax(0,1fr)_minmax(0,1fr)] gap-4 px-4 py-4 lg:grid-cols-[minmax(340px,440px)_1fr] lg:grid-rows-[minmax(0,1fr)]"
       data-testid="laxii-resume-panel"
     >
       <LaxiiResumeImportReview proposal={importProposal} open={importOpen} onApply={applyImport} onDiscard={discardImport} />
+      {/* M33.5-D: career-document workspace tabs — cover letters live INSIDE
+          the existing resume studio surface (no new navigation item). */}
+      <div className="flex items-center gap-1 px-1 pt-1" role="tablist" aria-label="Career document workspace">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={workspaceTab === "resume"}
+          onClick={() => setWorkspaceTab("resume")}
+          className={cn(
+            "rounded-full px-3 py-1.5 text-[11.5px] font-medium transition-colors",
+            workspaceTab === "resume" ? "bg-primary/15 text-primary" : "text-muted-foreground hover:text-foreground"
+          )}
+          data-testid="laxii-workspace-tab-resume"
+        >
+          Resume
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={workspaceTab === "cover-letter"}
+          onClick={() => setWorkspaceTab("cover-letter")}
+          className={cn(
+            "rounded-full px-3 py-1.5 text-[11.5px] font-medium transition-colors",
+            workspaceTab === "cover-letter" ? "bg-primary/15 text-primary" : "text-muted-foreground hover:text-foreground"
+          )}
+          data-testid="laxii-workspace-tab-cover-letter"
+        >
+          Cover letter
+        </button>
+      </div>
       {/* LEFT — form / editor (scrolls internally, fills the viewport height) */}
       <div className="laxii-scroll min-h-0 space-y-3 overflow-y-auto pb-6 pr-1">
         {!isExisting ? (

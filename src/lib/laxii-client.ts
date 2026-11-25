@@ -476,6 +476,50 @@ export interface ResumeFacts {
   custom: ResumeCustomSection[];
 }
 
+// ------------------------------------------------------------------ cover letter (M33.5-D)
+
+export interface CoverLetterData {
+  schemaVersion: 1;
+  basics: { name: string; email: string; phone: string; location: string; website: string };
+  label: string;
+  targetRole: string;
+  companyName: string;
+  hiringContactName: string;
+  date: string;
+  salutation: string;
+  opening: string;
+  bodyParagraphs: string[];
+  closing: string;
+  signatureName: string;
+  tone: "formal" | "confident" | "warm" | "direct" | "creative" | "academic";
+  aiTouched: string[];
+  sourceResumeConversationId: string;
+  jobDescriptionHash: string;
+  wordCount: number;
+}
+
+export interface CoverLetterLibraryItem {
+  letterId: string;
+  label: string;
+  targetRole: string;
+  companyName: string;
+  updatedAt: string;
+  hasSourceResume: boolean;
+}
+
+export interface CoverLetterDetail {
+  letterId: string;
+  letter: CoverLetterData;
+  updatedAt: string;
+  jobDescriptionHash: string;
+}
+
+export interface CoverLetterActionResult {
+  letterId: string;
+  letter: CoverLetterData;
+  notes: string[];
+}
+
 /** M33.5-C: one bounded revision snapshot (no document body in list responses). */
 export interface ResumeRevisionSummary {
   id: string;
@@ -686,6 +730,35 @@ export const laxiiApi = {
     api<{ verification: ExportVerification }>("/api/laxii/resume/export/verify", {
       method: "POST",
       json: { conversationId, format },
+    }),
+
+  // ------------------------------------------------------- cover letter API
+  coverLetterList: () => api<{ letters: CoverLetterLibraryItem[] }>("/api/laxii/cover-letter"),
+  coverLetterDetail: (letterId: string) =>
+    api<CoverLetterDetail>(`/api/laxii/cover-letter?letterId=${encodeURIComponent(letterId)}`),
+  coverLetterGenerate: (body: {
+    sourceResumeConversationId: string;
+    targetRole: string;
+    companyName: string;
+    hiringContactName: string;
+    salutation: string;
+    date: string;
+    tone: CoverLetterData["tone"];
+    length: "concise" | "standard" | "detailed";
+    jobDescription: string;
+  }) => api<CoverLetterActionResult>("/api/laxii/cover-letter", { method: "POST", json: { action: "generate", ...body } }),
+  coverLetterRephrase: (letterId: string, target: string) =>
+    api<CoverLetterActionResult>("/api/laxii/cover-letter", { method: "POST", json: { action: "rephrase", letterId, target } }),
+  coverLetterDuplicate: (letterId: string) =>
+    api<CoverLetterActionResult>("/api/laxii/cover-letter", { method: "POST", json: { action: "duplicate", letterId } }),
+  coverLetterSave: (letterId: string, data: CoverLetterData) =>
+    api<{ ok: boolean }>("/api/laxii/cover-letter", { method: "PATCH", json: { letterId, data } }),
+  /** Binary download — returns the response for blob handling. */
+  coverLetterExport: async (letterId: string, format: "pdf" | "docx"): Promise<Response> =>
+    fetch("/api/laxii/cover-letter/export", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ letterId, format }),
     }),
 
   /** M33.5-C: create a job-specific tailored COPY (master stays untouched). */
