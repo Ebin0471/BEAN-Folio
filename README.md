@@ -45,7 +45,7 @@ through a provider-independent gateway. Documentation separates **verified facts
 | App | Next.js 16 (App Router, standalone output), React 19 |
 | Language | TypeScript 5 (strict) |
 | UI | Tailwind CSS 4 + shadcn/ui ("new-york"), dark obsidian + champagne-gold brand, framer-motion |
-| Data | Prisma 6 — **SQLite in development (`prisma/schema.prisma`), PostgreSQL mirror in production (`prisma/schema.postgres.prisma`)**; 104 models in both, kept identical by `scripts/check-schema-parity.ts` |
+| Data | Prisma 6 — **SQLite in development (`prisma/schema.prisma`), PostgreSQL mirror in production (`prisma/schema.postgres.prisma`)**; 106 models in both, kept identical by `scripts/check-schema-parity.ts` |
 | AI | Server-side BEAN Intelligence gateway (`src/lib/intelligence/**`) over `z-ai-web-dev-sdk` (sandbox managed provider); provider-registry + circuit-breaker, never client-side |
 | Auth | scrypt password hashing, opaque DB-backed sessions in httpOnly cookies; email verification lifecycle (SHA-256-hashed single-use tokens, configurable delivery adapter — `none` default never fabricates a send); Google OAuth prepared (`docs/google-auth.md`) |
 | Validation | zod v4 at every API boundary |
@@ -150,8 +150,8 @@ unconfigured features degrade honestly (never fake results). Per-user consent + 
 │   ├── components/bean/**     ← product components (incl. giftz/laxii/riishe workspaces)
 │   └── lib/**                 ← auth, ai gateway, giftz, laxii, riishe, ox, queue, cache,
 │                                 rate-limit-backend, storage, monitoring, security…
-├── prisma/schema.prisma       ← SQLite data model (104 models, development)
-├── prisma/schema.postgres.prisma ← PostgreSQL mirror (same 104 models, production)
+├── prisma/schema.prisma       ← SQLite data model (106 models, development)
+├── prisma/schema.postgres.prisma ← PostgreSQL mirror (same 106 models, production)
 ├── tests/                     ← 110 automated suites (isolated-QA-DB runner)
 ├── scripts/                   ← ops, ci, loadtest, diagnostics, seeds (see scripts/*/README.md)
 ├── docker-compose*.yml        ← production / development / multi-instance topologies

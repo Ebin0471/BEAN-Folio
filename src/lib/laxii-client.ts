@@ -689,6 +689,8 @@ export const laxiiApi = {
     jobDescription: string;
     profession?: string;
     sourceText?: string;
+    /** Spec §4.2.5 — keep extracted source text only on explicit opt-in. */
+    retainSourceText?: boolean;
   }) => api<ResumeActionResult>("/api/laxii/resume", { method: "POST", json: { action: "generate", ...body } }),
 
   /** Upload an existing resume (PDF/DOCX/TXT) and extract its text. */

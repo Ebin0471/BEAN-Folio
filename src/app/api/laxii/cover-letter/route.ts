@@ -29,6 +29,7 @@ export const maxDuration = 300;
 export const GET = handler(async (req: NextRequest): Promise<NextResponse> => {
   const user = await getSessionUser();
   if (!user) return ERR.unauthorized();
+  if (!rateLimit(`laxii-cover-letter-get:${user.id}`, 120, 60_000)) return ERR.rateLimited();
   const letterId = new URL(req.url).searchParams.get("letterId");
   if (letterId) {
     try {

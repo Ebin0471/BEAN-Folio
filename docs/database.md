@@ -3,7 +3,7 @@
 > **STATUS UPDATE (2026-11 publication-readiness audit):** the schema has grown well beyond
 > the 27 models recorded when this document was first written — **both `prisma/schema.prisma`
 > (SQLite, development) and `prisma/schema.postgres.prisma` (production mirror) now define
-> 104 models**, kept identical by the `scripts/check-schema-parity.ts` gate. The numbered
+> 106 models**, kept identical by the `scripts/check-schema-parity.ts` gate. The numbered
 > model tables below are a HISTORICAL snapshot of the early build; the authoritative current
 > model list is the schema files themselves (`bunx prisma format` / Prisma docs), and the
 > SQLite↔PostgreSQL parity invariant is: **the two schemas must describe the IDENTICAL

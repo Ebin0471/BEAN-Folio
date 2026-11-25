@@ -77,6 +77,7 @@ import { LaxiiResumeVersions } from "./LaxiiResumeVersions";
 import { LaxiiCoverLetterPanel } from "./LaxiiCoverLetterPanel";
 
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
@@ -407,6 +408,8 @@ export function LaxiiResumePanel({
   const [jobDescription, setJobDescription] = useState("");
   const [sourceText, setSourceText] = useState("");
   const [sourceName, setSourceName] = useState("");
+  // Spec §4.2.5 — extracted text is transient unless the user opts in to keep it.
+  const [retainSource, setRetainSource] = useState(false);
   const [parsing, setParsing] = useState(false);
   // M33.5-A: structured import review — the proposal must be confirmed by the
   // user before any of its fields reach the facts form.
@@ -568,7 +571,7 @@ export function LaxiiResumePanel({
         targetTitle,
         jobDescription,
         ...(profession ? { profession } : {}),
-        ...(sourceText ? { sourceText } : {}),
+        ...(sourceText ? { sourceText, retainSourceText: retainSource } : {}),
       });
       setNotes(res.notes);
       setAiTouched(res.aiTouched);
@@ -577,6 +580,11 @@ export function LaxiiResumePanel({
       if (res.profession) setProfession(res.profession);
       onOpenConversation(res.conversationId);
       onLibraryChanged();
+      // Consumed: retained text now lives server-side in the private snapshot;
+      // a transient upload was discarded after this request (spec §4.2.5).
+      setSourceText("");
+      setSourceName("");
+      setRetainSource(false);
       toast.success("Resume draft generated — every fact came from your input.");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Generation failed.");
@@ -815,9 +823,17 @@ export function LaxiiResumePanel({
                 {parsing ? "Reading file…" : sourceName ? `Replace: ${sourceName}` : "Upload PDF, DOCX or TXT"}
               </Button>
               {sourceText ? (
-                <p className="mt-2 text-[11px] text-muted-foreground">
-                  {sourceText.length.toLocaleString()} characters extracted — used as source material for generation.
-                </p>
+                <>
+                  <p className="mt-2 text-[11px] text-muted-foreground">
+                    {sourceText.length.toLocaleString()} characters extracted — used as source material for generation.
+                  </p>
+                  <label className="mt-1 flex cursor-pointer items-start gap-2 text-[11px] text-muted-foreground">
+                    <Checkbox checked={retainSource} onCheckedChange={(v) => setRetainSource(v === true)} className="mt-0.5" aria-label="Keep extracted source text with this resume" data-testid="laxii-retain-source" />
+                    <span>
+                      Keep the extracted text with this resume (private, reused when regenerating). Unchecked: it is used for this generation only, then discarded.
+                    </span>
+                  </label>
+                </>
               ) : (
                 <p className="mt-2 text-[11px] text-muted-foreground">
                   We extract the text and propose structured fields for your review — nothing is saved until you confirm. Scans (image-only PDFs) can’t be read.
