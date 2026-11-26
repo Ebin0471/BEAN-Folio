@@ -40,6 +40,7 @@ import { GSAP_MOTION_PRESETS, VANTA_EFFECTS } from "@/lib/giftz/motion-engine";
 import { STEP_TOOLS } from "@/lib/ai-design/tools";
 import { RIISHE_TOOLS } from "@/lib/riishe/tools";
 import { SPECIALIST_TOOLS } from "@/lib/riishe/specialist-tools";
+import { CREATIVE_TOOLS } from "@/lib/riishe/creative-tools";
 import { SPECIALISTS } from "@/lib/riishe/specialists";
 import { RIISHE_MODES } from "@/lib/riishe/modes";
 import { BANNER_PRESETS } from "@/lib/laxii/banner-presets";
@@ -118,6 +119,14 @@ describe("capability matrix — registry counts match the live code", () => {
       expect(RIISHE_TOOLS[id]).toBeDefined();
     }
   });
+
+  test("the '12 M35 creative tools' claim matches the live creative registry", () => {
+    expect(Object.keys(CREATIVE_TOOLS).length).toBe(12);
+    for (const id of Object.keys(CREATIVE_TOOLS)) {
+      expect(RIISHE_TOOLS[id]).toBeDefined();
+    }
+    expect(docCount("Registered M35 creative tools")).toBe(Object.keys(CREATIVE_TOOLS).length);
+  });
 });
 
 describe("capability matrix — evidence paths exist", () => {
@@ -134,12 +143,33 @@ describe("capability matrix — evidence paths exist", () => {
   });
 });
 
-describe("capability matrix — negative claims are true", () => {
-  test("no giftz.* or laxii.* tools are registered in RIISHE_TOOLS (the matrix says 'Unsupported (today)')", () => {
+describe("capability matrix — positive claims are true (M35)", () => {
+  test("giftz.* and laxii.* tools ARE registered in RIISHE_TOOLS through the shared registry", () => {
     const keys = Object.keys(RIISHE_TOOLS);
-    expect(keys.filter((k) => k.startsWith("giftz.") || k.startsWith("laxii."))).toEqual([]);
-    expect(MATRIX).toMatch(/giftz\.\*.*Unsupported \(today\)|Registered `giftz\.\*` tools/);
-    expect(MATRIX).toMatch(/Registered `laxii\.\*` tools/);
+    const giftzKeys = keys.filter((k) => k.startsWith("giftz."));
+    const laxiiKeys = keys.filter((k) => k.startsWith("laxii."));
+    expect(giftzKeys.length).toBeGreaterThanOrEqual(5);
+    expect(laxiiKeys.length).toBeGreaterThanOrEqual(3);
+    for (const k of [...giftzKeys, ...laxiiKeys]) {
+      const tool = RIISHE_TOOLS[k];
+      expect(tool.risk).toBeDefined();
+      expect(typeof tool.timeoutMs).toBe("number");
+      expect(typeof tool.auditAction).toBe("string");
+    }
+    // The execution-class gate stays singular and honest.
+    expect(RIISHE_TOOLS["giftz.task.approve"].risk).toBe("HIGH");
+    expect(RIISHE_TOOLS["giftz.task.approve"].level).toBe(2);
+  });
+
+  test("the orphaned floating streaming assistant is retired (M35) while the tested stream route remains", () => {
+    expect(existsSync(join(ROOT, "src/components/bean/RiisheAssistant.tsx"))).toBe(false);
+    expect(existsSync(join(ROOT, "src/app/api/ai/chat-stream/route.ts"))).toBe(true);
+  });
+
+  test("payment / spend tools remain Unsupported by design", () => {
+    for (const tool of Object.values(RIISHE_TOOLS)) {
+      expect(tool.description.toLowerCase()).not.toMatch(/purchase|payment|charge a card/);
+    }
   });
 
   test("the canonical 2048×687 preset stays FIRST and unchanged; the expanded registry is versioned and bounded (M33.4)", () => {

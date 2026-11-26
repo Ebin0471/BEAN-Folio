@@ -12,9 +12,9 @@ import { findAvatarPreset } from "@/lib/laxii/avatar-presets";
 import { LaxiiServiceError, cleanPrompt, loadOwnedMediaAsReferences } from "@/lib/laxii/service";
 import { classifyLaxiiIntent, compileEditInstruction, buildConversationContext, type IntentTurnSummary } from "@/lib/laxii/intent";
 import { compileStyleRecipe } from "@/lib/laxii/styles";
-import { loadBriefTask, setBriefTaskStatus } from "@/lib/intelligence/delegation";
 import { compileBriefPrompt, type DesignBrief } from "@/lib/laxii/design-brief";
 import { BANNER_PRESET_SLUG, canonicalBannerPreset, findBannerPreset, resolveCustomBannerCanvas, customCanvasLimitsText } from "@/lib/laxii/banner-presets";
+import { BannerHandoffError, startBriefDrivenBanner } from "@/lib/laxii/banner-handoff";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // only job CREATION runs here — the engine runs in the job worker
@@ -122,35 +122,31 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
   const prompt = cleanPrompt(body.prompt);
 
   // ---------------------------------------------------------------------------
-  // Phase 3: structured brief-driven banner production. When a briefTaskId is
-  // presented, the request is a Riishe→LAXII handoff: the brief (ownership
-  // checked) supplies the authoritative prompt, canvas and typography — the
-  // free-form prompt/intent machinery is bypassed, never mixed in.
+  // M35: structured brief-driven banner production. When a briefTaskId is
+  // presented, the request is a Riishe→LAXII handoff: the shared service
+  // (src/lib/laxii/banner-handoff.ts — the SAME entry the registered
+  // `laxii.banner.produce` tool calls) validates the brief, enforces canvas
+  // truth, dedupes and starts the real pipeline. The free-form prompt/intent
+  // machinery is bypassed, never mixed in.
   // ---------------------------------------------------------------------------
-  let briefSpec: { taskId: string; brief: DesignBrief } | null = null;
   if (body.briefTaskId) {
-    const loaded = await loadBriefTask(user.id, body.briefTaskId);
-    if (!loaded) return ERR.notFound();
-    if (loaded.status === "CANCELLED") {
-      return err("This brief was cancelled — ask Riishe for a new one.", 400);
+    try {
+      const result = await startBriefDrivenBanner(user.id, body.briefTaskId, {
+        conversationId: body.conversationId ?? null,
+        provider: body.provider,
+        quality: body.quality,
+        referenceMediaIds: body.referenceMediaIds,
+      });
+      return ok(result, 202);
+    } catch (e) {
+      if (e instanceof BannerHandoffError) return err(e.message, e.status);
+      if (e instanceof LaxiiServiceError) return err(e.message, e.status);
+      console.error("[laxii] brief-driven banner start failed:", e);
+      return err("Could not start the generation. Please try again.", 502);
     }
-    // Canvas truth: the brief must carry the authoritative preset exactly.
-    const { findBannerPreset } = await import("@/lib/laxii/banner-presets");
-    const briefPreset = findBannerPreset(loaded.brief.canvas.presetSlug);
-    if (
-      !briefPreset ||
-      briefPreset.width !== loaded.brief.canvas.width ||
-      briefPreset.height !== loaded.brief.canvas.height
-    ) {
-      return err(
-        "The brief's canvas does not match the authoritative BEAN Folio banner preset — refusing to generate at guessed dimensions.",
-        400
-      );
-    }
-    briefSpec = { taskId: body.briefTaskId, brief: loaded.brief };
   }
 
-  const isAuto = body.operation === "AUTO" && !briefSpec;
+  const isAuto = body.operation === "AUTO";
 
   // Conversation bootstrap/lookup happens BEFORE intent classification so
   // AUTO can read the actual conversation history.
@@ -192,9 +188,7 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
 
   // When AUTO, this placeholder is overwritten by the classified intent below;
   // for explicit operations body.operation is already a valid engine operation.
-  // A brief-driven request forces BANNER with the pipeline path.
   let operation = body.operation as LaxiiOperation;
-  if (briefSpec) operation = "BANNER";
   let intentKind: string | null = null;
   let intentSource: string | null = null;
   let intentPreserve: string[] = [];
@@ -255,10 +249,8 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
   const isTextOnly = operation === "GENERATE" && !body.parentVersionId && !autoParentVersionId;
 
   // Semantic validation: what each operation requires (explicit ops keep the
-  // exact pre-existing rules; AUTO already enforced its own above). A
-  // brief-driven request is exempt — the approved brief IS the authority and
-  // carries its own text; the free-form prompt stays empty by design.
-  if (!isAuto && !briefSpec) {
+  // exact pre-existing rules; AUTO already enforced its own above).
+  if (!isAuto) {
     if (!isTextOnly && !prompt && operation !== "VARIATIONS" && operation !== "UPSCALE" && operation !== "REMOVE_BACKGROUND" && operation !== "EXPAND") {
       return err("A prompt is required for this operation.", 400);
     }
@@ -294,28 +286,13 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
   }
 
   if (!conversation) {
-    if (operation === "BANNER" && (body.banner || briefSpec)) {
+    if (operation === "BANNER" && body.banner) {
       // Bootstrap only runs for NEW conversations — those must carry a valid
-      // canvas: a registry preset (validated by slug + exact dimensions), a
-      // strictly-bounded custom canvas (explicit width AND height), or the
-      // brief's pre-validated canvas in the brief-driven path. Fail with a
-      // clean 400 instead of an unhandled throw outside the generation try.
+      // canvas: a registry preset (validated by slug + exact dimensions) or a
+      // strictly-bounded custom canvas (explicit width AND height). Fail with
+      // a clean 400 instead of an unhandled throw outside the generation try.
       let bootstrapCanvas: { slug: string; width: number; height: number };
-      if (briefSpec) {
-        const briefPreset = findBannerPreset(briefSpec.brief.canvas.presetSlug);
-        if (
-          !briefPreset ||
-          briefPreset.width !== briefSpec.brief.canvas.width ||
-          briefPreset.height !== briefSpec.brief.canvas.height
-        ) {
-          return err("Unknown banner preset for the brief canvas.", 400);
-        }
-        bootstrapCanvas = {
-          slug: briefPreset.slug,
-          width: briefPreset.width,
-          height: briefPreset.height,
-        };
-      } else if (
+      if (
         body.banner!.customWidth != null ||
         body.banner!.customHeight != null
       ) {
@@ -335,7 +312,7 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
       conversation = await db.laxiiConversation.create({
         data: {
           userId: user.id,
-          title: briefSpec ? briefSpec.brief.request.slice(0, 60) : prompt ? prompt.slice(0, 60) : "New banner",
+          title: prompt ? prompt.slice(0, 60) : "New banner",
           kind: "BANNER",
           bannerKind: bootstrapCanvas.slug,
           canvasWidth: bootstrapCanvas.width,
@@ -376,32 +353,10 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
     );
   }
 
-  // One pipeline at a time per BRIEF (covers the cross-conversation case):
-  // a duplicated brief submission re-attaches to the running job instead of
-  // double-spending the user's quota. A RUNNING task whose message is gone
-  // (crashed worker) falls through — generation proceeds and re-stamps RUNNING.
-  if (briefSpec) {
-    const runningForBrief = await db.laxiiMessage.findFirst({
-      where: { status: "RUNNING", metaJson: { contains: `"briefTaskId":"${briefSpec.taskId}"` } },
-      orderBy: { createdAt: "desc" },
-      select: { id: true, conversationId: true },
-    });
-    if (runningForBrief) {
-      return ok(
-        { conversationId: runningForBrief.conversationId, messageId: runningForBrief.id, status: "RUNNING", duplicate: true },
-        202
-      );
-    }
-    await setBriefTaskStatus(user.id, briefSpec.taskId, "RUNNING");
-  }
-
   // Load references + base image bytes (ownership enforced) BEFORE returning —
   // fast local IO; the job worker then owns only the slow engine call.
   try {
-    // Brief-driven banners honor the brief's own reference list when the
-    // client did not attach explicit references.
-    const effectiveReferenceIds =
-      briefSpec && body.referenceMediaIds.length === 0 ? briefSpec.brief.referenceMediaIds : body.referenceMediaIds;
+    const effectiveReferenceIds = body.referenceMediaIds;
     const references = await loadOwnedMediaAsReferences(user.id, effectiveReferenceIds);
     let baseImage: { dataUrl: string; mime: string; label: string } | null = null;
     if (parentMedia) {
@@ -417,24 +372,12 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
     let styleSlug: string | null = null;
     // Quality upgrade: a plain (non-brief) banner request compiled into a
     // USER-sourced brief — it runs the professional banner pipeline below.
+    // (Brief-driven banners start through banner-handoff.ts above.)
     let plainBannerBrief: DesignBrief | null = null;
 
     // BANNER composition guidance + exact canvas.
-    if (operation === "BANNER" && (body.banner || briefSpec)) {
+    if (operation === "BANNER" && body.banner) {
       const { BANNER_PRESETS, findBannerPreset } = await import("@/lib/laxii/banner-presets");
-      if (briefSpec) {
-        // Brief-driven path: the structured brief IS the prompt and the canvas
-        // truth; the pipeline adds composition planning, deterministic
-        // typography, quality evaluation and bounded refinement.
-        bannerCanvas = {
-          width: briefSpec.brief.canvas.width,
-          height: briefSpec.brief.canvas.height,
-          presetSlug: briefSpec.brief.canvas.presetSlug,
-        };
-        aspect = nearestAspect(bannerCanvas.width / bannerCanvas.height);
-        promptFinal = compileBriefPrompt(briefSpec.brief);
-        count = 1;
-      } else {
       // Canvas truth: an existing BANNER conversation keeps its own stored
       // canvas AND slug (registry presets, the strictly-bounded "custom"
       // canvas family, or legacy slugs); a NEW conversation resolves the
@@ -472,7 +415,6 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
         promptFinal = [prompt, `Banner design for: ${guidance.label} (canvas ${canvas.width}×${canvas.height}px).`, guidance.compositionHint]
           .filter(Boolean)
           .join("\n");
-      }
       }
     } else if (
       conversation.kind === "BANNER" &&
@@ -626,7 +568,7 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
       conversationId: conversation.id,
       requestOperation: operation,
       engineOperation: operation === "BANNER" ? "GENERATE" : operation,
-      userText: briefSpec ? briefSpec.brief.request : prompt,
+      userText: prompt,
       promptFinal,
       references,
       baseImage: baseImage ?? undefined,
@@ -644,9 +586,9 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
       previousInteractionId,
       conversationContext,
       inputAssetIds: [...effectiveReferenceIds, ...(parentMedia ? [parentMedia.id] : [])],
-      briefTaskId: briefSpec?.taskId ?? null,
-      brief: briefSpec?.brief ?? plainBannerBrief,
-      promptBriefBase: briefSpec || plainBannerBrief ? promptFinal : null,
+      briefTaskId: null,
+      brief: plainBannerBrief,
+      promptBriefBase: plainBannerBrief ? promptFinal : null,
     });
 
     // MI-1: the service-level transactional claim may report a duplicate (a
@@ -670,7 +612,6 @@ export const POST = handler(async (req: NextRequest): Promise<NextResponse> => {
         messageId,
         status: "RUNNING",
         intent: intentKind ? { kind: intentKind, source: intentSource } : undefined,
-        briefTaskId: briefSpec?.taskId,
       },
       202
     );

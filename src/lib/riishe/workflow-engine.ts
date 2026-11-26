@@ -24,7 +24,7 @@ import { db } from "@/lib/db";
 import { notify } from "@/lib/notify";
 import { enqueue, cancelQueued } from "@/lib/queue";
 import { auditEvent } from "@/lib/riishe/audit";
-import { getTool, toolApprovalRequired, REF_FIELDS, type RiisheToolDef, type ToolContext } from "@/lib/riishe/tools";
+import { getTool, toolApprovalRequired, REF_FIELDS, REF_RESULT_KEYS, type RiisheToolDef, type ToolContext } from "@/lib/riishe/tools";
 import {
   dailyActionCapStatus,
   initialStatusForStep,
@@ -385,7 +385,8 @@ export async function scheduleReadySteps(workflowId: string, userId: string): Pr
   return scheduled;
 }
 
-/** Resolve planner-id refs (draftRef/postRef) via the referenced step's result. */
+/** Resolve planner-id refs (draftRef/postRef, M35 typed artefact refs) via the
+ * referenced step's result — the mapping lives in REF_RESULT_KEYS. */
 async function resolveStepParams(
   workflowId: string,
   step: { paramsJson: string; kind: string }
@@ -403,13 +404,11 @@ async function resolveStepParams(
     const refStep = byRef.get(v);
     if (!refStep) throw new WorkflowError(`step reference "${v}" not found`, "invalid");
     const result = safeJson(refStep.resultJson);
-    const value =
-      k === "draftRef"
-        ? (result?.draftTaskId as string | undefined)
-        : (result?.postId as string | undefined);
+    const resultKey = REF_RESULT_KEYS[k] ?? "";
+    const value = resultKey ? (result?.[resultKey] as string | undefined) : undefined;
     if (!value) {
       throw new WorkflowError(
-        `referenced step "${v}" produced no ${k === "draftRef" ? "draft" : "post"} (status: ${refStep.status})`,
+        `referenced step "${v}" produced no ${resultKey || k} (status: ${refStep.status})`,
         "dependency-missing"
       );
     }

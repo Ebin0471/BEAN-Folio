@@ -33,7 +33,8 @@ export type SpecialistId =
   | "growth-communications"
   | "business-analyst"
   | "people-operations"
-  | "docs-knowledge";
+  | "docs-knowledge"
+  | "creative-producer";
 
 export type WorkspaceScope = "PERSONAL" | "ORGANIZATION";
 
@@ -78,13 +79,22 @@ export const SPECIALISTS: SpecialistDefinition[] = [
       "Opportunity radar over recent platform activity",
     ],
     taskCategories: ["career", "interviews", "opportunities"],
-    toolNames: ["career.readinessReport", "career.interviewPrep", "discovery.opportunityRadar"],
+    toolNames: ["career.readinessReport", "career.interviewPrep", "discovery.opportunityRadar", "career.resume.analyze", "career.resume.importProposal", "career.resume.tailoredCopy", "career.coverLetter.draft"],
     workspaceScopes: ["PERSONAL"],
     riskPolicy: { maxAutomationLevel: 1, approvalsAlwaysHuman: true },
     limits: { maxSteps: 6, defaultTimeoutMs: 45_000 },
     routingKeywords: ["career", "interview", "resume", "cv", "job", "hiring me", "opportunities for me", "readiness", "job search"],
-    auditNote: "Reads the owner's real profile; drafts never claim verified facts the profile does not evidence.",
-    available: () => toolsAvailable(["career.readinessReport", "career.interviewPrep", "discovery.opportunityRadar"]),
+    auditNote: "Reads the owner's real profile; drafts never claim verified facts the profile does not evidence. Career-document tools run the real guarded services (anti-fabrication guard, master resumes untouched).",
+    available: () =>
+      toolsAvailable([
+        "career.readinessReport",
+        "career.interviewPrep",
+        "discovery.opportunityRadar",
+        "career.resume.analyze",
+        "career.resume.importProposal",
+        "career.resume.tailoredCopy",
+        "career.coverLetter.draft",
+      ]),
   },
   {
     id: "talent-scout",
@@ -231,6 +241,59 @@ export const SPECIALISTS: SpecialistDefinition[] = [
     routingKeywords: ["find my document", "find document", "search my documents", "where is my", "summarize my", "my notes on", "knowledge base"],
     auditNote: "Search covers authorized documents only; organization shared-document surfaces arrive with the document library.",
     available: () => toolsAvailable(["docs.searchWorkspace"]),
+  },
+  {
+    id: "creative-producer",
+    name: "Creative Producer",
+    description:
+      "Plans websites and produces real creative work through the registered GIFTZ and LAXII services — governed by the same approval ladder as every other tool.",
+    capabilities: [
+      "Honest website architecture plans (deterministic GIFTZ planner)",
+      "GIFTZ engineering tasks prepared on your repositories — execution only with your explicit approval",
+      "Structured banner briefs from your own portfolio data; the real LAXII banner pipeline on your go",
+      "True job outcome reporting (status re-reads, never claimed artifacts)",
+    ],
+    taskCategories: ["websites", "banners", "creative"],
+    toolNames: [
+      "giftz.site.plan",
+      "giftz.site.create",
+      "giftz.task.create",
+      "giftz.task.status",
+      "giftz.task.approve",
+      "laxii.banner.brief",
+      "laxii.banner.produce",
+      "laxii.job.status",
+    ],
+    workspaceScopes: ["PERSONAL"],
+    riskPolicy: { maxAutomationLevel: 2, approvalsAlwaysHuman: true },
+    limits: { maxSteps: 8, defaultTimeoutMs: 30_000 },
+    routingKeywords: [
+      "banner",
+      "cover image",
+      "channel art",
+      "header image",
+      "website task",
+      "site plan",
+      "plan my website",
+      "engineering task",
+      "giftz",
+      "laxii",
+      "produce the banner",
+      "portfolio banner",
+    ],
+    auditNote:
+      "Website task execution (giftz.task.approve) is HIGH-risk: explicit confirmation, never queue-run; banner generation runs through the real LAXII pipeline with the existing daily guards.",
+    available: () =>
+      toolsAvailable([
+        "giftz.site.plan",
+        "giftz.site.create",
+        "giftz.task.create",
+        "giftz.task.status",
+        "giftz.task.approve",
+        "laxii.banner.brief",
+        "laxii.banner.produce",
+        "laxii.job.status",
+      ]),
   },
 ];
 

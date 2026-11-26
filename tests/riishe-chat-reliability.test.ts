@@ -1,7 +1,7 @@
 /// <reference types="bun-types" />
 import { describe, expect, test, afterAll, beforeAll, mock } from "bun:test";
 import { ownerDispatchRecord } from "./helpers/owner-dispatch-mock";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { NextRequest } from "next/server";
 
 /**
@@ -283,7 +283,6 @@ describe("chat reliability — requests always reach a definitive state", () => 
 describe("chat reliability — frontend cannot hang forever", () => {
   const view = (): string => readFileSync("src/views/IntelligenceView.tsx", "utf8");
   const client = (): string => readFileSync("src/lib/client.ts", "utf8");
-  const floating = (): string => readFileSync("src/components/bean/RiisheAssistant.tsx", "utf8");
 
   test("the shared api client supports a request deadline and maps aborts to 408", () => {
     const src = client();
@@ -319,10 +318,11 @@ describe("chat reliability — frontend cannot hang forever", () => {
     expect(view().includes('disabled={sending || !input.trim()}')).toBe(true);
   });
 
-  test("the floating streaming assistant bounds its request AND detects stalled streams", () => {
-    const src = floating();
-    expect(src.includes("credentials: \"include\"")).toBe(true);
-    expect(src.includes("controller.abort()")).toBe(true);
-    expect(src.includes("clearTimeout(requestTimer)")).toBe(true);
+  test("the orphaned floating streaming assistant stays retired; the live view keeps its deadline guard", () => {
+    // M35 retired the never-imported streaming assistant. The LIVE surface
+    // keeps the client deadline invariants (pinned above) on /api/ai/chat —
+    // the action path that carries the governance cards.
+    expect(existsSync("src/components/bean/RiisheAssistant.tsx")).toBe(false);
+    expect(view().includes("timeoutMs: 150_000")).toBe(true);
   });
 });

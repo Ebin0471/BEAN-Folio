@@ -71,12 +71,18 @@ Rules:
 - Use ONLY tool names from the catalog. Never invent tools or params.
 - Keep plans at most ${MAX_WORKFLOW_STEPS} steps.
 - Steps that need another step's output must list it in dependsOn.
-- draftRef / postRef params take the PLANNER ID of the step that produced the draft/post.
+- Reference params (draftRef, postRef, briefTaskRef, giftzTaskRef, siteRef,
+  resumeRef, letterRef, jobRef) take the PLANNER ID of the earlier step that
+  produced the artefact — never a fabricated database id.
+- Tools that accept an explicit id (taskId, conversationId, briefTaskId) can
+  also run standalone: omit the id and the tool resolves the owner's latest
+  record honestly, or fails with a clear message.
 - schedule is optional and only valid where the tool description allows it.
-- You cannot send messages, publish or schedule public posts, or delete anything
-  without the user's later confirmation - plan accordingly (draft first,
-  send/publish later). Catalog entries marked "REQUIRES explicit user
-  confirmation" always go through approval; you cannot bypass that.
+- You cannot send messages, publish or schedule public posts, delete anything,
+  or RUN website file edits without the user's later confirmation - plan
+  accordingly (prepare first, approve/publish later). Catalog entries marked
+  "REQUIRES explicit user confirmation" always go through approval; you
+  cannot bypass that.
 - Never include real third-party contact details you were not given.
 - If the goal cannot be mapped to the catalog, reply exactly: {"error":"unmappable"}`;
 
@@ -281,6 +287,36 @@ function specialistStepForClause(
       tool: "docs.searchWorkspace",
       title: "Search authorized documents",
       params: { terms: terms && terms.length ? terms : ["draft"] },
+    };
+  }
+  // M35 creative clauses — deterministic mapping for single-step creative
+  // requests (multi-step creative chains go through the LLM planner and the
+  // engine's validation like every other plan).
+  if (
+    /\b(plan|architecture|structure)\b[^?!.]*\b(website|portfolio site|site)\b|\b(website|portfolio site)\b[^?!.]*\b(plan|architecture|structure)\b/.test(c) &&
+    getTool("giftz.site.plan")
+  ) {
+    return {
+      id,
+      tool: "giftz.site.plan",
+      title: "Plan the website architecture",
+      params: { brief: clause.slice(0, 2000) },
+    };
+  }
+  if (/\b(banner|cover image|channel art|header image)\b[^?!.]*\b(brief|prepare|set up|draft)\b/.test(c) && getTool("laxii.banner.brief")) {
+    return {
+      id,
+      tool: "laxii.banner.brief",
+      title: "Prepare a banner design brief",
+      params: { request: clause.slice(0, 2000) },
+    };
+  }
+  if (/\b(analyze|analysis|readability|review)\b[^?!.]*\b(resume|cv)\b/.test(c) && getTool("career.resume.analyze")) {
+    return {
+      id,
+      tool: "career.resume.analyze",
+      title: "Analyze the saved resume",
+      params: {},
     };
   }
   return null;

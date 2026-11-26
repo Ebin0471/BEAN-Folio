@@ -1,7 +1,7 @@
 /// <reference types="bun-types" />
 import { describe, expect, test, afterAll, mock } from "bun:test";
 import { randomUUID } from "crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { NextRequest } from "next/server";
 
 /**
@@ -183,7 +183,6 @@ describe("private portfolio data never crosses user boundaries", () => {
 
 describe("the assistant interface is the RIISHE landing (old consent page removed)", () => {
   const view = (): string => readFileSync("src/views/IntelligenceView.tsx", "utf8");
-  const floating = (): string => readFileSync("src/components/bean/RiisheAssistant.tsx", "utf8");
   const settings = (): string => readFileSync("src/views/SettingsView.tsx", "utf8");
 
   test("the standalone Enable-RIISHE consent page is gone from the navigation flow", () => {
@@ -225,16 +224,13 @@ describe("the assistant interface is the RIISHE landing (old consent page remove
     expect(src.includes("Message to RIISHE")).toBe(true);
   });
 
-  test("the floating assistant has NO consent gate: send is never disabled by a flag", () => {
-    const src = floating();
-    expect(src.includes('navigate("/intelligence")')).toBe(false);
-    // The old consent plumbing is fully gone.
-    expect(src.includes("consentBlocked")).toBe(false);
-    expect(src.includes("isConsented")).toBe(false);
-    expect(src.includes("user.aiConsent")).toBe(false);
-    expect(src.includes("Open Settings → Privacy")).toBe(false);
+  test("the orphaned floating streaming assistant is RETIRED (M35) — the IntelligenceView is the one chat surface", () => {
+    // M35 retires the never-imported floating assistant instead of wiring it
+    // in: the live surface keeps the action path with its governance cards.
+    expect(existsSync("src/components/bean/RiisheAssistant.tsx")).toBe(false);
+    const shell = readFileSync("src/components/bean/SiteShell.tsx", "utf8");
+    expect(shell.includes("RiisheAssistant")).toBe(false);
   });
-
   test("the standalone Settings consent toggle is REMOVED", () => {
     const src = settings();
     expect(src.includes('id="ai-consent-switch"')).toBe(false);
