@@ -111,7 +111,7 @@ Environment: isolated clones `/home/z/bean-qa-m357` (tip `1146dfe`) and `/home/z
 
 | Run | Files | Pass | Fail | Individual test passes | Notes |
 | --- | --- | --- | --- | --- | --- |
-| M35.7 tip (`1146dfe`) | 133 | 130 | **2** | 1959 | both failures classified below; `tests/riishe-m357-safety-hardening.test.ts` 15/15 pass |
+| M35.7 tip (`1146dfe`) | 133 | 129 | **2** | 1959 | both failures classified below; `tests/riishe-m357-safety-hardening.test.ts` 15/15 pass |
 | Untouched baseline (`b8b0d9b`) | 132 | 129 | **1** | 1926 | identical known flake |
 | Skip-only (both) | 2 | — | — | — | `media-upload-http` (9 skip), `ox-opportunity-live-http` (4 skip) — live-server suites, self-skipping |
 
@@ -147,3 +147,83 @@ Failure classification (zero M35.7 regressions):
 
 - `scripts/ops/bean-sync.sh push` (fast-forward only, MAIN-ONLY) after local main is fast-forwarded to the M35.7 tip; remote SHA verified: **origin/main `760be22`** (= this tip; branch gate, secret scan and runtime-data scan all passed).
 - Review PR opened for the owner from `feat/m35.7-agent-safety-hardening` (M35 precedent, PR #12). The owner merges; nothing is self-merged. This final publication-verification commit rides the review branch so the PR carries a reviewable diff — the M35.7 implementation commits are already fast-forward-published on main, exactly like the M35 series before the owner merged PR #12.
+
+---
+
+# M35.8 — Atomic Execution & Concurrency Control (review finding)
+
+Spec amendment: `docs/M35_RIISHE_UNIFIED_CREATIVE_AGENT.md` §7 (M35.8 phase) · Baseline: `26437bb` (origin/main, PR #13 merge; verified via `git fetch` + fast-forward before any work).
+
+**Correction to §7.1 (M35.7 pass-count discrepancy):** the M35.7 tip row previously read "130 pass" but the machine-readable evidence (`agent-ctx/shots/m357/qa-evidence-summary.json`, corroborated by the raw per-file run log: 129 PASS + 2 FAIL + 2 SKIP-ONLY = 133 classified files, 1959 individual passes) records **129 pass** — corrected above. The underlying evidence files were always self-consistent (129 + 2 + 2 = 133).
+
+## 10. What changed (one review finding, no new capability surface)
+
+The durable workflow engine still claimed executions with a check-then-update pair: read the step's status, run the policy gates, then unconditionally `update` the row to RUNNING. Two workers (or two simultaneous approval requests) that both read an eligible row could both reach the unconditional write and execute the tool twice. M35.8 replaces **every** execution claim with one atomic conditional database transition and guards every terminal write on ownership. Nothing else changes: no new tools, no new capability surface, no policy edits, GIFTZ/LAXII/career-document behavior untouched, M35.7 idempotency stamps and typed-reference validation untouched.
+
+**`src/lib/riishe/workflow-engine.ts` (one file):**
+- **`claimStepExecution`** — the atomic claim: a single `updateMany` whose WHERE guard carries the expected pre-status (`READY` for queue deliveries; the existing accepted set `PENDING/AWAITING_APPROVAL/READY/FAILED` for approval-time execution, preserving approve-after-failure). Only the writer whose UPDATE matches the guard wins — exactly the status-guard pattern the durable queue core uses (documented as the portable equivalent of `SELECT … FOR UPDATE SKIP LOCKED`); no in-memory mutex, safe across processes. The loser never executes the tool.
+- **Ownership token** — the post-claim `attempts` value is returned with the fresh row; **`finishClaimedStep`** guards every terminal write on `status = "RUNNING" AND attempts = token`. A stale worker whose RUNNING row was recovered by the sweep and re-claimed cannot record a second outcome: at most one SUCCEEDED/FAILED transition per execution, one audit pair, one dependent unlock cascade. The queue path's retry (`READY`) and terminal (`FAILED`) writes and the approval path's `FAILED` write are all ownership-guarded.
+- **`releaseClaimIfWorkflowInactive`** — the post-claim control re-verification both entrypoints run before executing the tool: if the workflow got paused/cancelled between the pre-claim read and the claim, the claim is released honestly (PENDING under PAUSED — resume re-arms it; CANCELLED with the owner-cancellation reason under CANCELLED) and nothing executes.
+- **Control transitions guarded both ways:** pause flips only still-READY steps to PENDING (a claimed RUNNING step keeps its claim — its own re-verification releases it); cancel flips only PENDING/READY/AWAITING_APPROVAL to CANCELLED and cancels the queued job only when the transition landed; resume/unlock/retry/decline/approve and the skip cascade are conditional on the expected pre-status (never resurrect a concurrently skipped/cancelled row, never clobber a live claim); the sweep's stale-RUNNING recovery re-checks the staleness predicate in its WHERE guard (a step that completed between the read and the write is never flipped back to READY — previously possible, and it would resurrect a finished execution); the sweep's due-step scheduling is conditional on PENDING; derived workflow completion is guarded on the observed workflow status; `approveStep`'s approval transition is atomic (a replayed approval that RACES a concurrent terminal transition is refused with the same error contract).
+- Execution semantics preserved exactly: ownership/registry-derived risk/Level-2-3 approval requirements and the daily action cap are checked pre-claim as before; retry/backoff and durable-queue behavior are unchanged (the claim increments `attempts` once per actual attempt, exactly like the pre-M35.8 write); stale-running recovery is unchanged in strength (still recovers RUNNING rows past the staleness boundary, now without the resurrection race).
+
+## 11. Tests (real database, controlled concurrency barriers — never hand-set RUNNING states)
+
+New suite `tests/riishe-m358-concurrency.test.ts` — **12 tests, 97 assertions, REAL engine + registry + database** (no handler mocks; every claim/recovery/outcome goes through real engine code; races are driven by controlled barriers that release two real call paths into the same event-loop tick, plus engine-level `Promise.all` races):
+1. two workers claim the same READY step simultaneously → exactly one atomic claim wins; a wrong ownership token is refused while the owner's token lands;
+2. two workers execute the same READY step through the REAL queue entrypoint → one attempt, one artifact (unstamped `post.draft` would duplicate on any leak), one `step_succeeded` audit + one tool audit;
+3. duplicate delivery while another attempt is RUNNING (real claim held mid-flight, real sweep recovery) → quiet no-op, then honest recovery to SUCCEEDED;
+4. two simultaneous approval requests for one level-2 step (`approveStep` → `executeApprovedStep`, the route's exact sequence) → exactly one claim/execution, the loser 409 conflict (or honest `already`), one artifact, one execution audit;
+5. two simultaneous approvals of a level-2 provider generation step (`laxii.banner.produce`) → the LAXII pipeline starts exactly once (1 conversation, 1 ASSISTANT generation message);
+6. cancel never clobbers a live claim (claimed step stays RUNNING through the cancel pass); a stale worker cannot bypass cancellation (recovered READY step is never scheduled on a CANCELLED workflow; stale deliveries and outcome writes are refused);
+7. pause never clobbers a live claim; the post-claim re-verification (`releaseClaimIfWorkflowInactive`) releases to PENDING without executing;
+8. engine-level races: delivery vs cancel and delivery vs pause launched together → single-execution invariants hold under any interleaving;
+9. stale-worker recovery: the recovered attempt's stale outcome write is refused by the ownership token; the live attempt's result stands (one stamped artifact, one audit);
+10. duplicate simultaneous deliveries of a stamped artifact tool → exactly one artifact (budget consumed once);
+11. claim-status surfaces pinned (`READY`-only queue claims; `PENDING` scheduled steps can never be queue-claimed).
+
+Existing M35.7 safety-hardening suite re-run on the changed engine: **15/15 pass**. Focused RIISHE suites re-run per-file: riishe-agent 22/22, riishe-automation-policy 26/26, riishe-automation 28/28, riishe-creative-tools 27/27, riishe-chat-reliability 20/20, riishe-direct-access 19/19, riishe-persona-contract 13/13, universal-studio-capability-matrix 19/19.
+
+## 12. QA evidence (M35.8)
+
+Environment: isolated worktrees `/home/z/bean-qa-m358` (tip `48d130d`) and `/home/z/bean-qa-m358-base` (untouched baseline `26437bb`), identical seeding order (`db:push → seed.ts → restore-qa-fixtures.ts → seed-professions.ts`), pinned `DATABASE_URL` validated by `scripts/ops/qa-db-env.sh`, per-worktree `MEDIA_LOCAL_ROOT`, one bun process per suite. Evidence: `agent-ctx/shots/m358/qa-evidence-summary.json`.
+
+### 12.1 Per-file QA + baseline comparison
+
+| Run | Files | Pass | Fail | Individual test passes | Notes |
+| --- | --- | --- | --- | --- | --- |
+| M35.8 tip (`48d130d`) | 134 | 131 | **1** | 1971 | the only failure is the pre-existing flake below; `tests/riishe-m358-concurrency.test.ts` 12/12 pass |
+| Untouched baseline (`26437bb`) | 133 | 130 | **1** | 1959 | identical known flake |
+| Skip-only (both) | 2 | — | — | — | `media-upload-http` (9 skip), `ox-opportunity-live-http` (4 skip) — live-server suites, self-skipping |
+
+Zero M35.8 regressions: **+1 file (the new concurrency suite) and exactly +12 individual passes; the identical single failure on both tips** is `tests/riishe-specialists.test.ts` (18 pass / 1 fail on both) — the documented pre-existing 5s-timeout flake on the org-checklist test's real AI gateway call, reproduced identically at the untouched baseline. Environment honesty note: an earlier QA attempt showed `tests/queue-reliability.test.ts` failures because interrupted background runs had left stale QUEUED jobs in the shared QA database; the databases were reseeded with the full protocol order and the entire battery re-run cleanly — the numbers above are from the clean runs and queue-reliability passes 9/9 on both tips.
+
+### 12.2 Typecheck / lint / production build
+- `bunx tsc --noEmit` — **0 errors** (tip).
+- `bun run lint` — **0 errors**, 14 warnings (all pre-existing: k6 anonymous default exports + unused eslint-disable directives).
+- `bun run build` (production) — **exit 0 on BOTH tips** with the identical 5 Edge-Runtime `process.exit` warnings in `src/instrumentation.ts` traces (verified by building the baseline clone: identical exit 0, identical warnings).
+
+### 12.3 Live workflow + browser evidence (production build via `next start` standalone, QA DB, in-process durable worker)
+
+| Evidence | What it shows |
+| --- | --- |
+| `agent-ctx/shots/m358/01-dashboard-catalog.json` | live catalog: 35 tools; `laxii.banner.produce` MEDIUM/**level-2**, `career.resume.tailoredCopy` MEDIUM/**level-2**, `career.coverLetter.draft` MEDIUM/**level-2**, `giftz.task.approve` HIGH/level-2 — M35.7 approval policy preserved |
+| `04-workflow-awaiting-approval.json` | engine-seeded brief→produce chain drained by the production worker: brief SUCCEEDED (level 1), produce **AWAITING_APPROVAL** (level 2) — the queue never ran it |
+| `06-approval-response-A.json` + `06-status-A.txt` | **the M35.8 live race**: two SIMULTANEOUS approval PATCH requests on the SAME level-2 step fired against the running production build — request A → **HTTP 200 `{"executed":true,…}`** (real pipeline start) |
+| `06-approval-response-B.json` + `06-status-B.txt` | request B (simultaneous) → **HTTP 409 `{"error":"This step is already running"}`** — the loser never executed the tool |
+| `07-db-probe.json` | post-race database verdict **`EXACTLY-ONE-EXECUTION`**: produce attempts=1, 1 BANNER conversation, 1 ASSISTANT generation message, 1 `step_succeeded` audit, 1 tool audit — no duplicate provider generation, no duplicate budget consumption |
+| `08-workflow-final.json` | both steps SUCCEEDED, produce attempts=1 with verification evidence |
+| `09-replayed-approval-refused.json` + `09-replay-status.txt` | replayed approve on the SUCCEEDED step → **HTTP 409** (terminal — M35.7 replay protection preserved) |
+| `10-chat-deterministic-workflow.json` | live chat goal → deterministic planner → creative-producer workflow (the M35 path preserved unchanged) |
+| `01/02/03/04-*.png` | authenticated landing; RIISHE surface with the specialists strip (incl. Creative Producer); Automation dashboard with the level-policy banner (L1 auto · L2 confirm · L3 typed confirm) and live KPIs; 390px responsive |
+
+## 13. Honest limitations (M35.8 additions)
+
+- The atomic claims make step execution exactly-once at the CLAIM level (one attempt, one outcome write, one audit per execution). Recovery remains at-least-once by design: a worker that dies mid-tool is recovered by the sweep and the step legitimately runs again on the next claim — the stamped artifact tools re-attach (never a duplicate artifact) and the ownership token guarantees only ONE recorded outcome, but the external effect of a single un-stamped tool can still occur twice across such a crash-recovery cycle. Honest durable-queue trade-off, unchanged by M35.8.
+- The deterministic race tests hold a claim via the exported atomic claim primitive (`claimStepExecution`) and release it via the engine's own recovery paths — no status is ever hand-set; the true-simultaneity proofs are the barrier tests and the engine-level `Promise.all` races.
+- Pre-existing quirk observed while testing (unchanged, recorded): `resume` re-arms only PENDING steps with declared, satisfied dependencies (`deps.length > 0`), so a dependency-free step paused from READY stays PENDING until an explicit retry.
+
+## 14. Publication (M35.8)
+
+- `scripts/ops/bean-sync.sh push` (fast-forward only, MAIN-ONLY) after local main is fast-forwarded to the M35.8 tip; remote SHA verified after push (branch gate, secret scan and runtime-data scan all passed).
+- Review PR opened for the owner from `feat/m35.8-atomic-concurrency`. The owner merges; nothing is self-merged. No production DDL, deployment, DNS change or paid provisioning.

@@ -1,0 +1,70 @@
+{
+  "milestone": "M35.8 — RIISHE Atomic Execution & Concurrency Control",
+  "tip": "48d130d (feat/m35.8-atomic-concurrency)",
+  "baseline": "26437bb (origin/main, PR #13 merge — untouched M35.7 baseline)",
+  "environment": "isolated worktrees /home/z/bean-qa-m358 (tip) and /home/z/bean-qa-m358-base (baseline), identical seeding order (db:push → seed.ts → restore-qa-fixtures.ts → seed-professions.ts), pinned DATABASE_URL validated by scripts/ops/qa-db-env.sh, MEDIA_LOCAL_ROOT per worktree, one bun process per suite",
+  "new_suite": {
+    "file": "tests/riishe-m358-concurrency.test.ts",
+    "tests": 12,
+    "runs": "6 total executions (1 focused + 5 stability re-runs + 1 in the per-file battery) — 12/12 pass every run",
+    "scenarios": [
+      "two workers claim the same READY step simultaneously (controlled barrier) — exactly one atomic claim wins, wrong ownership tokens refused",
+      "two workers execute the same READY step through the real queue entrypoint (barrier + Promise.all) — one attempt, one artifact, one execution audit pair",
+      "duplicate delivery while another attempt is RUNNING (real claim + real sweep recovery) — quiet no-op, then honest recovery to SUCCEEDED",
+      "two simultaneous approval requests for one level-2 step (barrier + Promise.all) — one claim/execution, the loser 409 conflict",
+      "two simultaneous approvals of a level-2 provider generation step — the LAXII pipeline starts exactly once",
+      "cancel never clobbers a live claim; a stale worker cannot bypass cancellation (recovered READY step is never scheduled on a CANCELLED workflow)",
+      "pause never clobbers a live claim; the post-claim re-verification (releaseClaimIfWorkflowInactive) releases to PENDING without executing",
+      "engine-level race: delivery vs cancel and delivery vs pause (Promise.all with stagger) — single-execution invariants hold under any interleaving",
+      "stale worker recovered by the real sweep cannot overwrite the live attempt — ownership token refuses the stale outcome; one artifact, one audit",
+      "duplicate simultaneous deliveries of a stamped artifact tool consume the budget exactly once",
+      "claim status surfaces: queue claims READY only; approval-time keeps PENDING/AWAITING_APPROVAL/READY/FAILED; PENDING (scheduled) steps are never queue-claimed"
+    ]
+  },
+  "per_file_qa": {
+    "baseline": {
+      "files": 133,
+      "pass": 130,
+      "fail": 1,
+      "skip_only": 2,
+      "individual_test_passes": 1959,
+      "failures": ["tests/riishe-specialists.test.ts"]
+    },
+    "tip": {
+      "files": 134,
+      "pass": 131,
+      "fail": 1,
+      "skip_only": 2,
+      "individual_test_passes": 1971,
+      "failures": ["tests/riishe-specialists.test.ts"]
+    },
+    "delta": "+1 file (the new concurrency suite, 12 tests) and exactly +12 individual test passes; zero new failures",
+    "failure_classification": {
+      "tests/riishe-specialists.test.ts": "pre-existing baseline flake — 5s per-test timeout on the org-checklist test's real AI gateway call; reproduced IDENTICALLY at the untouched baseline in this environment (18 pass / 1 fail on both tips), recorded in the M35.6/M35.7 baseline taxonomy"
+    },
+    "environment_note": "an earlier QA attempt failed tests/queue-reliability.test.ts because interrupted background runs left stale QUEUED jobs in the shared QA DB; the database was reseeded (full protocol order) and the complete battery re-run cleanly — the recorded numbers are from the clean runs, and queue-reliability passes 9/9 on both tips"
+  },
+  "gates": {
+    "tsc": "bunx tsc --noEmit — 0 errors (tip)",
+    "lint": "bun run lint — 0 errors, 14 pre-existing warnings (k6 anonymous default exports + unused eslint-disable directives)",
+    "production_build": "bun run build (next build, Turbopack) — exit 0 on BOTH tips with the identical 5 Edge-Runtime process.exit warnings in src/instrumentation.ts traces (pre-existing, verified by building the baseline clone: identical exit 0 + identical warnings)"
+  },
+  "live_evidence_production_build": {
+    "server": ".next/standalone + QA DB on 127.0.0.1:3100 (production build, in-process durable worker)",
+    "01-dashboard-catalog.json": "GET /api/riishe/dashboard — catalog size 35; laxii.banner.produce MEDIUM/level-2, career.resume.tailoredCopy MEDIUM/level-2, career.coverLetter.draft MEDIUM/level-2, giftz.task.approve HIGH/level-2 (M35.7 approval policy preserved)",
+    "04-workflow-awaiting-approval.json": "engine-seeded brief→produce chain drained by the production worker: laxii.banner.brief SUCCEEDED (level 1), laxii.banner.produce AWAITING_APPROVAL (level 2) — the queue never ran it",
+    "06-approval-response-A.json + 06-status-A.txt": "THE M35.8 LIVE RACE — two SIMULTANEOUS approval PATCH requests on the SAME level-2 step: request A → HTTP 200 {executed:true, ...real pipeline start}",
+    "06-approval-response-B.json + 06-status-B.txt": "request B (simultaneous) → HTTP 409 {\"error\":\"This step is already running\"} — the loser never executed the tool",
+    "07-db-probe.json": "post-race DB verdict EXACTLY-ONE-EXECUTION: produce attempts=1, 1 BANNER conversation, 1 ASSISTANT generation message, 1 step_succeeded audit, 1 tool audit — no duplicate provider generation or budget consumption",
+    "08-workflow-final.json": "both steps SUCCEEDED, produce attempts=1 with verification evidence",
+    "09-replayed-approval-refused.json + 09-replay-status.txt": "replayed approve on the SUCCEEDED step → HTTP 409 (terminal — M35.7 replay protection preserved)",
+    "10-chat-deterministic-workflow.json": "live chat goal → deterministic planner → creative-producer workflow (the M35 path is preserved unchanged)"
+  },
+  "browser_screenshots": [
+    "01-logged-in-landing.png (authenticated production build)",
+    "02-riishe-intelligence-1440.png (specialists strip incl. Creative Producer)",
+    "03-automations-dashboard-1440.png (level policy banner: L1 auto / L2 confirm / L3 typed confirm; live KPIs from real execution records)",
+    "04-riishe-mobile-390.png (responsive)"
+  ],
+  "regression_verdict": "ZERO M35.8-caused failures: the only failure on both tips is the identical pre-existing baseline flake; tsc/lint/build gates match the baseline exactly; 1971 individual passes on the tip vs 1959 at the baseline (+12 = the new suite only)."
+}
