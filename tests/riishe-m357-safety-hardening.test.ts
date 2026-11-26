@@ -167,13 +167,13 @@ describe("M35.7 finding 1 — provider/AI generation is approval-class", () => {
 
   test("career.resume.tailoredCopy and career.coverLetter.draft wait for explicit approval (no AI spend on bypass)", async () => {
     const u = await makeUser("bypass-career");
-    for (const [id, tool] of [
-      ["c1", "career.resume.tailoredCopy"],
-      ["c2", "career.coverLetter.draft"],
+    for (const [id, tool, extra] of [
+      ["c1", "career.resume.tailoredCopy", {}],
+      ["c2", "career.coverLetter.draft", { targetRole: "Frontend Engineer" }],
     ] as const) {
       const wf = await createWorkflowFromPlan(u.id, `run ${tool}`, {
         title: `bypass ${id}`,
-        steps: [{ id, tool, params: { jobDescription: "Requirements:\n- Expert React\n- TypeScript design-system ownership for a product team" } }],
+        steps: [{ id, tool, params: { jobDescription: "Requirements:\n- Expert React\n- TypeScript design-system ownership for a product team", ...extra } }],
       });
       cleanupWorkflows.push(wf.id);
       const step = wf.steps[0];
@@ -190,7 +190,7 @@ describe("M35.7 finding 1 — provider/AI generation is approval-class", () => {
     expect(await db.laxiiCoverLetter.count({ where: { userId: u.id } })).toBe(0);
   });
 
-  test("explicit approval executes the produce step; declining it cancels the chain honestly", async () => {
+  test("explicit approval executes the produce step through the real pipeline", async () => {
     const u = await makeUser("approve-produce");
     const wf = await createWorkflowFromPlan(u.id, "brief then produce", {
       title: "approved produce",
@@ -203,9 +203,11 @@ describe("M35.7 finding 1 — provider/AI generation is approval-class", () => {
     await drainWorkflowJobs();
     let after = await loadOwned(u.id, wf.id);
     expect(after.steps[1].status).toBe("AWAITING_APPROVAL");
-    // MEDIUM risk: no typed confirm needed — the plain approval is explicit
+    // MEDIUM risk: no typed confirm needed — the plain approval is explicit;
+    // approval-time execution is the production path for approval-class steps.
     await approveStep(u.id, after.steps[1].id, false);
-    await drainWorkflowJobs();
+    const run = await executeApprovedStep(u.id, after.steps[1].id);
+    expect(run.already).toBe(false);
     after = await loadOwned(u.id, wf.id);
     expect(after.steps[1].status).toBe("SUCCEEDED");
     const produceResult = JSON.parse(after.steps[1].resultJson) as { messageId: string; status: string; verification: { ok: boolean } };
@@ -313,12 +315,14 @@ describe("M35.7 finding 2 — retry-after-write re-attaches, never duplicates", 
     // The unique index on createdViaStepId refuses a second stamped row —
     // even a caller that bypasses the handler's re-attach check cannot
     // duplicate a step's artifact.
-    await expect(
-      db.giftzSite.create({ data: { userId: u.id, title: "second", createdViaStepId: "step-stamp-probe" } })
-    ).rejects.toThrow();
-    await expect(
-      db.giftzSite.create({ data: { userId: u.id, title: "third", createdViaStepId: "step-stamp-probe" } })
-    ).rejects.toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
+    let dupError: unknown = null;
+    try {
+      await db.giftzSite.create({ data: { userId: u.id, title: "second", createdViaStepId: "step-stamp-probe" } });
+    } catch (e) {
+      dupError = e;
+    }
+    expect(dupError).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
+    expect((dupError as Prisma.PrismaClientKnownRequestError).code).toBe("P2002");
     const sites = await db.giftzSite.findMany({ where: { userId: u.id, createdViaStepId: "step-stamp-probe" } });
     expect(sites).toHaveLength(1);
     // NULL stamps (studio-created rows) are never affected
@@ -428,7 +432,7 @@ describe("M35.7 finding 3 — refs resolve only from explicit, successful depend
     const after = await loadOwned(u.id, wf.id);
     expect(after.steps[1].status).toBe("AWAITING_APPROVAL"); // produce is approval-class
     await approveStep(u.id, after.steps[1].id, false);
-    await drainWorkflowJobs();
+    await executeApprovedStep(u.id, after.steps[1].id);
     const done = await loadOwned(u.id, wf.id);
     expect(done.steps[1].status).toBe("SUCCEEDED");
     const briefResult = JSON.parse(done.steps[0].resultJson) as { briefTaskId: string };
@@ -470,10 +474,8 @@ describe("M35.7 finding 3 — refs resolve only from explicit, successful depend
 
     // resolution-level defense in depth: the FAILED producer's artefact is
     // refused even if a corrupted step row tried to resolve it directly.
-    const failedProducer = await db.riisheWorkflowStep.findUnique({ where: { id: after.steps[1].id } });
     const dependent = await db.riisheWorkflowStep.findUnique({ where: { id: after.steps[2].id } });
-    await expect(resolveStepParams(wf.id, dependent!)).rejects.toThrow(/not an explicit earlier dependency|did not complete|SKIPPED/);
-    void failedProducer;
+    await expect(resolveStepParams(wf.id, dependent!)).rejects.toThrow(/has not completed successfully \(status: FAILED\)/);
   });
 
   test("resolution refuses undeclared refs, non-completed producers and missing artefacts (defense in depth)", async () => {
@@ -495,21 +497,24 @@ describe("M35.7 finding 3 — refs resolve only from explicit, successful depend
     const producerResult = JSON.parse(producerRow!.resultJson) as { postId: string };
     expect(resolved.postRef).toBe(producerResult.postId);
 
-    // undeclared ref (tampered params): refused even though the producer SUCCEEDED
-    const w2 = await createWorkflowFromPlan(u.id, "standalone note", {
+    // undeclared ref (tampered params): refused even though the producer
+    // SUCCEEDED — the ref names a real step of the SAME workflow that the
+    // consuming step never declared in its own dependsOn.
+    const w2 = await createWorkflowFromPlan(u.id, "note producer and standalone note", {
       title: "defense undeclared",
-      steps: [{ id: "n1", tool: "relationship.saveNote", params: { username: "nobody-here", note: "x" } }],
+      steps: [
+        { id: "n1", tool: "post.draft", params: { body: "producer for the tamper probe", hashtags: [] } },
+        { id: "n2", tool: "relationship.saveNote", params: { username: "nobody-here", note: "x" } },
+      ],
     });
     cleanupWorkflows.push(w2.id);
-    const w2note = await db.riisheWorkflowStep.findUnique({ where: { id: w2.steps[0].id } });
-    const producerRow2 = await db.riisheWorkflowStep.findUnique({ where: { id: w1after.steps[0].id } });
+    await drainWorkflowJobs();
     await db.riisheWorkflowStep.update({
-      where: { id: w2.steps[0].id },
-      data: { paramsJson: JSON.stringify({ postRef: producerRow2!.ref }) },
+      where: { id: w2.steps[1].id },
+      data: { paramsJson: JSON.stringify({ postRef: "n1" }) },
     });
-    const w2noteTampered = await db.riisheWorkflowStep.findUnique({ where: { id: w2.steps[0].id } });
+    const w2noteTampered = await db.riisheWorkflowStep.findUnique({ where: { id: w2.steps[1].id } });
     await expect(resolveStepParams(w2.id, w2noteTampered!)).rejects.toThrow(/not an explicit earlier dependency/);
-    void w2note;
 
     // non-completed producer (PENDING): refused — artefacts resolve only
     // from SUCCEEDED steps, never from pending/running producers.
@@ -534,7 +539,19 @@ describe("M35.7 finding 3 — refs resolve only from explicit, successful depend
       ],
     });
     cleanupWorkflows.push(w4.id);
-    await drainWorkflowJobs();
+    // laxii.job.status retries (maxAttempts 3) — compress the queue's backoff
+    // and drain until the step reaches a terminal state (the REAL sweep
+    // re-enqueues the READY step between rounds, exactly like production).
+    for (let round = 0; round < 6; round++) {
+      const current = await db.riisheWorkflowStep.findUnique({ where: { id: w4.steps[1].id } });
+      if (!current || ["FAILED", "SUCCEEDED", "SKIPPED", "CANCELLED"].includes(current.status)) break;
+      await db.backgroundJob.updateMany({
+        where: { kind: "riishe.workflow", status: "QUEUED", payload: { contains: w4.steps[1].id } },
+        data: { runAt: new Date() },
+      });
+      await drainWorkflowJobs();
+      await runWorkflowSweep();
+    }
     const w4after = await loadOwned(u.id, w4.id);
     expect(w4after.steps[1].status).toBe("FAILED");
     expect(w4after.steps[1].error).toMatch(/produced no messageId/);

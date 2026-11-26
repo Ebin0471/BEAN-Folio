@@ -55,7 +55,7 @@ mock.module("@/lib/ai", () => ({
 import { db } from "@/lib/db";
 import { CREATIVE_TOOLS } from "@/lib/riishe/creative-tools";
 import { getTool, toolApprovalRequired, REF_FIELDS, REF_RESULT_KEYS } from "@/lib/riishe/tools";
-import { runWorkflowStepJob, createWorkflowFromPlan, loadOwned, approveStep } from "@/lib/riishe/workflow-engine";
+import { runWorkflowStepJob, createWorkflowFromPlan, loadOwned, approveStep, executeApprovedStep } from "@/lib/riishe/workflow-engine";
 import { planDeterministically } from "@/lib/riishe/planner";
 import { classifySpecialist, getSpecialist, SPECIALISTS } from "@/lib/riishe/specialists";
 import { canonicalBannerPreset } from "@/lib/laxii/banner-presets";
@@ -690,8 +690,9 @@ describe("M35 workflow engine integration", () => {
     });
     expect(unapprovedJobs).toBe(0);
     // the owner's explicit approval is what starts the real pipeline
+    // (approval-time execution is the production path for approval-class steps)
     await approveStep(owner.id, produceStep.id, false);
-    await drainUntilSettled();
+    await executeApprovedStep(owner.id, produceStep.id);
     loaded = await loadOwned(owner.id, wf.id);
     expect(loaded.steps[1].status).toBe("SUCCEEDED");
     const briefResult = JSON.parse(loaded.steps[0].resultJson) as { briefTaskId: string; verification: { ok: boolean } };
