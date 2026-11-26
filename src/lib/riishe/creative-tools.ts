@@ -5,17 +5,27 @@
  * runtime), re-verifies ownership server-side through the owner's userId,
  * and returns only outputs the backend actually produced.
  *
- * Approval model (unchanged):
+ * Approval model (M35.7 — provider/AI generation is approval-class):
  *  - Nothing here publishes, sends, spends money or deletes. The registry
- *    gate (`toolApprovalRequired`) keeps the ONE execution-class tool —
- *    `giftz.task.approve`, which runs real file edits inside the owner's own
- *    GIFTZ workspace — at HIGH / automation level 2: explicit owner
- *    confirmation, never queue execution, re-checked at execution time.
- *  - Level-1 MEDIUM tools follow the established precedent for private,
- *    persistent, bounded effects (`shortlist.addCreators`,
- *    `relationship.saveNote`); existing studio quotas (LAXII daily image and
- *    cost guards, GIFTZ task attempt caps) apply end-to-end because these
- *    handlers call the same services.
+ *    gate (`toolApprovalRequired`) keeps execution-class tools at level 2:
+ *    `giftz.task.approve` (HIGH — real file edits inside the owner's own
+ *    GIFTZ workspace) and, since M35.7, every tool whose execution invokes
+ *    a real provider/AI generation and consumes the owner's provisioned
+ *    budget — `laxii.banner.produce` (LAXII image-provider generation,
+ *    MEDIUM/2) and the AI career-document generators `career.resume.tailoredCopy`
+ *    and `career.coverLetter.draft` (MEDIUM/2). Explicit owner confirmation
+ *    for EVERY execution, never queue execution, re-checked at execution
+ *    time (MEDIUM + level 2 follows the `post.schedule` precedent).
+ *  - Level-1 tools remain the registry precedent for private, non-generation
+ *    effects (draft rows, deterministic analysis, read-only reports); existing
+ *    studio quotas (LAXII daily image and cost guards, GIFTZ task attempt
+ *    caps, the shared AI budget) apply end-to-end because these handlers call
+ *    the same services.
+ *  - M35.7 durable step-level idempotency: `giftz.site.create` and
+ *    `laxii.banner.brief` stamp the artifact with the creating workflow step
+ *    (`createdViaStepId`, committed in the SAME insert). A retry after a
+ *    partially successful write re-attaches to the stamped artifact instead
+ *    of duplicating it — the unique index makes the pairing airtight.
  *
  * Honesty contract: tools that start durable work (GIFTZ task planning, LAXII
  * generation) complete when that work is durably CLAIMED — they never claim
@@ -25,7 +35,7 @@
  */
 
 import { z } from "zod";
-import type { User } from "@prisma/client";
+import { Prisma, type User } from "@prisma/client";
 
 import { db } from "@/lib/db";
 import {
@@ -139,17 +149,68 @@ const giftzSiteCreateInput = z
   })
   .strict();
 
-/** LOW — creates an owned GIFTZ site DRAFT (never published). */
+/**
+ * LOW — creates an owned GIFTZ site DRAFT (never published).
+ *
+ * M35.7 durable step-level idempotency: when the tool runs as a workflow
+ * step, the draft row is stamped with `createdViaStepId` in the SAME insert,
+ * so a retry after a partially successful write (artifact committed, step
+ * result lost to a crash) re-attaches to the existing draft instead of
+ * creating a duplicate. The unique index keeps the step↔draft pairing
+ * airtight even under concurrent redelivery (the racing loser re-reads).
+ */
 async function giftzSiteCreateExecute(ctx: ToolContext, input: z.infer<typeof giftzSiteCreateInput>) {
-  const site = await db.giftzSite.create({
-    data: {
-      userId: ctx.userId,
-      title: input.title?.trim().slice(0, 120) || "Untitled site",
-      sourcePrompt: input.sourcePrompt?.slice(0, 50_000) ?? null,
-      description: input.description?.trim().slice(0, 300) || null,
-    },
-    select: { id: true, title: true, status: true, createdAt: true },
-  });
+  if (ctx.stepId) {
+    const prior = await db.giftzSite.findFirst({
+      where: { userId: ctx.userId, createdViaStepId: ctx.stepId },
+      orderBy: { createdAt: "asc" },
+      select: { id: true, title: true, status: true, createdAt: true },
+    });
+    if (prior) {
+      return {
+        siteId: prior.id,
+        title: prior.title,
+        status: prior.status,
+        createdAt: prior.createdAt.toISOString(),
+        reused: true,
+        note: "A draft for this workflow step already exists (durable step-level idempotency) — re-attached to it; no duplicate was created.",
+      };
+    }
+  }
+  let site;
+  try {
+    site = await db.giftzSite.create({
+      data: {
+        userId: ctx.userId,
+        title: input.title?.trim().slice(0, 120) || "Untitled site",
+        sourcePrompt: input.sourcePrompt?.slice(0, 50_000) ?? null,
+        description: input.description?.trim().slice(0, 300) || null,
+        ...(ctx.stepId ? { createdViaStepId: ctx.stepId } : {}),
+      },
+      select: { id: true, title: true, status: true, createdAt: true },
+    });
+  } catch (e) {
+    // Concurrent redelivery of the same step lost the unique-stamp race:
+    // re-attach to the winning attempt's row — never a duplicate.
+    if (ctx.stepId && e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+      const winner = await db.giftzSite.findFirst({
+        where: { userId: ctx.userId, createdViaStepId: ctx.stepId },
+        orderBy: { createdAt: "asc" },
+        select: { id: true, title: true, status: true, createdAt: true },
+      });
+      if (winner) {
+        return {
+          siteId: winner.id,
+          title: winner.title,
+          status: winner.status,
+          createdAt: winner.createdAt.toISOString(),
+          reused: true,
+          note: "A concurrent attempt of this workflow step created the draft — re-attached to it; no duplicate was created.",
+        };
+      }
+    }
+    throw e;
+  }
   return {
     siteId: site.id,
     title: site.title,
@@ -304,8 +365,35 @@ const bannerBriefInput = z
  * AgentTask(BANNER_DESIGN) awaiting review. Exact typography comes ONLY from
  * the supplied headline/subtext (or quoted strings in the request) — RIISHE
  * never invents text. Nothing is generated.
+ *
+ * M35.7 durable step-level idempotency: when the tool runs as a workflow
+ * step, the brief AgentTask is stamped with `createdViaStepId` at INSERT
+ * time, so a retry after a partially successful write re-attaches to the
+ * stamped brief task instead of creating a duplicate brief (the unique
+ * index keeps the pairing airtight under concurrent redelivery).
  */
 async function bannerBriefExecute(ctx: ToolContext, input: z.infer<typeof bannerBriefInput>) {
+  if (ctx.stepId) {
+    const priorTask = await db.agentTask.findFirst({
+      where: { userId: ctx.userId, agent: "LAXII", kind: "BANNER_DESIGN", createdViaStepId: ctx.stepId },
+      orderBy: { createdAt: "asc" },
+      select: { id: true, status: true },
+    });
+    if (priorTask) {
+      const loaded = await loadBriefTask(ctx.userId, priorTask.id);
+      // Re-attach honestly — only with data actually stored on the row:
+      // an unparsable stored brief is a failure, never a re-invented brief.
+      if (!loaded) throw new Error(`brief task ${priorTask.id} for this step could not be re-read (stored brief unparsable)`);
+      return {
+        briefTaskId: priorTask.id,
+        canvas: { presetSlug: loaded.brief.canvas.presetSlug, width: loaded.brief.canvas.width, height: loaded.brief.canvas.height },
+        typography: loaded.brief.typography.items,
+        portfolioUsed: true,
+        reused: true,
+        note: "A brief task for this workflow step already exists (durable step-level idempotency) — re-attached to it; no duplicate was created.",
+      };
+    }
+  }
   const user = await loadOwner(ctx.userId);
   const built = await buildStructuredBannerBrief(user, input.request);
   let brief = built.brief;
@@ -323,7 +411,7 @@ async function bannerBriefExecute(ctx: ToolContext, input: z.infer<typeof banner
   const { taskId } = await persistStructuredBriefTask(user, brief, humanBrief, {
     url: "#/laxii",
     label: "Open LAXII banner studio",
-  });
+  }, ctx.stepId ? { createdViaStepId: ctx.stepId } : undefined);
   return {
     briefTaskId: taskId,
     canvas: { presetSlug: brief.canvas.presetSlug, width: brief.canvas.width, height: brief.canvas.height },
@@ -353,13 +441,16 @@ const bannerProduceInput = z
   .refine((v) => v.briefTaskRef || v.briefTaskId, { message: "briefTaskRef or briefTaskId is required" });
 
 /**
- * MEDIUM (level 1 — private artefact, bounded by the existing LAXII daily
- * image + cost guards) — starts the REAL brief-driven banner pipeline through
- * the shared `startBriefDrivenBanner` service (the exact entry the studio
- * route calls): canvas truth, dedupe, `startGenerationJob` worker (provider
- * scene, deterministic typography, quality loop). Completes when the job is
- * durably RUNNING — the rendered asset is verified by the pipeline and
- * reported truthfully by `laxii.job.status`.
+ * MEDIUM (LEVEL 2 — M35.7: provider generation is approval-class; explicit
+ * owner confirmation for every execution, the queue never runs it
+ * unapproved) — starts the REAL brief-driven banner pipeline through the
+ * shared `startBriefDrivenBanner` service (the exact entry the studio route
+ * calls): canvas truth, dedupe, `startGenerationJob` worker (provider
+ * scene, deterministic typography, quality loop). The provider call
+ * consumes the owner's LAXII daily image + cost guards, which is exactly
+ * why it requires the explicit go-ahead. Completes when the job is durably
+ * RUNNING — the rendered asset is verified by the pipeline and reported
+ * truthfully by `laxii.job.status`.
  */
 async function bannerProduceExecute(ctx: ToolContext, input: z.infer<typeof bannerProduceInput>) {
   const briefTaskId = idOrRef(input.briefTaskRef, input.briefTaskId, "briefTaskId");
@@ -521,8 +612,10 @@ const resumeTailorInput = z
   .strict();
 
 /**
- * MEDIUM (level 1 — private artefact) — the REAL M33.5 tailored-copy service:
- * a NEW resume conversation derived from the owned master (master untouched),
+ * MEDIUM (LEVEL 2 — M35.7: AI career-document generation is approval-class;
+ * the gateway call consumes the owner's shared AI budget, so every execution
+ * needs the explicit go-ahead) — the REAL M33.5 tailored-copy service: a NEW
+ * resume conversation derived from the owned master (master untouched),
  * tailored against the job description with the anti-fabrication guards and
  * revision snapshots the studio path runs. Fails honestly on gateway errors.
  */
@@ -581,9 +674,11 @@ const coverLetterInput = z
   .strict();
 
 /**
- * MEDIUM (level 1 — private artefact) — the REAL M33.5 cover-letter writer:
- * draws ONLY from the owned resume's confirmed facts + the job description;
- * the automated guard rejects unverified names/numbers (one corrective retry,
+ * MEDIUM (LEVEL 2 — M35.7: AI career-document generation is approval-class;
+ * the gateway call consumes the owner's shared AI budget, so every execution
+ * needs the explicit go-ahead) — the REAL M33.5 cover-letter writer: draws
+ * ONLY from the owned resume's confirmed facts + the job description; the
+ * automated guard rejects unverified names/numbers (one corrective retry,
  * then an honest failure with nothing saved). The letter lands as a private
  * row for studio review — nothing is sent anywhere.
  */
@@ -656,7 +751,9 @@ export const CREATIVE_TOOLS: Record<string, RiisheToolDef<never>> = {
     inputSchema: giftzSiteCreateInput,
     timeoutMs: 20_000,
     maxAttempts: 3,
-    idempotent: false,
+    // M35.7: retries after a partially successful write re-attach to the
+    // step-stamped draft (createdViaStepId) instead of duplicating it.
+    idempotent: true,
     auditAction: "riishe.tool.giftz_site_create",
     execute: giftzSiteCreateExecute,
     verify: verifyGiftzSiteCreated,
@@ -722,7 +819,9 @@ export const CREATIVE_TOOLS: Record<string, RiisheToolDef<never>> = {
     inputSchema: bannerBriefInput,
     timeoutMs: 20_000,
     maxAttempts: 3,
-    idempotent: false,
+    // M35.7: retries after a partially successful write re-attach to the
+    // step-stamped brief task (createdViaStepId) instead of duplicating it.
+    idempotent: true,
     auditAction: "riishe.tool.banner_brief",
     execute: bannerBriefExecute,
     verify: verifyBannerBrief,
@@ -732,9 +831,9 @@ export const CREATIVE_TOOLS: Record<string, RiisheToolDef<never>> = {
     name: "laxii.banner.produce",
     title: "Produce the banner",
     description:
-      "Run the REAL LAXII banner pipeline for a reviewed brief (scene generation, deterministic typography, quality loop, exact-canvas output). Bounded by your daily LAXII image and budget guards.",
+      "REQUIRES your confirmation — run the REAL LAXII banner pipeline for a reviewed brief (scene generation, deterministic typography, quality loop, exact-canvas output). The provider generation consumes your daily LAXII image and budget guards.",
     risk: "MEDIUM",
-    level: 1,
+    level: 2,
     category: "content",
     inputSchema: bannerProduceInput,
     timeoutMs: 30_000,
@@ -796,9 +895,9 @@ export const CREATIVE_TOOLS: Record<string, RiisheToolDef<never>> = {
     name: "career.resume.tailoredCopy",
     title: "Create a tailored resume copy",
     description:
-      "Create a job-specific copy of one of YOUR resumes (newest master by default; master untouched) through the real tailoring service — anti-fabrication guards, revision snapshots, honest diff.",
+      "REQUIRES your confirmation — create a job-specific copy of one of YOUR resumes (newest master by default; master untouched) through the real tailoring service. The AI gateway call consumes your shared AI budget; anti-fabrication guards, revision snapshots and an honest diff apply.",
     risk: "MEDIUM",
-    level: 1,
+    level: 2,
     category: "content",
     inputSchema: resumeTailorInput,
     timeoutMs: 150_000,
@@ -813,9 +912,9 @@ export const CREATIVE_TOOLS: Record<string, RiisheToolDef<never>> = {
     name: "career.coverLetter.draft",
     title: "Draft a cover letter",
     description:
-      "Write a cover letter from YOUR resume's confirmed facts (newest master by default) and the job description through the real guarded writer — unverified names/numbers are rejected, the letter stays a private draft.",
+      "REQUIRES your confirmation — write a cover letter from YOUR resume's confirmed facts (newest master by default) and the job description through the real guarded writer. The AI gateway call consumes your shared AI budget; unverified names/numbers are rejected and the letter stays a private draft.",
     risk: "MEDIUM",
-    level: 1,
+    level: 2,
     category: "content",
     inputSchema: coverLetterInput,
     timeoutMs: 150_000,

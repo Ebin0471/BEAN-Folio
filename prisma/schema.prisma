@@ -956,6 +956,12 @@ model AgentTask {
   // (replaces the process-local cancel Set). Cleared when the task is retried
   // or swept back for a fresh attempt.
   cancelRequestedAt DateTime?
+  // M35.7 — durable step-level idempotency for registered-tool execution:
+  // the RIISHE workflow step that created this task (null = created outside
+  // a workflow). A retry after a partially successful write re-attaches to
+  // the stamped row instead of duplicating it; the unique index keeps the
+  // step↔artifact pairing airtight even under concurrent redelivery.
+  createdViaStepId String? @unique
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 
@@ -1238,6 +1244,12 @@ model GiftzSite {
   // Standalone-platform publish pipeline state:
   // DRAFT | BUILDING | PREVIEW | READY_TO_PUBLISH | DEPLOYING | PUBLISHED | FAILED
   deployStatus    String   @default("DRAFT")
+  // M35.7 — durable step-level idempotency: the RIISHE workflow step that
+  // created this draft (null = created in the studio UI). A workflow-step
+  // retry after a partially successful write re-attaches to the stamped row
+  // instead of duplicating it; the unique index makes the pairing airtight
+  // even under concurrent job redelivery.
+  createdViaStepId String? @unique
   publishedAt     DateTime?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt

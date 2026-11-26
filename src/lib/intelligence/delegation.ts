@@ -277,12 +277,18 @@ export function describeBrief(brief: DesignBrief): string {
  * (M35: the shared persistence for BOTH the delegation flow and the
  * registered `laxii.banner.brief` tool — one code path, no drift). Stamps
  * the task id back onto the brief (sourceTaskId) exactly like prepareDelegation.
+ *
+ * M35.7: callers executing as a RIISHE workflow step pass
+ * `createdViaStepId` so the durable brief task is stamped for step-level
+ * idempotency (committed in the SAME insert); the delegation flow leaves it
+ * null. The unique index keeps the step↔task pairing airtight.
  */
 export async function persistStructuredBriefTask(
   user: Pick<User, "id">,
   brief: DesignBrief,
   humanBrief: string,
-  destination: { url: string; label: string }
+  destination: { url: string; label: string },
+  opts?: { createdViaStepId?: string | null }
 ): Promise<{ taskId: string }> {
   const steps = [
     { step: "brief-prepared", status: "done", note: "Structured design brief built (own data only)." },
@@ -298,6 +304,7 @@ export async function persistStructuredBriefTask(
       title: brief.request.slice(0, 80),
       status: "AWAITING_APPROVAL",
       stepsJson: JSON.stringify(steps),
+      ...(opts?.createdViaStepId ? { createdViaStepId: opts.createdViaStepId } : {}),
       resultJson: JSON.stringify({
         brief: humanBrief,
         structuredBrief: brief,

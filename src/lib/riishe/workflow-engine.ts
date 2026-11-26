@@ -260,6 +260,26 @@ export async function createWorkflowFromPlan(
     }
     earlier.add(s.id);
   }
+  // M35.7: typed artefact references are validated against the plan's EXPLICIT
+  // dependency graph at plan time — a ref param may only name a step the step
+  // has declared in its own dependsOn (an earlier step by the rule above).
+  // Forward references, self references, references to undeclared steps and
+  // references to unknown ids are rejected before anything is persisted.
+  for (const s of plan.steps) {
+    const declared = new Set(s.dependsOn ?? []);
+    for (const [k, v] of Object.entries(s.params ?? {})) {
+      if (!REF_FIELDS.has(k) || typeof v !== "string") continue;
+      if (v === s.id) {
+        throw new WorkflowError(`step ${s.id} references itself via ${k} — artefact refs name an earlier producer step`, "invalid");
+      }
+      if (!planIds.has(v) || !declared.has(v)) {
+        throw new WorkflowError(
+          `step ${s.id} references "${k}: ${v}", which is not an explicit earlier dependency of that step — declare it in its dependsOn`,
+          "invalid"
+        );
+      }
+    }
+  }
 
   const workflow = await db.riisheWorkflow.create({
     data: {
@@ -385,11 +405,27 @@ export async function scheduleReadySteps(workflowId: string, userId: string): Pr
   return scheduled;
 }
 
-/** Resolve planner-id refs (draftRef/postRef, M35 typed artefact refs) via the
- * referenced step's result — the mapping lives in REF_RESULT_KEYS. */
-async function resolveStepParams(
+/**
+ * Resolve planner-id refs (draftRef/postRef, M35 typed artefact refs) via the
+ * referenced step's result — the mapping lives in REF_RESULT_KEYS.
+ *
+ * M35.7 validation, applied to EVERY ref param before it resolves:
+ *  1. the referenced step must EXIST (planner id of a step in this workflow);
+ *  2. it must be an EXPLICIT earlier dependency of the consuming step
+ *     (declared in that step's persisted dependsOn) — refs against
+ *     undeclared steps, forward references and self references are refused;
+ *  3. the source step must have COMPLETED SUCCESSFULLY — artefacts resolve
+ *     only from SUCCEEDED steps (a pending/running/failed/cancelled/skipped
+ *     producer never yields its artefact);
+ *  4. only then is the artefact read from the source step's result — a
+ *     successful producer that carried no such artefact fails honestly
+ *     (dependency-missing).
+ * Exported for the M35.7 safety suite (all error classes pinned against the
+ * REAL engine + database).
+ */
+export async function resolveStepParams(
   workflowId: string,
-  step: { paramsJson: string; kind: string }
+  step: { id: string; paramsJson: string; kind: string; dependsOnJson: string }
 ): Promise<Record<string, unknown>> {
   const params = safeJson(step.paramsJson) ?? {};
   const tool = getTool(step.kind);
@@ -398,11 +434,27 @@ async function resolveStepParams(
   if (!needsResolution) return params;
   const all = await db.riisheWorkflowStep.findMany({ where: { workflowId } });
   const byRef = new Map(all.map((s) => [s.ref, s]));
+  const depRowIds = safeIds(step.dependsOnJson);
   const resolved: Record<string, unknown> = { ...params };
   for (const [k, v] of Object.entries(params)) {
     if (!REF_FIELDS.has(k) || typeof v !== "string") continue;
     const refStep = byRef.get(v);
     if (!refStep) throw new WorkflowError(`step reference "${v}" not found`, "invalid");
+    if (refStep.id === step.id) {
+      throw new WorkflowError(`step reference "${v}" would reference itself`, "invalid");
+    }
+    if (!depRowIds.includes(refStep.id)) {
+      throw new WorkflowError(
+        `referenced step "${v}" is not an explicit earlier dependency of this step — declare it in dependsOn`,
+        "dependency-undeclared"
+      );
+    }
+    if (refStep.status !== "SUCCEEDED") {
+      throw new WorkflowError(
+        `referenced step "${v}" has not completed successfully (status: ${refStep.status}) — artefacts resolve only from successful steps`,
+        "dependency-failed"
+      );
+    }
     const result = safeJson(refStep.resultJson);
     const resultKey = REF_RESULT_KEYS[k] ?? "";
     const value = resultKey ? (result?.[resultKey] as string | undefined) : undefined;
@@ -422,6 +474,7 @@ async function executeTool(
     id: string;
     kind: string;
     paramsJson: string;
+    dependsOnJson: string;
     timeoutMs: number;
     workflowId: string;
   },
@@ -500,6 +553,13 @@ export async function runWorkflowStepJob(job: BackgroundJob): Promise<void> {
   }
   if (step.status === "FAILED") {
     return; // final failure recorded — the queue's own retry row is stale
+  }
+  if (step.status === "RUNNING") {
+    // M35.7: another (in-flight) attempt owns this step — a duplicate or
+    // early-redelivered job must NEVER execute the tool a second time
+    // concurrently. The running attempt finishes the step; if its worker
+    // died, the sweep recovers the stale RUNNING row and re-queues it.
+    return;
   }
   if (workflow.status !== "ACTIVE") {
     // Paused/cancelled workflows stop scheduling; the job is released.
@@ -774,6 +834,12 @@ export async function deriveWorkflowStatus(workflowId: string, userId: string): 
 export async function approveStep(userId: string, stepId: string, confirm: boolean) {
   const step = await db.riisheWorkflowStep.findFirst({ where: { id: stepId, userId } });
   if (!step) throw new WorkflowError("Step not found", "not-found");
+  // M35.7: an approval for a step that already reached a terminal state is a
+  // REPLAY — refused instead of silently rewritten (execution never re-runs:
+  // SUCCEEDED steps are final, CANCELLED/SKIPPED ones can no longer start).
+  if (["SUCCEEDED", "CANCELLED", "SKIPPED"].includes(step.status)) {
+    throw new WorkflowError("This step can no longer be approved", "terminal");
+  }
   const tool = getTool(step.kind);
   if (tool && tool.risk === "DESTRUCTIVE" && !confirm) {
     throw new WorkflowError("Destructive actions need the explicit confirm interaction", "confirm-required");
