@@ -43,7 +43,7 @@ async function execTool(tool: { execute: (c: ToolContext, i: never) => Promise<R
 }
 
 describe("M31 specialist registry contract", () => {
-  test("all nine specialists are registered with stable ids and complete manifests", () => {
+  test("all ten specialists are registered with stable ids and complete manifests", () => {
     const ids = SPECIALISTS.map((s) => s.id);
     expect(ids).toEqual([
       "career-guide",
@@ -55,6 +55,8 @@ describe("M31 specialist registry contract", () => {
       "business-analyst",
       "people-operations",
       "docs-knowledge",
+      // M35: the Creative Producer over the registered giftz.*/laxii.* tools.
+      "creative-producer",
     ]);
     for (const s of SPECIALISTS) {
       expect(s.name.length).toBeGreaterThan(0);
