@@ -199,9 +199,11 @@ describe("M35 giftz.* tools", () => {
     const tool = getTool("giftz.site.plan")!;
     const parsed = tool.inputSchema.parse({ brief: "A portfolio website for a wedding photographer with a gallery and a contact page" });
     const result = await tool.execute({ userId: owner.id }, parsed as never);
-    const plan = (result as { plan: { family?: { id?: string }; pages?: unknown[] } }).plan;
+    const plan = (result as { plan: { family?: { id?: string }; sitemap?: unknown[]; featureMatrix?: unknown[] } }).plan;
     expect(plan).toBeDefined();
-    expect(Array.isArray(plan.pages)).toBe(true);
+    expect(plan.family.id.length).toBeGreaterThan(0);
+    expect(Array.isArray(plan.sitemap)).toBe(true);
+    expect(Array.isArray(plan.featureMatrix)).toBe(true);
   });
 
   test("giftz.site.plan refuses unsupported families honestly", async () => {
@@ -305,7 +307,18 @@ describe("M35 giftz.* tools", () => {
         title: "approve execution probe",
         status: "AWAITING_APPROVAL",
         repoId: repo.id,
-        resultJson: JSON.stringify({ request: "approve execution probe", plan: null, inspection: null, edits: [], diffs: [], runs: [], report: null, attempts: 0 }),
+        resultJson: JSON.stringify({
+          request: "approve execution probe",
+          // launchExecution requires a validated plan to claim — a realistic
+          // AWAITING_APPROVAL task always carries one.
+          plan: { summary: "probe", files: [], steps: [], commands: [] },
+          inspection: null,
+          edits: [],
+          diffs: [],
+          runs: [],
+          report: null,
+          attempts: 0,
+        }),
       },
     });
     const tool = getTool("giftz.task.approve")!;
@@ -547,7 +560,7 @@ describe("M35 career.resume.* tools", () => {
     };
     expect(result.masterConversationId).toBe(master.id);
     expect(result.conversationId).not.toBe(master.id);
-    expect(result.notes.some((n) => n.includes("master was NOT modified"))).toBe(true);
+    expect(result.notes.some((n) => n.includes("was NOT modified"))).toBe(true);
 
     const verification = await tool.verify!({ userId: owner.id }, parsed as never, result as Record<string, unknown>);
     expect(verification.ok).toBe(true);
@@ -610,6 +623,36 @@ describe("M35 career.coverLetter.draft", () => {
 // ---------------------------------------------------------- engine integration
 
 describe("M35 workflow engine integration", () => {
+  /**
+   * Drain riishe.workflow jobs through the REAL worker handler, retrying
+   * ready steps until terminal (the production queue retries with backoff;
+   * the test compresses the backoff to keep the suite bounded).
+   */
+  async function drainUntilSettled(): Promise<void> {
+    for (let round = 0; round < 12; round++) {
+      const jobs = await db.backgroundJob.findMany({
+        where: { kind: "riishe.workflow", status: "QUEUED", runAt: { lte: new Date() } },
+        take: 5,
+      });
+      if (jobs.length === 0) break;
+      for (const job of jobs) {
+        const payload = JSON.parse(job.payload) as { stepId?: string };
+        // Retry the SAME job while its step is READY (the production queue
+        // applies backoff between attempts; the test compresses it).
+        for (let attempt = 0; attempt < 4; attempt++) {
+          const claimed = await db.backgroundJob.update({
+            where: { id: job.id },
+            data: { status: "RUNNING", claimedBy: "test", claimedAt: new Date(), heartbeatAt: new Date() },
+          });
+          await runWorkflowStepJob(claimed).catch(() => undefined);
+          await db.backgroundJob.update({ where: { id: job.id }, data: { status: "DONE" } }).catch(() => undefined);
+          const step = payload.stepId ? await db.riisheWorkflowStep.findUnique({ where: { id: payload.stepId } }) : null;
+          if (!step || step.status !== "READY") break;
+        }
+      }
+    }
+  }
+
   test("typed artefact refs resolve through the engine: banner brief → produce chain", async () => {
     const plan = {
       title: "Banner chain",
@@ -622,22 +665,7 @@ describe("M35 workflow engine integration", () => {
     const wf = await createWorkflowFromPlan(owner.id, "brief then produce a banner", plan as unknown as Parameters<typeof createWorkflowFromPlan>[2], {
       planner: "deterministic",
     });
-    // drain the queue through the REAL worker handler
-    for (let i = 0; i < 10; i++) {
-      const jobs = await db.backgroundJob.findMany({
-        where: { kind: "riishe.workflow", status: "QUEUED", runAt: { lte: new Date() } },
-        take: 5,
-      });
-      if (jobs.length === 0) break;
-      for (const job of jobs) {
-        const claimed = await db.backgroundJob.update({
-          where: { id: job.id },
-          data: { status: "RUNNING", claimedBy: "test", claimedAt: new Date(), heartbeatAt: new Date() },
-        });
-        await runWorkflowStepJob(claimed).catch(() => undefined);
-        await db.backgroundJob.update({ where: { id: job.id }, data: { status: "DONE" } }).catch(() => undefined);
-      }
-    }
+    await drainUntilSettled();
     const loaded = await loadOwned(owner.id, wf.id);
     const [briefStep, produceStep] = loaded.steps;
     expect(briefStep.status).toBe("SUCCEEDED");
@@ -669,21 +697,7 @@ describe("M35 workflow engine integration", () => {
     const wf = await createWorkflowFromPlan(owner.id, "honest missing ref", plan as unknown as Parameters<typeof createWorkflowFromPlan>[2], {
       planner: "deterministic",
     });
-    for (let i = 0; i < 10; i++) {
-      const jobs = await db.backgroundJob.findMany({
-        where: { kind: "riishe.workflow", status: "QUEUED", runAt: { lte: new Date() } },
-        take: 5,
-      });
-      if (jobs.length === 0) break;
-      for (const job of jobs) {
-        const claimed = await db.backgroundJob.update({
-          where: { id: job.id },
-          data: { status: "RUNNING", claimedBy: "test", claimedAt: new Date(), heartbeatAt: new Date() },
-        });
-        await runWorkflowStepJob(claimed).catch(() => undefined);
-        await db.backgroundJob.update({ where: { id: job.id }, data: { status: "DONE" } }).catch(() => undefined);
-      }
-    }
+    await drainUntilSettled();
     const loaded = await loadOwned(owner.id, wf.id);
     const statusStep = loaded.steps[1];
     expect(statusStep.status).toBe("FAILED");
