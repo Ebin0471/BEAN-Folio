@@ -191,11 +191,20 @@ describe("B2 registry — permission declarations are registry-level and real", 
     for (const name of Object.keys(RIISHE_TOOLS)) {
       expect(name.startsWith("identity.")).toBe(false);
       expect(name.startsWith("analytics.")).toBe(false);
-      expect(name.startsWith("portfolio.")).toBe(false);
+      // M36.1: "portfolio." was a RESERVED namespace in the B2-era ban list;
+      // it is now REAL, registered, handler-backed capability territory
+      // (portfolio.evidenceReport / portfolio.publicEvidence — 28 dedicated
+      // tests). The placeholder ban still holds for the other prefixes, and
+      // every portfolio.* tool must be a real implementation, never a stub.
       expect(name.startsWith("resume.")).toBe(false);
     }
-    // Exactly the fourteen real core tools + the nine real M31 specialist
-    // tools (all Level-1, registry-verified — see tests/riishe-specialists.test.ts).
+    for (const name of ["portfolio.evidenceReport", "portfolio.publicEvidence"]) {
+      const tool = getTool(name);
+      expect(tool).not.toBeNull();
+      expect(typeof tool!.execute).toBe("function"); // real handler, never a placeholder
+    }
+    // Every pre-M36.1 real tool + the two real M36.1 portfolio evidence
+    // tools — nothing else, nothing placeholder.
     expect(Object.keys(RIISHE_TOOLS).sort()).toEqual(
       [
         // Core fourteen (B1/B2)
@@ -238,6 +247,10 @@ describe("B2 registry — permission declarations are registry-level and real", 
         "laxii.banner.brief",
         "laxii.banner.produce",
         "laxii.job.status",
+        // M36.1 portfolio evidence tools (real, registered, tested — see
+        // tests/riishe-portfolio-evidence.test.ts)
+        "portfolio.evidenceReport",
+        "portfolio.publicEvidence",
       ].sort()
     );
   });

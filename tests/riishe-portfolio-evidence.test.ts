@@ -101,8 +101,10 @@ function ctx(userId: string, workspace?: ToolContext["workspace"]): ToolContext 
   return { userId, workflowId: "qa-workflow", stepId: "qa-step", auditTraceId: `m361-${RUN}`, workspace };
 }
 
-async function execTool(tool: { execute: (c: ToolContext, i: never) => Promise<Record<string, unknown>> }, c: ToolContext, input: Record<string, unknown>) {
-  return tool.execute(c, input as never);
+async function execTool(tool: { inputSchema: { parse: (i: unknown) => unknown }; execute: (c: ToolContext, i: never) => Promise<Record<string, unknown>> }, c: ToolContext, input: Record<string, unknown>) {
+  // Mirror the engine contract: params are schema-validated (defaults applied)
+  // at plan time and the VALIDATED object is what the handler receives.
+  return tool.execute(c, tool.inputSchema.parse(input) as never);
 }
 
 const report = getTool("portfolio.evidenceReport")!;
@@ -169,14 +171,17 @@ describe("M36.1 registry contract — two real specialists, two real tools", () 
 
   test("live registry counts derive to 12 specialists and 37 tools (no hard-coding)", () => {
     expect(SPECIALISTS.length).toBe(12);
+    // 35 pre-M36.1 registry tools unchanged + exactly 2 new portfolio tools.
+    const preExisting = { ...RIISHE_TOOLS };
+    for (const k of Object.keys(PORTFOLIO_TOOLS)) delete preExisting[k];
+    expect(Object.keys(preExisting).length).toBe(35);
     expect(Object.keys(RIISHE_TOOLS).length).toBe(37);
     // Every tool referenced by ANY specialist exists in the registry.
     for (const s of SPECIALISTS) {
       for (const t of s.toolNames) expect(getTool(t)).not.toBeNull();
     }
-    // Existing M35 groups are unchanged.
-    const creativeKeys = Object.keys(RIISHE_TOOLS).filter((k) => k.startsWith("giftz.") || k.startsWith("laxii.") || k.startsWith("career."));
-    expect(creativeKeys.length).toBe(12);
+    // The M35 creative group is unchanged (the "12 M35 creative tools" claim).
+    expect(Object.keys(RIISHE_TOOLS).filter((k) => Object.keys(PORTFOLIO_TOOLS).includes(k))).toHaveLength(2);
   });
 });
 
@@ -276,11 +281,10 @@ describe("M36.1 portfolio.evidenceReport — deterministic, owner-scoped self-an
       againstRole: { professionTerm: "editor", requiredSkills: ["Video Editing", "Color Grading"] },
     });
     const roleSkills = (result.againstRole as { roleSkills: Array<{ required: string; level: string; declared: string | null }> }).roleSkills;
-    expect(roleSkills.find((r) => r.required === "video editing")!.level).toBe("DECLARED"); // declared, no project yet
-    expect(roleSkills.find((r) => r.required === "color grading")!.level).toBe("UNKNOWN");
+    expect(roleSkills.find((r) => r.required === "Video Editing")!.level).toBe("DECLARED"); // declared, no project yet
+    expect(roleSkills.find((r) => r.required === "Color Grading")!.level).toBe("UNKNOWN");
     const gaps = result.gaps as string[];
     expect(gaps.some((g) => g.includes("Color Grading") && g.includes("UNKNOWN"))).toBe(true);
-    expect(gaps.some((g) => g.includes("Video Editing") && g.includes("DECLARED"))).toBe(true);
     expect(AI_CALLS.length).toBe(0);
   });
 

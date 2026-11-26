@@ -231,7 +231,11 @@ function specialistStepForClause(
   const c = clause.toLowerCase();
   const id = nextId();
 
-  if (/\b(interview|behavioral|technical round|portfolio review)\b/.test(c) && getTool("career.interviewPrep")) {
+  // M36.1 routing note: "portfolio review" is now owned by the Portfolio
+  // Intelligence Analyst (its own clause below) — the interview-prep trigger
+  // keeps interview/behavioral/technical language (a portfolio-INTERVIEW still
+  // matches via "interview" and sets interviewType PORTFOLIO).
+  if (/\b(interview|behavioral|technical round)\b/.test(c) && getTool("career.interviewPrep")) {
     const roleMatch = clause.match(/\b(?:for|as)\s+(?:a|an)?\s*([a-z\s]{3,60}?)(?:\s+(?:role|position|interview))?(?:[?.,]|$)/i);
     return {
       id,

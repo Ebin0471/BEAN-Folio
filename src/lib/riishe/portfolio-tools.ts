@@ -43,6 +43,7 @@ import { z } from "zod";
 
 import { db } from "@/lib/db";
 import { aiComplete } from "@/lib/ai";
+import { USERNAME_RE } from "@/lib/api-helpers";
 import { getCurrentConsent, OX_CONSENT_VERSION } from "@/lib/ox/consent";
 import {
   isProfilePubliclyVisible,
@@ -281,7 +282,6 @@ async function evidenceReportExecute(ctx: ToolContext, input: z.infer<typeof evi
   // ---- againstRole comparison (when supplied): deterministic matching
   // against the owner's declarations and demonstrated project evidence.
   const roleTerm = input.againstRole?.professionTerm?.toLowerCase() ?? null;
-  const roleSkills = (input.againstRole?.requiredSkills ?? []).map((s) => s.toLowerCase());
   const ownerProfessionHaystack = declaredProfessions.map((p) => `${p.slug} ${p.label}`.toLowerCase());
   const professionAlignment = roleTerm
     ? {
@@ -290,13 +290,15 @@ async function evidenceReportExecute(ctx: ToolContext, input: z.infer<typeof evi
         evidence: declaredProfessions.map((p) => `DECLARED profession: ${p.label}`),
       }
     : null;
-  const roleSkillCheck = roleSkills.map((req) => {
+  const roleSkillCheck = (input.againstRole?.requiredSkills ?? []).map((requiredOriginal) => {
+    const req = requiredOriginal.toLowerCase();
     const declared = profileSkillLabels.find((l) => l.toLowerCase() === req || l.toLowerCase().includes(req) || req.includes(l.toLowerCase()));
     const demonstrated = [...demonstratedSkillMap.keys()].find(
       (k) => k === req || k.includes(req) || req.includes(k)
     );
     return {
-      required: req,
+      // Echo the requester's ORIGINAL casing — matching stays case-insensitive.
+      required: requiredOriginal,
       declared: declared ?? null,
       demonstratedBy: demonstrated ? (demonstratedSkillMap.get(demonstrated) ?? []).slice(0, 3) : [],
       // Evidence level of the claim against this requirement:
@@ -441,13 +443,11 @@ async function evidenceReportExecute(ctx: ToolContext, input: z.infer<typeof evi
 
 const publicEvidenceInput = z
   .object({
-    username: z
-      .string()
-      .trim()
-      .toLowerCase()
-      .min(1)
-      .max(64)
-      .regex(/^[a-z0-9_]+$/, "username must be a plain platform username"),
+    // The platform's OWN username rule (USERNAME_RE, src/lib/api-helpers.ts:
+    // ^[a-z0-9][a-z0-9-]{2,23}$) — never a parallel validation. A plain
+    // username only: no database selectors, URLs, paths or query syntax can
+    // pass this shape.
+    username: z.string().trim().toLowerCase().regex(USERNAME_RE, "username must be a valid platform username"),
     focusTerms: z.array(z.string().trim().min(1).max(48)).max(6).default([]),
     limit: z.number().int().min(1).max(MAX_PUBLIC_PROJECTS).default(3),
   })
@@ -531,7 +531,7 @@ async function publicEvidenceExecute(ctx: ToolContext, input: z.infer<typeof pub
     select: { blockerId: true },
   });
   if (block) {
-    throw new Error("public evidence is not available between these accounts");
+    throw new Error("public evidence is not available between these accounts — a block exists in either direction");
   }
 
   // Fresh public-project retrieval — the ONLY permitted work-evidence source
