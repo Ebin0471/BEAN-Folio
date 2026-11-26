@@ -145,5 +145,5 @@ Failure classification (zero M35.7 regressions):
 
 ## 9. Publication (M35.7)
 
-- `scripts/ops/bean-sync.sh push` (fast-forward only, MAIN-ONLY) after local main is fast-forwarded to the M35.7 tip; SHA verified.
-- Review PR opened for the owner from `feat/m35.7-agent-safety-hardening`. The owner merges; nothing is self-merged.
+- `scripts/ops/bean-sync.sh push` (fast-forward only, MAIN-ONLY) after local main is fast-forwarded to the M35.7 tip; remote SHA verified: **origin/main `760be22`** (= this tip; branch gate, secret scan and runtime-data scan all passed).
+- Review PR opened for the owner from `feat/m35.7-agent-safety-hardening` (M35 precedent, PR #12). The owner merges; nothing is self-merged. This final publication-verification commit rides the review branch so the PR carries a reviewable diff — the M35.7 implementation commits are already fast-forward-published on main, exactly like the M35 series before the owner merged PR #12.
