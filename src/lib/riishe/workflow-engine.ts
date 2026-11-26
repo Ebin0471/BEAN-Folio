@@ -15,10 +15,21 @@
  *  - cancellation/pause/resume are immediate and stop scheduling;
  *  - a crashed/restarted worker recovers: the sweep re-queues stale RUNNING
  *    steps and schedules due ones;
- *  - completion is derived from actual step outcomes — never fabricated.
+ *  - completion is derived from actual step outcomes — never fabricated;
+ *  - M35.8: every execution claim is an ATOMIC conditional database
+ *    transition (no check-then-update pair, no in-memory mutex — multiple
+ *    workers may run in different processes). Only one worker can claim an
+ *    eligible step; only one simultaneous approval request can claim an
+ *    approval-class step; the loser never executes the tool. Terminal writes
+ *    are ownership-guarded on the claim token (post-claim `attempts`), so a
+ *    stale worker recovered by the sweep cannot overwrite the live attempt.
+ *    Pause/cancel/status changes are conditionally guarded both ways: a
+ *    control pass never clobbers a live claim, and a claim re-verifies the
+ *    workflow status after claiming so a paused/cancelled workflow is never
+ *    bypassed.
  */
 
-import type { BackgroundJob } from "@prisma/client";
+import type { BackgroundJob, RiisheWorkflowStep } from "@prisma/client";
 
 import { db } from "@/lib/db";
 import { notify } from "@/lib/notify";
@@ -535,6 +546,116 @@ async function verifyToolOutput(
 /** Exported for the B2 permission-matrix suite (verification-failure pins). */
 export { verifyToolOutput };
 
+// ---------------------------------------------------------------- claiming
+//
+// M35.8 — atomic execution & concurrency control. Every execution claim is a
+// single conditional database transition (`updateMany` with the expected
+// pre-status in the WHERE guard), never a check-then-update pair: only the
+// writer whose UPDATE matches the guard flips the row to RUNNING, exactly
+// like the durable queue's own status-guarded claim (src/lib/queue/index.ts).
+// SQLite serializes writers, so the guard is atomic; the same pattern is the
+// portable equivalent under PostgreSQL row-level MVCC. No in-memory mutex —
+// workers may run in different processes. The post-claim `attempts` value is
+// the ownership token: terminal writes are guarded on
+// `status = "RUNNING" AND attempts = token`, so a stale worker (recovered by
+// the sweep and re-claimed by a live attempt) can never overwrite the live
+// attempt's outcome — at most one SUCCEEDED/FAILED transition per execution.
+
+/** Statuses a QUEUE-delivered step may be claimed from (READY only). */
+export const QUEUE_CLAIM_STATUSES = ["READY"] as const;
+/**
+ * Statuses an APPROVAL-TIME execution may claim from — the owner-initiated
+ * path keeps its existing accepted set (PENDING/AWAITING_APPROVAL/READY plus
+ * FAILED for approve-after-failure); terminal and RUNNING states are refused.
+ */
+export const APPROVAL_CLAIM_STATUSES = ["PENDING", "AWAITING_APPROVAL", "READY", "FAILED"] as const;
+
+export type StepExecutionClaim =
+  | { ok: true; step: RiisheWorkflowStep }
+  | { ok: false };
+
+/**
+ * Atomically claim ONE workflow step for execution. Returns the FRESH row
+ * (its `attempts` is the ownership token for the guarded terminal writes) or
+ * `{ ok: false }` when a racing worker/control action won — the loser MUST
+ * NOT execute the tool. `startedAt` is decided by the caller exactly like the
+ * pre-M35.8 writes did (queue path preserves the first start across retries;
+ * the approval path starts fresh).
+ */
+export async function claimStepExecution(
+  stepId: string,
+  userId: string,
+  allowedStatuses: readonly string[],
+  startedAt: Date
+): Promise<StepExecutionClaim> {
+  const won = await db.riisheWorkflowStep.updateMany({
+    where: { id: stepId, userId, status: { in: [...allowedStatuses] } },
+    data: { status: "RUNNING", startedAt, finishedAt: null, attempts: { increment: 1 } },
+  });
+  if (won.count !== 1) return { ok: false };
+  const step = await db.riisheWorkflowStep.findUnique({ where: { id: stepId } });
+  // The claim just landed on this exact row; a non-RUNNING read would mean a
+  // concurrent control action already moved it — treat the claim as lost.
+  if (!step || step.status !== "RUNNING") return { ok: false };
+  return { ok: true, step };
+}
+
+/**
+ * Guarded terminal write for a claimed execution: lands only while the
+ * caller still OWNS the attempt (`status = RUNNING AND attempts = token`).
+ * False means ownership was lost (the sweep recovered the stale RUNNING row
+ * and another attempt claimed it) — the stale worker must not record its
+ * outcome, audit success/failure or cascade dependents.
+ */
+export async function finishClaimedStep(
+  stepId: string,
+  userId: string,
+  claimAttempts: number,
+  data: { status: "SUCCEEDED" | "FAILED" | "READY" | "PENDING" | "CANCELLED"; resultJson?: string; error?: string | null; finishedAt?: Date | null }
+): Promise<boolean> {
+  const res = await db.riisheWorkflowStep.updateMany({
+    where: { id: stepId, userId, status: "RUNNING", attempts: claimAttempts },
+    data,
+  });
+  return res.count === 1;
+}
+
+/**
+ * Post-claim control re-verification (pause/cancel bypass guard): if the
+ * owning workflow is no longer ACTIVE the claim is released honestly —
+ * PENDING under PAUSED (pause re-schedules on resume), CANCELLED with the
+ * owner-cancellation reason under CANCELLED — and the caller must not
+ * execute the tool. Returns true when a release happened.
+ */
+export async function releaseClaimIfWorkflowInactive(
+  stepId: string,
+  userId: string,
+  workflowId: string,
+  claimAttempts: number
+): Promise<boolean> {
+  const wf = await db.riisheWorkflow.findUnique({ where: { id: workflowId }, select: { status: true } });
+  if (!wf || wf.status === "ACTIVE") return false;
+  if (wf.status === "PAUSED") {
+    await db.riisheWorkflowStep.updateMany({
+      where: { id: stepId, userId, status: "RUNNING", attempts: claimAttempts },
+      data: { status: "PENDING", finishedAt: null },
+    });
+    return true;
+  }
+  // CANCELLED — mirror what the cancel pass does to unclaimed steps.
+  // (COMPLETED/FAILED are unreachable while an open step is claimed; release
+  // to PENDING defensively — the workflow derivation leaves those closed.)
+  const cancelled = wf.status === "CANCELLED";
+  await db.riisheWorkflowStep.updateMany({
+    where: { id: stepId, userId, status: "RUNNING", attempts: claimAttempts },
+    data: {
+      status: cancelled ? "CANCELLED" : "PENDING",
+      ...(cancelled ? { error: "workflow cancelled by the owner", finishedAt: new Date() } : { finishedAt: null }),
+    },
+  });
+  return true;
+}
+
 /** Queue entrypoint: run ONE workflow step (durable, retried by the queue). */
 export async function runWorkflowStepJob(job: BackgroundJob): Promise<void> {
   const payload = safeJson(job.payload) as { workflowId?: string; stepId?: string; userId?: string } | null;
@@ -571,7 +692,12 @@ export async function runWorkflowStepJob(job: BackgroundJob): Promise<void> {
   // pre-authorization preferences are honored (never a stale stored state).
   const tool = getTool(step.kind);
   if (!(await mayExecuteStep(payload.userId, step, tool))) {
-    await db.riisheWorkflowStep.update({ where: { id: step.id }, data: { status: "AWAITING_APPROVAL" } });
+    // M35.8: conditional — only a still-READY step moves to AWAITING_APPROVAL;
+    // a row another worker just claimed (RUNNING) is left untouched.
+    await db.riisheWorkflowStep.updateMany({
+      where: { id: step.id, userId: payload.userId, status: "READY" },
+      data: { status: "AWAITING_APPROVAL" },
+    });
     return;
   }
   // B2 daily action cap: real executions are counted per owner per UTC day.
@@ -580,47 +706,61 @@ export async function runWorkflowStepJob(job: BackgroundJob): Promise<void> {
   const cap = await dailyActionCapStatus(payload.userId);
   if (!cap.allowed) {
     const capMessage = `Daily automation action cap reached (${cap.executedToday}/${cap.cap}). Retry after 00:00 UTC or raise your cap in RIISHE automation settings.`;
-    await db.riisheWorkflowStep.update({
-      where: { id: step.id },
+    // M35.8: conditional — the FAILED verdict only lands while the step is
+    // still unclaimed (READY); a racing worker's live claim is never clobbered.
+    const capLanded = await db.riisheWorkflowStep.updateMany({
+      where: { id: step.id, userId: payload.userId, status: "READY" },
       data: { status: "FAILED", error: capMessage, finishedAt: new Date() },
     });
-    await auditEvent(payload.userId, "riishe.automation.daily_cap_reached", "RiisheWorkflowStep", step.id, {
-      tool: step.kind,
-      executedToday: cap.executedToday,
-      cap: cap.cap,
-    });
-    await notify({
-      userId: payload.userId,
-      actorId: null,
-      type: "SYSTEM",
-      payload: { text: `RIISHE workflow "${workflow.title}" step "${step.title}" did not run: ${capMessage}` },
-      dedupKey: `riishe.wfstep-cap:${step.id}`,
-    }).catch(() => undefined);
-    await skipDependents(step.workflowId, step.id, payload.userId);
-    await afterStepTerminal(step.workflowId, payload.userId);
+    if (capLanded.count === 1) {
+      await auditEvent(payload.userId, "riishe.automation.daily_cap_reached", "RiisheWorkflowStep", step.id, {
+        tool: step.kind,
+        executedToday: cap.executedToday,
+        cap: cap.cap,
+      });
+      await notify({
+        userId: payload.userId,
+        actorId: null,
+        type: "SYSTEM",
+        payload: { text: `RIISHE workflow "${workflow.title}" step "${step.title}" did not run: ${capMessage}` },
+        dedupKey: `riishe.wfstep-cap:${step.id}`,
+      }).catch(() => undefined);
+      await skipDependents(step.workflowId, step.id, payload.userId);
+      await afterStepTerminal(step.workflowId, payload.userId);
+    }
     return;
   }
 
-  await db.riisheWorkflowStep.update({
-    where: { id: step.id },
-    data: { status: "RUNNING", startedAt: step.startedAt ?? new Date(), attempts: { increment: 1 } },
-  });
+  // M35.8 — ATOMIC execution claim: one conditional transition decides the
+  // winner. A duplicate delivery, a racing worker or a control action that
+  // moved the row between the reads above all lose here and never execute
+  // the tool. No in-memory mutex — safe across processes/instances.
+  const claim = await claimStepExecution(step.id, payload.userId, QUEUE_CLAIM_STATUSES, step.startedAt ?? new Date());
+  if (!claim.ok) return; // lost the race — the live attempt owns the step
+  const claimToken = claim.step.attempts;
+
+  // M35.8 — post-claim control re-verification: a pause/cancel that landed
+  // between the pre-claim read and the claim must not be bypassed by this
+  // worker. The claim is released honestly and nothing executes.
+  if (await releaseClaimIfWorkflowInactive(step.id, payload.userId, step.workflowId, claimToken)) {
+    return;
+  }
 
   try {
-    const { params, result } = await executeTool(step, payload.userId, undefined, workspaceHintFromPlanJson(workflow.planJson));
+    const { params, result } = await executeTool(claim.step, payload.userId, undefined, workspaceHintFromPlanJson(workflow.planJson));
     // B2 verify phase: re-read the persistent output before success is recorded.
     const verifiedResult = tool
       ? await verifyToolOutput(tool, { userId: payload.userId, workflowId: step.workflowId, stepId: step.id }, params, result)
       : result;
-    await db.riisheWorkflowStep.update({
-      where: { id: step.id },
-      data: {
-        status: "SUCCEEDED",
-        resultJson: JSON.stringify(verifiedResult),
-        error: null,
-        finishedAt: new Date(),
-      },
+    // M35.8: the success write is ownership-guarded — a stale worker whose
+    // claim was recovered and re-claimed cannot record a second outcome.
+    const succeeded = await finishClaimedStep(step.id, payload.userId, claimToken, {
+      status: "SUCCEEDED",
+      resultJson: JSON.stringify(verifiedResult),
+      error: null,
+      finishedAt: new Date(),
     });
+    if (!succeeded) return; // ownership lost — the live attempt owns the outcome
     await auditEvent(payload.userId, "riishe.workflow.step_succeeded", "RiisheWorkflowStep", step.id, {
       tool: step.kind,
     });
@@ -635,13 +775,15 @@ export async function runWorkflowStepJob(job: BackgroundJob): Promise<void> {
     await afterStepTerminal(step.workflowId, payload.userId);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const fresh = await db.riisheWorkflowStep.findUnique({ where: { id: step.id } });
-    const attempts = fresh?.attempts ?? 1;
-    if (attempts >= (fresh?.maxAttempts ?? 3)) {
-      await db.riisheWorkflowStep.update({
-        where: { id: step.id },
-        data: { status: "FAILED", error: message.slice(0, 500), finishedAt: new Date() },
+    // M35.8: attempts/maxAttempts come from the claim snapshot (the token is
+    // the exact post-increment attempt count of THIS execution).
+    if (claimToken >= claim.step.maxAttempts) {
+      const failed = await finishClaimedStep(step.id, payload.userId, claimToken, {
+        status: "FAILED",
+        error: message.slice(0, 500),
+        finishedAt: new Date(),
       });
+      if (!failed) throw err; // ownership lost — the live attempt owns the outcome
       await auditEvent(payload.userId, "riishe.workflow.step_failed", "RiisheWorkflowStep", step.id, {
         tool: step.kind,
         error: message.slice(0, 200),
@@ -658,9 +800,11 @@ export async function runWorkflowStepJob(job: BackgroundJob): Promise<void> {
       throw err; // let the queue record the failure honestly (DEAD after retries)
     }
     // Re-throw → queue requeues with backoff; the next run retries the tool.
-    await db.riisheWorkflowStep.update({
-      where: { id: step.id },
-      data: { status: "READY", error: message.slice(0, 500) },
+    // M35.8: the retry write is ownership-guarded — if the sweep already
+    // recovered this stale RUNNING row, it stays exactly as recovered.
+    await finishClaimedStep(step.id, payload.userId, claimToken, {
+      status: "READY",
+      error: message.slice(0, 500),
     });
     throw err;
   }
@@ -699,19 +843,42 @@ export async function executeApprovedStep(
       "daily-cap"
     );
   }
-  await db.riisheWorkflowStep.update({
-    where: { id: step.id },
-    data: { status: "RUNNING", attempts: { increment: 1 }, startedAt: new Date() },
-  });
+  // M35.8 — ATOMIC approval-time claim: only ONE simultaneous approval
+  // request can transition the step to RUNNING; the loser never executes the
+  // tool and gets exactly the error a sequential caller would have seen.
+  const claim = await claimStepExecution(step.id, userId, APPROVAL_CLAIM_STATUSES, new Date());
+  if (!claim.ok) {
+    const winner = await db.riisheWorkflowStep.findUnique({ where: { id: step.id } });
+    if (winner?.status === "SUCCEEDED") {
+      return { already: true, result: safeJson(winner.resultJson) }; // the concurrent request finished it
+    }
+    if (winner?.status === "RUNNING") {
+      throw new WorkflowError("This step is already running", "conflict");
+    }
+    throw new WorkflowError("This step can no longer run", "terminal");
+  }
+  const claimToken = claim.step.attempts;
+  // M35.8 — post-claim control re-verification: a pause/cancel that landed
+  // between the read and the claim is not bypassed; the claim is released.
+  if (await releaseClaimIfWorkflowInactive(step.id, userId, step.workflowId, claimToken)) {
+    throw new WorkflowError("The workflow is not active", "inactive");
+  }
   try {
-    const { params, result } = await executeTool(step, userId, createInquiry, workspaceHintFromPlanJson(workflow.planJson));
+    const { params, result } = await executeTool(claim.step, userId, createInquiry, workspaceHintFromPlanJson(workflow.planJson));
     const verifiedResult = tool
       ? await verifyToolOutput(tool, { userId, workflowId: step.workflowId, stepId: step.id }, params, result)
       : result;
-    await db.riisheWorkflowStep.update({
-      where: { id: step.id },
-      data: { status: "SUCCEEDED", resultJson: JSON.stringify(verifiedResult), error: null, finishedAt: new Date() },
+    // M35.8: ownership-guarded success write — a recovered stale attempt can
+    // never record its outcome over the live attempt's.
+    const succeeded = await finishClaimedStep(step.id, userId, claimToken, {
+      status: "SUCCEEDED",
+      resultJson: JSON.stringify(verifiedResult),
+      error: null,
+      finishedAt: new Date(),
     });
+    if (!succeeded) {
+      throw new WorkflowError("This step's execution was taken over by another attempt", "conflict");
+    }
     await auditEvent(userId, "riishe.workflow.step_succeeded", "RiisheWorkflowStep", step.id, {
       tool: step.kind,
       via: "approval",
@@ -726,16 +893,21 @@ export async function executeApprovedStep(
     return { already: false, result: verifiedResult };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    await db.riisheWorkflowStep.update({
-      where: { id: step.id },
-      data: { status: "FAILED", error: message.slice(0, 500), finishedAt: new Date() },
+    // M35.8: the FAILED write is ownership-guarded — without the claim it
+    // lands nowhere and the live attempt keeps owning the outcome.
+    const failed = await finishClaimedStep(step.id, userId, claimToken, {
+      status: "FAILED",
+      error: message.slice(0, 500),
+      finishedAt: new Date(),
     });
-    await auditEvent(userId, "riishe.workflow.step_failed", "RiisheWorkflowStep", step.id, {
-      tool: step.kind,
-      error: message.slice(0, 200),
-    });
-    await skipDependents(step.workflowId, step.id, userId);
-    await afterStepTerminal(step.workflowId, userId);
+    if (failed) {
+      await auditEvent(userId, "riishe.workflow.step_failed", "RiisheWorkflowStep", step.id, {
+        tool: step.kind,
+        error: message.slice(0, 200),
+      });
+      await skipDependents(step.workflowId, step.id, userId);
+      await afterStepTerminal(step.workflowId, userId);
+    }
     throw err;
   }
 }
@@ -754,11 +926,16 @@ async function afterStepTerminal(workflowId: string, userId: string) {
       const tool = getTool(step.kind);
       // B2: registry + owner preferences decide the unlocked status.
       const next: StepStatus = await initialStatusForStep(userId, tool);
-      await db.riisheWorkflowStep.update({ where: { id: step.id }, data: { status: next } });
+      // M35.8: conditional — a step a control action concurrently moved out
+      // of PENDING (skipped/cancelled) is never resurrected by the unlock.
+      await db.riisheWorkflowStep.updateMany({
+        where: { id: step.id, status: "PENDING" },
+        data: { status: next },
+      });
       unlocked = true;
     } else if (depStates.some((st) => st === "FAILED" || st === "SKIPPED" || st === "CANCELLED")) {
-      await db.riisheWorkflowStep.update({
-        where: { id: step.id },
+      await db.riisheWorkflowStep.updateMany({
+        where: { id: step.id, status: "PENDING" },
         data: { status: "SKIPPED", error: "a dependency did not complete", finishedAt: new Date() },
       });
       unlocked = true;
@@ -781,12 +958,16 @@ async function skipDependents(workflowId: string, failedStepId: string, userId: 
       if (bad.has(step.id) || step.status === "SUCCEEDED") continue;
       const deps = safeIds(step.dependsOnJson);
       if (deps.length > 0 && deps.some((d) => bad.has(d)) && step.status !== "SKIPPED") {
-        await db.riisheWorkflowStep.update({
-          where: { id: step.id },
+        // M35.8: conditional — only non-terminal, unclaimed dependents are
+        // skipped (a live claim or a terminal row is never clobbered).
+        const landed = await db.riisheWorkflowStep.updateMany({
+          where: { id: step.id, status: { in: ["PENDING", "AWAITING_APPROVAL", "READY", "FAILED"] } },
           data: { status: "SKIPPED", error: "a dependency did not complete", finishedAt: new Date() },
         });
-        bad.add(step.id);
-        changed = true;
+        if (landed.count === 1) {
+          bad.add(step.id);
+          changed = true;
+        }
       }
     }
   }
@@ -808,7 +989,14 @@ export async function deriveWorkflowStatus(workflowId: string, userId: string): 
   const succeeded = steps.filter((s) => s.status === "SUCCEEDED").length;
   const next = succeeded > 0 ? "COMPLETED" : "FAILED";
   if (next !== workflow.status) {
-    await db.riisheWorkflow.update({ where: { id: workflowId }, data: { status: next } });
+    // M35.8: the derived transition is guarded on the observed status — a
+    // pause/cancel that landed while this derivation was running is never
+    // overwritten by a stale completion.
+    const landed = await db.riisheWorkflow.updateMany({
+      where: { id: workflowId, status: workflow.status },
+      data: { status: next },
+    });
+    if (landed.count !== 1) return workflow.status;
     await notify({
       userId,
       actorId: null,
@@ -844,10 +1032,16 @@ export async function approveStep(userId: string, stepId: string, confirm: boole
   if (tool && tool.risk === "DESTRUCTIVE" && !confirm) {
     throw new WorkflowError("Destructive actions need the explicit confirm interaction", "confirm-required");
   }
-  await db.riisheWorkflowStep.update({
-    where: { id: stepId },
+  // M35.8: the approval transition itself is ATOMIC — the conditional write
+  // also refuses a replay that RACES a concurrent terminal transition (the
+  // pre-read above can no longer be bypassed by an interleaving).
+  const landed = await db.riisheWorkflowStep.updateMany({
+    where: { id: stepId, userId, status: { notIn: ["SUCCEEDED", "CANCELLED", "SKIPPED"] } },
     data: { approvedAt: new Date() },
   });
+  if (landed.count !== 1) {
+    throw new WorkflowError("This step can no longer be approved", "terminal");
+  }
   await auditEvent(userId, "riishe.workflow.step_approved", "RiisheWorkflowStep", stepId, {
     tool: step.kind,
     risk: step.risk,
@@ -860,10 +1054,16 @@ export async function declineStep(userId: string, stepId: string) {
   if (!["AWAITING_APPROVAL", "PENDING", "READY", "FAILED"].includes(step.status)) {
     throw new WorkflowError("This step can no longer be declined", "terminal");
   }
-  await db.riisheWorkflowStep.update({
-    where: { id: stepId },
+  // M35.8: the decline transition is conditional — a step that was claimed
+  // (RUNNING) or reached a terminal state between the read and the write is
+  // never clobbered by the decline.
+  const landed = await db.riisheWorkflowStep.updateMany({
+    where: { id: stepId, userId, status: { in: ["AWAITING_APPROVAL", "PENDING", "READY", "FAILED"] } },
     data: { status: "CANCELLED", error: "declined by the owner", finishedAt: new Date() },
   });
+  if (landed.count !== 1) {
+    throw new WorkflowError("This step can no longer be declined", "terminal");
+  }
   if (step.backgroundJobId) {
     await cancelQueued(step.backgroundJobId, userId).catch(() => undefined);
   }
@@ -880,8 +1080,11 @@ export async function retryStep(userId: string, stepId: string) {
   // B2: registry-derived approval (level 2/3 or HIGH/DESTRUCTIVE) re-enters
   // approval on retry; approval resets so confirmation is always fresh.
   const needsApproval = tool ? toolApprovalRequired(tool) : step.requiresApproval;
-  await db.riisheWorkflowStep.update({
-    where: { id: stepId },
+  // M35.8: the re-arm is conditional on FAILED — a step that concurrently
+  // moved out of FAILED (skipped by a cascade, declined, claimed) is never
+  // resurrected by a racing retry.
+  const landed = await db.riisheWorkflowStep.updateMany({
+    where: { id: stepId, userId, status: "FAILED" },
     data: {
       status: needsApproval ? "AWAITING_APPROVAL" : "READY",
       error: null,
@@ -890,12 +1093,19 @@ export async function retryStep(userId: string, stepId: string) {
       finishedAt: null,
     },
   });
+  if (landed.count !== 1) {
+    throw new WorkflowError("Only failed steps can be retried", "invalid");
+  }
   // A retry is explicit owner intent to finish the work: re-activate a
   // workflow that completion/failure derivation had closed (a CANCELLED
-  // workflow stays cancelled — that was an explicit decision).
+  // workflow stays cancelled — that was an explicit decision). M35.8: the
+  // re-activation is guarded on the closed states.
   const workflow = await db.riisheWorkflow.findFirst({ where: { id: step.workflowId, userId } });
   if (workflow && (workflow.status === "COMPLETED" || workflow.status === "FAILED")) {
-    await db.riisheWorkflow.update({ where: { id: workflow.id }, data: { status: "ACTIVE" } });
+    await db.riisheWorkflow.updateMany({
+      where: { id: workflow.id, status: { in: ["COMPLETED", "FAILED"] } },
+      data: { status: "ACTIVE" },
+    });
   }
   await scheduleReadySteps(step.workflowId, userId);
   await auditEvent(userId, "riishe.workflow.step_retried", "RiisheWorkflowStep", stepId, { tool: step.kind });
@@ -909,7 +1119,13 @@ export async function setWorkflowStatus(userId: string, workflowId: string, acti
     for (const step of workflow.steps) {
       if (step.status === "READY" && step.backgroundJobId) {
         await cancelQueued(step.backgroundJobId, userId).catch(() => undefined);
-        await db.riisheWorkflowStep.update({ where: { id: step.id }, data: { status: "PENDING" } });
+        // M35.8: conditional — a READY step that a worker claimed (RUNNING)
+        // between this pause's snapshot and this write keeps its live claim;
+        // the worker's own post-claim re-verification releases it honestly.
+        await db.riisheWorkflowStep.updateMany({
+          where: { id: step.id, status: "READY" },
+          data: { status: "PENDING" },
+        });
       }
     }
   } else if (action === "resume") {
@@ -923,8 +1139,10 @@ export async function setWorkflowStatus(userId: string, workflowId: string, acti
         const ok = deps.every((d) => byId.get(d)?.status === "SUCCEEDED");
         if (ok && deps.length > 0) {
           const tool = getTool(step.kind);
-          await db.riisheWorkflowStep.update({
-            where: { id: step.id },
+          // M35.8: conditional on PENDING — a step moved concurrently
+          // (cancelled/skipped) is never resurrected by the resume.
+          await db.riisheWorkflowStep.updateMany({
+            where: { id: step.id, status: "PENDING" },
             data: { status: await initialStatusForStep(userId, tool) },
           });
         }
@@ -937,11 +1155,16 @@ export async function setWorkflowStatus(userId: string, workflowId: string, acti
     }
     for (const step of workflow.steps) {
       if (["PENDING", "READY", "AWAITING_APPROVAL"].includes(step.status)) {
-        await db.riisheWorkflowStep.update({
-          where: { id: step.id },
+        // M35.8: conditional — a step a worker just claimed (RUNNING) is not
+        // flipped by the cancel pass; the worker's post-claim re-verification
+        // releases it with this exact same cancellation reason instead.
+        const cancelled = await db.riisheWorkflowStep.updateMany({
+          where: { id: step.id, status: { in: ["PENDING", "READY", "AWAITING_APPROVAL"] } },
           data: { status: "CANCELLED", error: "workflow cancelled by the owner", finishedAt: new Date() },
         });
-        if (step.backgroundJobId) await cancelQueued(step.backgroundJobId, userId).catch(() => undefined);
+        if (cancelled.count === 1 && step.backgroundJobId) {
+          await cancelQueued(step.backgroundJobId, userId).catch(() => undefined);
+        }
       }
     }
     await db.riisheWorkflow.update({ where: { id: workflowId }, data: { status: "CANCELLED" } });
@@ -966,11 +1189,15 @@ export async function runWorkflowSweep(): Promise<{ recovered: number; scheduled
   });
   let recovered = 0;
   for (const step of stale) {
-    await db.riisheWorkflowStep.update({
-      where: { id: step.id },
+    // M35.8: the recovery write re-checks the SAME staleness predicate in its
+    // WHERE guard — a step that completed (or was re-claimed) between the
+    // read above and this write is never flipped back to READY (which would
+    // resurrect a finished execution). Exactly one recovery per stale row.
+    const landed = await db.riisheWorkflowStep.updateMany({
+      where: { id: step.id, status: "RUNNING", updatedAt: { lt: staleBefore } },
       data: { status: "READY", error: "recovered after a worker restart" },
     });
-    recovered++;
+    recovered += landed.count;
   }
 
   const now = new Date();
@@ -990,8 +1217,10 @@ export async function runWorkflowSweep(): Promise<{ recovered: number; scheduled
       });
       const states = depRows.map((d) => d.status);
       if (states.some((st) => ["FAILED", "SKIPPED", "CANCELLED"].includes(st))) {
-        await db.riisheWorkflowStep.update({
-          where: { id: step.id },
+        // M35.8: conditional on PENDING — the skip never clobbers a row that
+        // a racing unlock/cancel/claim already moved.
+        await db.riisheWorkflowStep.updateMany({
+          where: { id: step.id, status: "PENDING" },
           data: { status: "SKIPPED", error: "a dependency did not complete", finishedAt: new Date() },
         });
         continue;
@@ -1001,8 +1230,13 @@ export async function runWorkflowSweep(): Promise<{ recovered: number; scheduled
     const tool = getTool(step.kind);
     // B2: registry + owner preferences decide how due steps start.
     const next: StepStatus = await initialStatusForStep(step.userId, tool);
-    await db.riisheWorkflowStep.update({ where: { id: step.id }, data: { status: next } });
-    scheduled++;
+    // M35.8: conditional on PENDING — a due step that raced a cancel/skip
+    // between the read and this write is never resurrected to READY.
+    const landed = await db.riisheWorkflowStep.updateMany({
+      where: { id: step.id, status: "PENDING" },
+      data: { status: next },
+    });
+    scheduled += landed.count;
   }
 
   const ready = await db.riisheWorkflowStep.findMany({
