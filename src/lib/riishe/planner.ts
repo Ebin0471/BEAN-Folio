@@ -293,7 +293,7 @@ function specialistStepForClause(
   // requests (multi-step creative chains go through the LLM planner and the
   // engine's validation like every other plan).
   if (
-    /\b(plan|architecture|structure)\b[^?!.]*\b(website|portfolio site|site)\b|\b(website|portfolio site)\b[^?!.]*\b(plan|architecture|structure)\b/.test(c) &&
+    /\b(plan|architecture|structure)\b[^?!.]*\b(website|portfolio site|site)\b|\b(website|portfolio site|site)\b[^?!.]*\b(plan|architecture|structure)\b/.test(c) &&
     getTool("giftz.site.plan")
   ) {
     return {
