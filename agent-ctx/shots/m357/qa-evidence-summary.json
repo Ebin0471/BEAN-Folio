@@ -1,0 +1,64 @@
+{
+  "milestone": "M35.7 \u2014 RIISHE Agent Safety & Reliability Hardening",
+  "tip": "1146dfe (feat/m35.7-agent-safety-hardening)",
+  "baseline": "b8b0d9b (origin/main, PR #12 merge)",
+  "environment": "isolated clones /home/z/bean-qa-m357 (tip) and /home/z/bean-qa-m357-base (baseline), identical seeding order (db:push \u2192 seed.ts \u2192 restore-qa-fixtures.ts \u2192 seed-professions.ts), pinned DATABASE_URL validated by scripts/ops/qa-db-env.sh, MEDIA_LOCAL_ROOT per clone",
+  "per_file_qa": {
+    "baseline": {
+      "files": 132,
+      "pass": 129,
+      "fail": 1,
+      "skip_only": 2,
+      "individual_test_passes": 1926,
+      "failures": [
+        "tests/riishe-specialists.test.ts"
+      ]
+    },
+    "tip": {
+      "files": 133,
+      "pass": 129,
+      "fail": 2,
+      "skip_only": 2,
+      "individual_test_passes": 1959,
+      "failures": [
+        "tests/riishe-specialists.test.ts",
+        "tests/ox-salary-boundary.test.ts"
+      ]
+    },
+    "failure_classification": {
+      "tests/riishe-specialists.test.ts": "pre-existing baseline flake \u2014 5s per-test timeout on the org-checklist test (real AI gateway call exceeds the 5s cap); reproduced identically at the untouched baseline in this environment and recorded in the M35.6 baseline taxonomy",
+      "tests/ox-salary-boundary.test.ts": "transient SQLITE_BUSY (database is locked) under 2-shard parallel execution; passes 2/2 in isolated per-file runs (the protocol's intended mode); not an M35.7 regression"
+    },
+    "new_suite": "tests/riishe-m357-safety-hardening.test.ts (15 tests: approval bypass, duplicate queue delivery, retry-after-write, missing dependencies, forward references, failed dependencies, replayed approvals) \u2014 all pass on the tip; absent at the baseline (+1 file)"
+  },
+  "gates": {
+    "tsc": {
+      "tip": "0 errors",
+      "baseline": "same toolchain"
+    },
+    "lint": {
+      "tip": "0 errors, 14 pre-existing warnings (k6 anonymous default exports + unused eslint-disable directives)",
+      "baseline": "identical warnings"
+    },
+    "production_build": {
+      "tip": "exit 0 (next build, Turbopack; 11 pre-existing Edge-Runtime process.exit warnings)",
+      "baseline": "exit 0 with the identical 11 warnings \u2014 verified by building the baseline clone"
+    }
+  },
+  "live_evidence_production_build": {
+    "server": ".next/standalone + QA DB on 127.0.0.1:3100",
+    "01-dashboard-catalog.json": "GET /api/riishe/dashboard \u2014 35 tools; laxii.banner.produce MEDIUM/level-2, career.resume.tailoredCopy MEDIUM/level-2, career.coverLetter.draft MEDIUM/level-2, giftz.task.approve HIGH/level-2",
+    "04/05-workflow-awaiting-approval.json": "engine-seeded brief\u2192produce chain: laxii.banner.brief SUCCEEDED (level 1), laxii.banner.produce AWAITING_APPROVAL (level 2) \u2014 the queue never ran it",
+    "06-approval-response.json": "PATCH /api/riishe/steps/{id} action=approve \u2192 executed:true; REAL pipeline started (conversationId + messageId + status RUNNING; briefTaskId resolved through the typed briefTaskRef)",
+    "08-workflow-final.json": "both steps SUCCEEDED with verification evidence",
+    "09-replayed-approval-refused.json": "replayed approve on the SUCCEEDED step \u2192 HTTP 409 (terminal)",
+    "10-chat-deterministic-workflow.json": "live chat goal \u2192 deterministic planner \u2192 creative-producer workflow card (M35 path preserved)"
+  },
+  "browser_screenshots": [
+    "01-logged-in-landing.png",
+    "02-riishe-intelligence-1440.png (specialists strip incl. Creative Producer)",
+    "03-automations-dashboard-1440.png (level policy banner: L1 auto / L2 confirm / L3 typed confirm)",
+    "04-riishe-mobile-390.png (responsive)"
+  ],
+  "regression_verdict": "ZERO M35.7-caused failures: both tip failures are classified environment noise (known baseline flake reproduced at the baseline; SQLITE_BUSY under shard parallelism, green in isolation). All 15 new M35.7 suite tests pass; 1959 individual test passes on the tip vs 1926 at the baseline (+33 from the new suite and updated pins)."
+}

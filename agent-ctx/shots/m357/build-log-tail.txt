@@ -1,0 +1,534 @@
+$ next build && cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/
+Attention: Next.js now collects completely anonymous telemetry regarding usage.
+This information is used to shape Next.js' roadmap and prioritize features.
+You can learn more, including how to opt-out if you'd not like to participate in this anonymous program, by visiting the following URL:
+https://nextjs.org/telemetry
+
+▲ Next.js 16.1.3 (Turbopack)
+
+  Creating an optimized production build ...
+Turbopack build encountered 11 warnings:
+./src/instrumentation.ts:101:13
+Ecmascript file had an error
+[0m [90m  99 |[39m           [33m.[39m[36mfinally[39m(() [33m=>[39m {
+ [90m 100 |[39m             clearTimeout(hardExit)[33m;[39m
+[31m[1m>[22m[39m[90m 101 |[39m             process[33m.[39mexit([35m0[39m)[33m;[39m
+ [90m     |[39m             [31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m
+ [90m 102 |[39m           })[33m;[39m
+ [90m 103 |[39m       }[33m;[39m
+ [90m 104 |[39m       process[33m.[39monce([32m"SIGTERM"[39m[33m,[39m () [33m=>[39m graceful([32m"SIGTERM"[39m))[33m;[39m[0m
+
+A Node.js API is used (process.exit at line: 101) which is not supported in the Edge Runtime.
+Learn more: https://nextjs.org/docs/api-reference/edge-runtime
+
+Import trace:
+  App Route:
+    ./src/instrumentation.ts
+    ./src/lib/giftz/workspace.ts
+    ./src/app/api/giftz/repositories/[id]/route.ts
+
+
+./src/instrumentation.ts:36:5
+Ecmascript file had an error
+[0m [90m 34 |[39m     [90m// Fail-fast: exit the process so the orchestrator (dev server, docker,[39m
+ [90m 35 |[39m     [90m// start script) surfaces a non-zero exit code instead of a broken app.[39m
+[31m[1m>[22m[39m[90m 36 |[39m     process[33m.[39mexit([35m1[39m)[33m;[39m
+ [90m    |[39m     [31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m
+ [90m 37 |[39m   }
+ [90m 38 |[39m
+ [90m 39 |[39m   [90m// ---- Fatal-signal logging (D6 reliability hardening) ----[39m[0m
+
+A Node.js API is used (process.exit at line: 36) which is not supported in the Edge Runtime.
+Learn more: https://nextjs.org/docs/api-reference/edge-runtime
+
+Import trace:
+  App Route:
+    ./src/instrumentation.ts
+    ./src/lib/giftz/workspace.ts
+    ./src/app/api/giftz/repositories/[id]/route.ts
+
+
+./src/instrumentation.ts:58:7
+Ecmascript file had an error
+[0m [90m 56 |[39m     process[33m.[39mon([32m"uncaughtException"[39m[33m,[39m (error) [33m=>[39m {
+ [90m 57 |[39m       logFatal([32m"uncaught_exception"[39m[33m,[39m error)[33m;[39m
+[31m[1m>[22m[39m[90m 58 |[39m       process[33m.[39mexit([35m1[39m)[33m;[39m
+ [90m    |[39m       [31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m
+ [90m 59 |[39m     })[33m;[39m
+ [90m 60 |[39m     process[33m.[39mon([32m"unhandledRejection"[39m[33m,[39m (reason) [33m=>[39m {
+ [90m 61 |[39m       logFatal([32m"unhandled_rejection"[39m[33m,[39m reason)[33m;[39m[0m
+
+A Node.js API is used (process.exit at line: 58) which is not supported in the Edge Runtime.
+Learn more: https://nextjs.org/docs/api-reference/edge-runtime
+
+Import trace:
+  App Route:
+    ./src/instrumentation.ts
+    ./src/lib/giftz/workspace.ts
+    ./src/app/api/giftz/repositories/[id]/route.ts
+
+
+./src/instrumentation.ts:62:7
+Ecmascript file had an error
+[0m [90m 60 |[39m     process[33m.[39mon([32m"unhandledRejection"[39m[33m,[39m (reason) [33m=>[39m {
+ [90m 61 |[39m       logFatal([32m"unhandled_rejection"[39m[33m,[39m reason)[33m;[39m
+[31m[1m>[22m[39m[90m 62 |[39m       process[33m.[39mexit([35m1[39m)[33m;[39m
+ [90m    |[39m       [31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m
+ [90m 63 |[39m     })[33m;[39m
+ [90m 64 |[39m   } [36melse[39m {
+ [90m 65 |[39m     process[33m.[39mon([32m"uncaughtException"[39m[33m,[39m (error) [33m=>[39m logFatal([32m"uncaught_exception"[39m[33m,[39m error))[33m;[39m[0m
+
+A Node.js API is used (process.exit at line: 62) which is not supported in the Edge Runtime.
+Learn more: https://nextjs.org/docs/api-reference/edge-runtime
+
+Import trace:
+  App Route:
+    ./src/instrumentation.ts
+    ./src/lib/giftz/workspace.ts
+    ./src/app/api/giftz/repositories/[id]/route.ts
+
+
+./src/instrumentation.ts:95:43
+Ecmascript file had an error
+[0m [90m 93 |[39m         [90m// Hard cap beyond the worker's own 25s in-flight grace: never let a[39m
+ [90m 94 |[39m         [90m// hung handler keep the process from exiting after a shutdown signal.[39m
+[31m[1m>[22m[39m[90m 95 |[39m         [36mconst[39m hardExit [33m=[39m setTimeout(() [33m=>[39m process[33m.[39mexit([35m0[39m)[33m,[39m [35m27[39m_000)[33m;[39m
+ [90m    |[39m                                           [31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m
+ [90m 96 |[39m         [36mvoid[39m worker
+ [90m 97 |[39m           [33m.[39mgracefulShutdown()
+ [90m 98 |[39m           [33m.[39m[36mcatch[39m(() [33m=>[39m undefined)[0m
+
+A Node.js API is used (process.exit at line: 95) which is not supported in the Edge Runtime.
+Learn more: https://nextjs.org/docs/api-reference/edge-runtime
+
+Import trace:
+  App Route:
+    ./src/instrumentation.ts
+    ./src/lib/giftz/workspace.ts
+    ./src/app/api/giftz/repositories/[id]/route.ts
+
+
+./src/instrumentation.ts:56:5
+Ecmascript file had an error
+[0m [90m 54 |[39m   }[33m;[39m
+ [90m 55 |[39m   [36mif[39m (process[33m.[39menv[33m.[39m[33mNODE_ENV[39m [33m===[39m [32m"production"[39m) {
+[31m[1m>[22m[39m[90m 56 |[39m     process[33m.[39mon([32m"uncaughtException"[39m[33m,[39m (error) [33m=>[39m {
+ [90m    |[39m     [31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m
+ [90m 57 |[39m       logFatal([32m"uncaught_exception"[39m[33m,[39m error)[33m;[39m
+ [90m 58 |[39m       process[33m.[39mexit([35m1[39m)[33m;[39m
+ [90m 59 |[39m     })[33m;[39m[0m
+
+A Node.js API is used (process.on at line: 56) which is not supported in the Edge Runtime.
+Learn more: https://nextjs.org/docs/api-reference/edge-runtime
+
+Import trace:
+  App Route:
+    ./src/instrumentation.ts
+    ./src/lib/giftz/workspace.ts
+    ./src/app/api/giftz/repositories/[id]/route.ts
+
+
+./src/instrumentation.ts:60:5
+Ecmascript file had an error
+[0m [90m 58 |[39m       process[33m.[39mexit([35m1[39m)[33m;[39m
+ [90m 59 |[39m     })[33m;[39m
+[31m[1m>[22m[39m[90m 60 |[39m     process[33m.[39mon([32m"unhandledRejection"[39m[33m,[39m (reason) [33m=>[39m {
+ [90m    |[39m     [31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m
+ [90m 61 |[39m       logFatal([32m"unhandled_rejection"[39m[33m,[39m reason)[33m;[39m
+ [90m 62 |[39m       process[33m.[39mexit([35m1[39m)[33m;[39m
+ [90m 63 |[39m     })[33m;[39m[0m
+
+A Node.js API is used (process.on at line: 60) which is not supported in the Edge Runtime.
+Learn more: https://nextjs.org/docs/api-reference/edge-runtime
+
+Import trace:
+  App Route:
+    ./src/instrumentation.ts
+    ./src/lib/giftz/workspace.ts
+    ./src/app/api/giftz/repositories/[id]/route.ts
+
+
+./src/instrumentation.ts:65:5
+Ecmascript file had an error
+[0m [90m 63 |[39m     })[33m;[39m
+ [90m 64 |[39m   } [36melse[39m {
+[31m[1m>[22m[39m[90m 65 |[39m     process[33m.[39mon([32m"uncaughtException"[39m[33m,[39m (error) [33m=>[39m logFatal([32m"uncaught_exception"[39m[33m,[39m error))[33m;[39m
+ [90m    |[39m     [31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m
+ [90m 66 |[39m     process[33m.[39mon([32m"unhandledRejection"[39m[33m,[39m (reason) [33m=>[39m logFatal([32m"unhandled_rejection"[39m[33m,[39m reason))[33m;[39m
+ [90m 67 |[39m   }
+ [90m 68 |[39m[0m
+
+A Node.js API is used (process.on at line: 65) which is not supported in the Edge Runtime.
+Learn more: https://nextjs.org/docs/api-reference/edge-runtime
+
+Import trace:
+  App Route:
+    ./src/instrumentation.ts
+    ./src/lib/giftz/workspace.ts
+    ./src/app/api/giftz/repositories/[id]/route.ts
+
+
+./src/instrumentation.ts:66:5
+Ecmascript file had an error
+[0m [90m 64 |[39m   } [36melse[39m {
+ [90m 65 |[39m     process[33m.[39mon([32m"uncaughtException"[39m[33m,[39m (error) [33m=>[39m logFatal([32m"uncaught_exception"[39m[33m,[39m error))[33m;[39m
+[31m[1m>[22m[39m[90m 66 |[39m     process[33m.[39mon([32m"unhandledRejection"[39m[33m,[39m (reason) [33m=>[39m logFatal([32m"unhandled_rejection"[39m[33m,[39m reason))[33m;[39m
+ [90m    |[39m     [31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m
+ [90m 67 |[39m   }
+ [90m 68 |[39m
+ [90m 69 |[39m   [90m// ---- Durable background-job worker (durable queue infrastructure) ----[39m[0m
+
+A Node.js API is used (process.on at line: 66) which is not supported in the Edge Runtime.
+Learn more: https://nextjs.org/docs/api-reference/edge-runtime
+
+Import trace:
+  App Route:
+    ./src/instrumentation.ts
+    ./src/lib/giftz/workspace.ts
+    ./src/app/api/giftz/repositories/[id]/route.ts
+
+
+./src/instrumentation.ts:104:7
+Ecmascript file had an error
+[0m [90m 102 |[39m           })[33m;[39m
+ [90m 103 |[39m       }[33m;[39m
+[31m[1m>[22m[39m[90m 104 |[39m       process[33m.[39monce([32m"SIGTERM"[39m[33m,[39m () [33m=>[39m graceful([32m"SIGTERM"[39m))[33m;[39m
+ [90m     |[39m       [31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m
+ [90m 105 |[39m       process[33m.[39monce([32m"SIGINT"[39m[33m,[39m () [33m=>[39m graceful([32m"SIGINT"[39m))[33m;[39m
+ [90m 106 |[39m     } [36mcatch[39m (error) {
+ [90m 107 |[39m       [90m// Honest but non-fatal: a broken queue bootstrap must not take the web[39m[0m
+
+A Node.js API is used (process.once at line: 104) which is not supported in the Edge Runtime.
+Learn more: https://nextjs.org/docs/api-reference/edge-runtime
+
+Import trace:
+  App Route:
+    ./src/instrumentation.ts
+    ./src/lib/giftz/workspace.ts
+    ./src/app/api/giftz/repositories/[id]/route.ts
+
+
+./src/instrumentation.ts:105:7
+Ecmascript file had an error
+[0m [90m 103 |[39m       }[33m;[39m
+ [90m 104 |[39m       process[33m.[39monce([32m"SIGTERM"[39m[33m,[39m () [33m=>[39m graceful([32m"SIGTERM"[39m))[33m;[39m
+[31m[1m>[22m[39m[90m 105 |[39m       process[33m.[39monce([32m"SIGINT"[39m[33m,[39m () [33m=>[39m graceful([32m"SIGINT"[39m))[33m;[39m
+ [90m     |[39m       [31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m[31m[1m^[22m[39m
+ [90m 106 |[39m     } [36mcatch[39m (error) {
+ [90m 107 |[39m       [90m// Honest but non-fatal: a broken queue bootstrap must not take the web[39m
+ [90m 108 |[39m       [90m// server down. Jobs stay QUEUED and are picked up by the next boot (or[39m[0m
+
+A Node.js API is used (process.once at line: 105) which is not supported in the Edge Runtime.
+Learn more: https://nextjs.org/docs/api-reference/edge-runtime
+
+Import trace:
+  App Route:
+    ./src/instrumentation.ts
+    ./src/lib/giftz/workspace.ts
+    ./src/app/api/giftz/repositories/[id]/route.ts
+
+
+✓ Compiled successfully in 47s
+  Running TypeScript ...
+  Collecting page data using 1 worker ...
+  Generating static pages using 1 worker (0/29) ...
+  Generating static pages using 1 worker (7/29) 
+  Generating static pages using 1 worker (14/29) 
+  Generating static pages using 1 worker (21/29) 
+✓ Generating static pages using 1 worker (29/29) in 116.3ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ƒ /
+├ ƒ /_not-found
+├ ƒ /api
+├ ƒ /api/admin/ox/opportunities
+├ ƒ /api/admin/ox/opportunities/[opportunityId]
+├ ƒ /api/admin/ox/verifications
+├ ƒ /api/admin/ox/verifications/[id]
+├ ƒ /api/admin/reports
+├ ƒ /api/admin/reports/[id]
+├ ƒ /api/ai/capabilities
+├ ƒ /api/ai/chat
+├ ƒ /api/ai/chat-stream
+├ ƒ /api/ai/conversations
+├ ƒ /api/ai/conversations/[id]
+├ ƒ /api/ai/design
+├ ƒ /api/ai/design/audit
+├ ƒ /api/ai/design/chat
+├ ƒ /api/ai/design/execute
+├ ƒ /api/ai/design/job
+├ ƒ /api/ai/design/plan
+├ ƒ /api/ai/improve
+├ ƒ /api/ai/portfolio/design
+├ ƒ /api/ai/suggest
+├ ƒ /api/auth/google
+├ ƒ /api/auth/google/callback
+├ ƒ /api/auth/google/status
+├ ƒ /api/auth/login
+├ ƒ /api/auth/logout
+├ ƒ /api/auth/me
+├ ƒ /api/auth/recover/request
+├ ƒ /api/auth/recover/reset
+├ ƒ /api/auth/register
+├ ƒ /api/auth/verify-email/confirm
+├ ƒ /api/auth/verify-email/request
+├ ƒ /api/collections/[id]
+├ ƒ /api/collections/[id]/items
+├ ƒ /api/discover
+├ ƒ /api/discover/creators
+├ ƒ /api/discover/posts
+├ ƒ /api/discover/suggested
+├ ƒ /api/employers
+├ ƒ /api/employers/[id]
+├ ƒ /api/employers/[id]/members
+├ ƒ /api/employers/[id]/members/[memberId]
+├ ƒ /api/employers/[id]/opportunities
+├ ƒ /api/employers/[id]/opportunities/[opportunityId]
+├ ƒ /api/employers/[id]/opportunities/[opportunityId]/matches
+├ ƒ /api/employers/[id]/opportunities/[opportunityId]/matches/[candidateUserId]
+├ ƒ /api/employers/[id]/opportunities/[opportunityId]/outcome
+├ ƒ /api/employers/[id]/opportunities/[opportunityId]/pause
+├ ƒ /api/employers/[id]/opportunities/[opportunityId]/reopen
+├ ƒ /api/employers/[id]/opportunities/[opportunityId]/shortlist
+├ ƒ /api/employers/[id]/opportunities/[opportunityId]/shortlist/[entryId]
+├ ƒ /api/employers/[id]/opportunities/[opportunityId]/submit
+├ ƒ /api/employers/[id]/transfer-ownership
+├ ƒ /api/employers/[id]/verification
+├ ƒ /api/employers/me
+├ ƒ /api/feed
+├ ƒ /api/giftz/brand-kit
+├ ƒ /api/giftz/creative
+├ ƒ /api/giftz/creative/[id]
+├ ƒ /api/giftz/creative/[id]/approve
+├ ƒ /api/giftz/creative/[id]/integrate
+├ ƒ /api/giftz/creative/[id]/reject
+├ ƒ /api/giftz/planner
+├ ƒ /api/giftz/quality-gate
+├ ƒ /api/giftz/repositories
+├ ƒ /api/giftz/repositories/[id]
+├ ƒ /api/giftz/sites
+├ ƒ /api/giftz/sites/[id]
+├ ƒ /api/giftz/sites/[id]/activity
+├ ƒ /api/giftz/sites/[id]/builds
+├ ƒ /api/giftz/sites/[id]/builds/[buildId]
+├ ƒ /api/giftz/sites/[id]/deployments
+├ ƒ /api/giftz/sites/[id]/deployments/[deploymentId]/rollback
+├ ƒ /api/giftz/sites/[id]/domains
+├ ƒ /api/giftz/sites/[id]/domains/[domainId]
+├ ƒ /api/giftz/sites/[id]/domains/[domainId]/verify
+├ ƒ /api/giftz/sites/[id]/files
+├ ƒ /api/giftz/sites/[id]/files/apply-proposal
+├ ƒ /api/giftz/sites/[id]/files/content
+├ ƒ /api/giftz/sites/[id]/files/rename
+├ ƒ /api/giftz/sites/[id]/files/search
+├ ƒ /api/giftz/sites/[id]/preview
+├ ƒ /api/giftz/sites/[id]/preview/[...path]
+├ ƒ /api/giftz/sites/[id]/public
+├ ƒ /api/giftz/sites/[id]/public/[...path]
+├ ƒ /api/giftz/sites/[id]/publish
+├ ƒ /api/giftz/sites/[id]/unpublish
+├ ƒ /api/giftz/sites/[id]/versions
+├ ƒ /api/giftz/sites/[id]/versions/[versionId]
+├ ƒ /api/giftz/sites/[id]/versions/[versionId]/diff
+├ ƒ /api/giftz/sites/[id]/versions/[versionId]/restore
+├ ƒ /api/giftz/tasks
+├ ƒ /api/giftz/tasks/[id]
+├ ƒ /api/giftz/tasks/[id]/approve
+├ ƒ /api/giftz/tasks/[id]/cancel
+├ ƒ /api/giftz/tasks/[id]/reject
+├ ƒ /api/giftz/tasks/[id]/retry
+├ ƒ /api/giftz/tasks/[id]/revert
+├ ƒ /api/hashtags/[tag]
+├ ƒ /api/hashtags/trending
+├ ƒ /api/health
+├ ƒ /api/inquiries
+├ ƒ /api/inquiries/[id]
+├ ƒ /api/intelligence/handoffs
+├ ƒ /api/intelligence/handoffs/[id]
+├ ƒ /api/intelligence/handoffs/[id]/approve
+├ ƒ /api/intelligence/handoffs/[id]/cancel
+├ ƒ /api/intelligence/handoffs/[id]/reject
+├ ƒ /api/laxii/avatar-identity
+├ ƒ /api/laxii/banner-presets
+├ ƒ /api/laxii/banner/export
+├ ƒ /api/laxii/brief
+├ ƒ /api/laxii/capabilities
+├ ƒ /api/laxii/conversations
+├ ƒ /api/laxii/conversations/[id]
+├ ƒ /api/laxii/conversations/[id]/messages
+├ ƒ /api/laxii/cover-letter
+├ ƒ /api/laxii/cover-letter/export
+├ ƒ /api/laxii/generate
+├ ƒ /api/laxii/images
+├ ƒ /api/laxii/images/export
+├ ƒ /api/laxii/jobs
+├ ƒ /api/laxii/jobs/[id]
+├ ƒ /api/laxii/jobs/[id]/cancel
+├ ƒ /api/laxii/jobs/[id]/retry
+├ ƒ /api/laxii/library
+├ ƒ /api/laxii/messages/[id]
+├ ƒ /api/laxii/resume
+├ ƒ /api/laxii/resume/analyze
+├ ƒ /api/laxii/resume/export
+├ ƒ /api/laxii/resume/export/verify
+├ ƒ /api/laxii/resume/import
+├ ƒ /api/laxii/resume/parse
+├ ƒ /api/laxii/resume/revisions
+├ ƒ /api/laxii/versions/[id]/favourite
+├ ƒ /api/laxii/versions/[id]/select
+├ ƒ /api/me/audit
+├ ƒ /api/me/blocks
+├ ƒ /api/me/collections
+├ ƒ /api/me/deletion
+├ ƒ /api/me/export
+├ ƒ /api/me/export/[jobId]
+├ ƒ /api/me/followers
+├ ƒ /api/me/following
+├ ƒ /api/me/identity
+├ ƒ /api/me/inquiries
+├ ƒ /api/me/insights/overview
+├ ƒ /api/me/insights/posts
+├ ƒ /api/me/insights/projects
+├ ƒ /api/me/messages
+├ ƒ /api/me/messages/[conversationId]
+├ ƒ /api/me/notifications
+├ ƒ /api/me/notifications/preferences
+├ ƒ /api/me/notifications/read
+├ ƒ /api/me/onboarding
+├ ƒ /api/me/privacy
+├ ƒ /api/me/profile
+├ ƒ /api/me/recovery-key
+├ ƒ /api/me/requests
+├ ƒ /api/me/saves
+├ ƒ /api/me/search-history
+├ ƒ /api/me/site
+├ ƒ /api/me/site/export
+├ ƒ /api/me/site/materials
+├ ƒ /api/me/site/publish
+├ ƒ /api/me/site/revisions
+├ ƒ /api/me/site/studio/sessions
+├ ƒ /api/me/site/studio/sessions/[id]
+├ ƒ /api/me/site/studio/sessions/[id]/messages
+├ ƒ /api/me/site/studio/turns/[taskId]
+├ ƒ /api/me/site/studio/turns/[taskId]/retry
+├ ƒ /api/me/site/unpublish
+├ ƒ /api/me/trust
+├ ƒ /api/me/workspace
+├ ƒ /api/me/workspace/switch
+├ ƒ /api/media
+├ ƒ /api/media/[id]
+├ ƒ /api/media/[id]/raw
+├ ƒ /api/media/direct/complete
+├ ƒ /api/media/direct/presign
+├ ƒ /api/media/upload
+├ ƒ /api/metrics
+├ ƒ /api/opportunities/hiring-rooms
+├ ƒ /api/opportunities/hiring-rooms/[roomId]
+├ ƒ /api/opportunities/hiring-rooms/[roomId]/cancel
+├ ƒ /api/opportunities/hiring-rooms/[roomId]/interviews
+├ ƒ /api/opportunities/hiring-rooms/[roomId]/interviews/[interviewId]/alternate
+├ ƒ /api/opportunities/hiring-rooms/[roomId]/interviews/[interviewId]/cancel
+├ ƒ /api/opportunities/hiring-rooms/[roomId]/interviews/[interviewId]/complete
+├ ƒ /api/opportunities/hiring-rooms/[roomId]/interviews/[interviewId]/confirm
+├ ƒ /api/opportunities/hiring-rooms/[roomId]/interviews/[interviewId]/reschedule
+├ ƒ /api/opportunities/hiring-rooms/[roomId]/members
+├ ƒ /api/opportunities/hiring-rooms/[roomId]/members/[memberId]
+├ ƒ /api/opportunities/hiring-rooms/[roomId]/pause
+├ ƒ /api/opportunities/hiring-rooms/[roomId]/resume
+├ ƒ /api/opportunities/hiring-rooms/[roomId]/stages
+├ ƒ /api/opportunities/invitations
+├ ƒ /api/opportunities/invitations/[invitationId]
+├ ƒ /api/opportunities/invitations/[invitationId]/negotiations
+├ ƒ /api/opportunities/invitations/[invitationId]/negotiations/[negotiationId]/accept
+├ ƒ /api/opportunities/invitations/[invitationId]/negotiations/[negotiationId]/decline
+├ ƒ /api/opportunities/invitations/[invitationId]/negotiations/[negotiationId]/withdraw
+├ ƒ /api/opportunities/invitations/[invitationId]/send
+├ ƒ /api/opportunities/invitations/[invitationId]/withdraw
+├ ƒ /api/opportunities/me/consents
+├ ƒ /api/opportunities/me/consents/[scope]/revoke
+├ ƒ /api/opportunities/me/discovery-audit
+├ ƒ /api/opportunities/me/hiring-rooms
+├ ƒ /api/opportunities/me/hiring-rooms/[roomId]
+├ ƒ /api/opportunities/me/hiring-rooms/[roomId]/withdraw
+├ ƒ /api/opportunities/me/invitations
+├ ƒ /api/opportunities/me/invitations/[invitationId]
+├ ƒ /api/opportunities/me/invitations/[invitationId]/accept
+├ ƒ /api/opportunities/me/invitations/[invitationId]/decline
+├ ƒ /api/opportunities/me/invitations/[invitationId]/negotiation-request
+├ ƒ /api/opportunities/me/invitations/[invitationId]/negotiations
+├ ƒ /api/opportunities/me/invitations/[invitationId]/negotiations/[negotiationId]/accept
+├ ƒ /api/opportunities/me/invitations/[invitationId]/negotiations/[negotiationId]/decline
+├ ƒ /api/opportunities/me/invitations/[invitationId]/negotiations/[negotiationId]/withdraw
+├ ƒ /api/opportunities/me/matches
+├ ƒ /api/opportunities/me/profile
+├ ƒ /api/opportunities/me/visibility
+├ ƒ /api/origin-proof
+├ ƒ /api/portfolio
+├ ƒ /api/portfolio/export
+├ ƒ /api/portfolio/import
+├ ƒ /api/portfolio/publish
+├ ƒ /api/portfolio/revisions
+├ ƒ /api/portfolio/revisions/[id]/restore
+├ ƒ /api/portfolio/unpublish
+├ ƒ /api/posts
+├ ƒ /api/posts/[id]
+├ ƒ /api/posts/[id]/bookmark
+├ ƒ /api/posts/[id]/comments
+├ ƒ /api/posts/[id]/comments/[commentId]
+├ ƒ /api/posts/[id]/comments/[commentId]/like
+├ ƒ /api/posts/[id]/hide
+├ ƒ /api/posts/[id]/like
+├ ƒ /api/posts/[id]/share
+├ ƒ /api/posts/[id]/view
+├ ƒ /api/posts/drafts
+├ ƒ /api/professions
+├ ƒ /api/professions/[slug]
+├ ƒ /api/profiles/[username]
+├ ƒ /api/profiles/[username]/edge
+├ ƒ /api/profiles/[username]/follow
+├ ƒ /api/profiles/[username]/followers
+├ ƒ /api/profiles/[username]/following
+├ ƒ /api/profiles/[username]/posts
+├ ƒ /api/projects
+├ ƒ /api/projects/[id]
+├ ƒ /api/projects/[id]/archive
+├ ƒ /api/projects/[id]/duplicate
+├ ƒ /api/projects/[id]/feature
+├ ƒ /api/projects/[id]/publish
+├ ƒ /api/projects/[id]/related
+├ ƒ /api/projects/[id]/save
+├ ƒ /api/projects/[id]/unarchive
+├ ƒ /api/projects/[id]/unfeature
+├ ƒ /api/projects/[id]/unpublish
+├ ƒ /api/projects/[id]/view
+├ ƒ /api/ready
+├ ƒ /api/reports
+├ ƒ /api/riishe/automations
+├ ƒ /api/riishe/automations/[id]
+├ ƒ /api/riishe/automations/stop-all
+├ ƒ /api/riishe/dashboard
+├ ƒ /api/riishe/enquiries/[taskId]/send
+├ ƒ /api/riishe/notes
+├ ƒ /api/riishe/notes/[id]
+├ ƒ /api/riishe/preferences
+├ ƒ /api/riishe/shortlist
+├ ƒ /api/riishe/specialists
+├ ƒ /api/riishe/steps/[id]
+├ ƒ /api/riishe/workflows
+├ ƒ /api/riishe/workflows/[id]
+├ ƒ /api/search/all
+├ ƒ /api/search/posts
+├ ƒ /api/search/profiles
+├ ƒ /api/search/projects
+├ ƒ /api/search/suggest
+├ ƒ /api/site/[slug]
+├ ƒ /api/skills
+├ ƒ /robots.txt
+└ ƒ /sitemap.xml
+
+
+ƒ Proxy (Middleware)
+
+ƒ  (Dynamic)  server-rendered on demand
+
