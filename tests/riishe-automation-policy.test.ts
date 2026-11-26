@@ -262,6 +262,16 @@ describe("B2 registry — permission declarations are registry-level and real", 
     const send = getTool("enquiry.send")!;
     expect(send.level).toBe(2);
     expect(toolApprovalRequired(send)).toBe(true);
+    // M35.7: the LAXII provider generation and the AI career-document
+    // generators consume the owner's provisioned budget — the registry pins
+    // them at level 2 (explicit approval for every execution) even though
+    // their MEDIUM risk alone would not require it:
+    for (const name of ["laxii.banner.produce", "career.resume.tailoredCopy", "career.coverLetter.draft"]) {
+      const tool = getTool(name)!;
+      expect(tool.risk).toBe("MEDIUM");
+      expect(tool.level).toBe(2);
+      expect(toolApprovalRequired(tool)).toBe(true);
+    }
   });
 });
 
@@ -360,15 +370,16 @@ describe("B2 levels in the workflow engine", () => {
       data: { authorId: u.id, body: "to delete", hashtags: "[]", mediaKind: "TEXT", visibility: "PUBLIC", status: "PUBLISHED" },
     });
     cleanupPosts.push(post.id);
-    // A delete plan whose postRef has no producer still CREATES honestly —
-    // but the destructive step is approval-gated and would fail at execution.
-    const orphan = await createWorkflowFromPlan(u.id, "delete the post", {
-      title: "L3 orphan ref",
-      steps: [{ id: "s1", tool: "post.delete", params: { postRef: "x" } }],
-    });
-    cleanupWorkflows.push(orphan.id);
-    expect(orphan.steps[0].requiresApproval).toBe(true);
-    expect(orphan.steps[0].status).toBe("AWAITING_APPROVAL");
+    // M35.7: a plan whose postRef names a step that does not exist (or is not
+    // a declared dependency) is rejected at PLAN time — typed artefact
+    // references are validated against the explicit dependency graph before
+    // anything is persisted.
+    await expect(
+      createWorkflowFromPlan(u.id, "delete the post", {
+        title: "L3 orphan ref",
+        steps: [{ id: "s1", tool: "post.delete", params: { postRef: "x" } }],
+      })
+    ).rejects.toThrow(/not an explicit earlier dependency/);
 
     // Build the real chain: draft → delete (destructive).
     const wf2 = await createWorkflowFromPlan(u.id, "draft and delete", {
@@ -620,11 +631,15 @@ describe("B2 duplicate execution, retry and cancellation", () => {
       data: { authorId: u.id, body: "will fail publish", hashtags: "[]", mediaKind: "TEXT", visibility: "PRIVATE", status: "DRAFT" },
     });
     cleanupPosts.push(post.id);
-    const wf = await createWorkflowFromPlan(u.id, "publish missing", {
-      title: "retry matrix",
-      steps: [{ id: "s1", tool: "post.publish", params: { postRef: "ghost" } }],
-    }).catch(() => null);
-    // postRef "ghost" resolves against step results — build a failing chain instead:
+    // M35.7: a dangling postRef is rejected at plan time (typed artefact
+    // references must name an explicit earlier dependency).
+    await expect(
+      createWorkflowFromPlan(u.id, "publish missing", {
+        title: "retry matrix",
+        steps: [{ id: "s1", tool: "post.publish", params: { postRef: "ghost" } }],
+      })
+    ).rejects.toThrow(/not an explicit earlier dependency/);
+    // Build a failing chain instead:
     const wf2 = await createWorkflowFromPlan(u.id, "retry chain", {
       title: "retry matrix 2",
       steps: [
@@ -633,7 +648,6 @@ describe("B2 duplicate execution, retry and cancellation", () => {
       ],
     });
     cleanupWorkflows.push(wf2.id);
-    if (wf) cleanupWorkflows.push(wf.id);
     await drainWorkflowJobs();
     let w = await loadOwned(u.id, wf2.id);
     expect(w.steps[1].status).toBe("AWAITING_APPROVAL");

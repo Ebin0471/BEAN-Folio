@@ -287,31 +287,62 @@ describe("workflow engine", () => {
 
   test("retry after failure; failure reporting records the REAL error; dependents skip", async () => {
     await asOwner();
+    // M35.7: a ref param that names a step which is not an explicit earlier
+    // dependency is rejected at PLAN time — the old "dangling ref" plan can
+    // no longer be persisted at all:
+    await expect(
+      createWorkflowFromPlan(
+        owner.id,
+        "fail chain",
+        {
+          title: "Failing chain",
+          steps: [
+            { id: "f1", tool: "post.publish", params: { postRef: "missing-step" }, dependsOn: [] },
+            { id: "f2", tool: "shortlist.addCreators", params: { usernames: ["peer"] }, dependsOn: ["f1"] },
+          ],
+        },
+        { planner: "deterministic" }
+      )
+    ).rejects.toThrow(/not an explicit earlier dependency/);
+    // Same scenario with a persisted shape: a valid chain whose ref target
+    // disappears between plan and execution (the stored params are rewritten
+    // the way a corrupted/mismatched producer would) must FAIL the step and
+    // SKIP its dependents — honestly recorded, never fabricated.
     const failing = await createWorkflowFromPlan(
       owner.id,
       "fail chain",
       {
         title: "Failing chain",
         steps: [
-          { id: "f1", tool: "post.publish", params: { postRef: "missing-step" }, dependsOn: [] },
-          { id: "f2", tool: "shortlist.addCreators", params: { usernames: ["peer"] }, dependsOn: ["f1"] },
+          { id: "f1", tool: "post.draft", params: { body: "producer", hashtags: [] } },
+          { id: "f2", tool: "post.publish", params: { postRef: "f1" }, dependsOn: ["f1"] },
+          { id: "f3", tool: "shortlist.addCreators", params: { usernames: ["peer"] }, dependsOn: ["f2"] },
         ],
       },
       { planner: "deterministic" }
     );
     cleanupWorkflows.push(failing.id);
-    const [f1, f2] = failing.steps;
-    expect(f1.status).toBe("AWAITING_APPROVAL");
+    const [f1, f2, f3] = failing.steps;
     expect(f2.status).toBe("PENDING");
-
-    // Approving runs it, but the ref resolution fails → honest FAILED step:
-    await approveStep(owner.id, f1.id, false);
-    await expect(executeApprovedStep(owner.id, f1.id, createInquiryHandler)).rejects.toThrow();
-    const failedStep = await db.riisheWorkflowStep.findUnique({ where: { id: f1.id } });
+    await drainWorkflowJobs();
+    expect(f1.status === "SUCCEEDED" || (await db.riisheWorkflowStep.findUnique({ where: { id: f1.id } }))!.status === "SUCCEEDED").toBe(true);
+    const postRefMissing = await db.riisheWorkflowStep.update({
+      where: { id: f2.id },
+      data: { paramsJson: JSON.stringify({ postRef: "vanishing-step" }), status: "READY", approvedAt: new Date() },
+    });
+    void postRefMissing;
+    const job = await enqueue({
+      kind: "riishe.workflow",
+      payload: { workflowId: failing.id, stepId: f2.id, userId: owner.id },
+      userId: owner.id,
+      dedupeKey: `riishe.wfstep:failchain:${f2.id}`,
+    });
+    await runWorkflowStepJob(job).catch(() => undefined); // fails honestly (maxAttempts 1 for publish)
+    const failedStep = await db.riisheWorkflowStep.findUnique({ where: { id: f2.id } });
     expect(failedStep!.status).toBe("FAILED");
     expect(failedStep!.error).toContain("not found");
     // Dependents of the failed step are SKIPPED with the reason recorded:
-    const skipped = await db.riisheWorkflowStep.findUnique({ where: { id: f2.id } });
+    const skipped = await db.riisheWorkflowStep.findUnique({ where: { id: f3.id } });
     expect(skipped!.status).toBe("SKIPPED");
   });
 

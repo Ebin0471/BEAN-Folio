@@ -55,7 +55,7 @@ mock.module("@/lib/ai", () => ({
 import { db } from "@/lib/db";
 import { CREATIVE_TOOLS } from "@/lib/riishe/creative-tools";
 import { getTool, toolApprovalRequired, REF_FIELDS, REF_RESULT_KEYS } from "@/lib/riishe/tools";
-import { runWorkflowStepJob, createWorkflowFromPlan, loadOwned } from "@/lib/riishe/workflow-engine";
+import { runWorkflowStepJob, createWorkflowFromPlan, loadOwned, approveStep } from "@/lib/riishe/workflow-engine";
 import { planDeterministically } from "@/lib/riishe/planner";
 import { classifySpecialist, getSpecialist, SPECIALISTS } from "@/lib/riishe/specialists";
 import { canonicalBannerPreset } from "@/lib/laxii/banner-presets";
@@ -138,12 +138,24 @@ describe("M35 creative tools — registry contracts", () => {
     }
   });
 
-  test("the approval ladder: only giftz.task.approve is execution-class", () => {
+  test("the approval ladder (M35.7): execution + provider/AI generation tools are approval-class", () => {
     const approvalTools = NAMES.filter((n) => toolApprovalRequired(getTool(n)!));
-    expect(approvalTools).toEqual(["giftz.task.approve"]);
+    // giftz.task.approve executes real file edits (HIGH). M35.7: the LAXII
+    // provider generation and the AI career-document generators consume the
+    // owner's provisioned budget — explicit level-2 approval for every run.
+    expect(approvalTools.sort()).toEqual(
+      ["career.coverLetter.draft", "career.resume.tailoredCopy", "giftz.task.approve", "laxii.banner.produce"].sort()
+    );
     expect(getTool("giftz.task.approve")!.risk).toBe("HIGH");
     expect(getTool("giftz.task.approve")!.level).toBe(2);
     expect(getTool("giftz.task.approve")!.maxAttempts).toBe(1);
+    for (const n of ["laxii.banner.produce", "career.resume.tailoredCopy", "career.coverLetter.draft"]) {
+      // MEDIUM + level 2 — the post.schedule precedent: the generic risk map
+      // alone would permit silent execution, the registry declaration does not.
+      expect(getTool(n)!.risk).toBe("MEDIUM");
+      expect(getTool(n)!.level).toBe(2);
+      expect(toolApprovalRequired(getTool(n)!)).toBe(true);
+    }
     // nothing here publishes/sends/deletes: DESTRUCTIVE must never appear
     expect(NAMES.filter((n) => getTool(n)!.risk === "DESTRUCTIVE")).toEqual([]);
   });
@@ -653,7 +665,7 @@ describe("M35 workflow engine integration", () => {
     }
   }
 
-  test("typed artefact refs resolve through the engine: banner brief → produce chain", async () => {
+  test("typed artefact refs resolve through the engine: banner brief → produce chain (level-2 produce approved explicitly)", async () => {
     const plan = {
       title: "Banner chain",
       summary: "brief then produce",
@@ -666,12 +678,24 @@ describe("M35 workflow engine integration", () => {
       planner: "deterministic",
     });
     await drainUntilSettled();
-    const loaded = await loadOwned(owner.id, wf.id);
+    let loaded = await loadOwned(owner.id, wf.id);
     const [briefStep, produceStep] = loaded.steps;
     expect(briefStep.status).toBe("SUCCEEDED");
-    expect(produceStep.status).toBe("SUCCEEDED");
-    const briefResult = JSON.parse(briefStep.resultJson) as { briefTaskId: string; verification: { ok: boolean } };
-    const produceResult = JSON.parse(produceStep.resultJson) as { conversationId: string; verification: { ok: boolean } };
+    // M35.7: the provider-generation step is approval-class — the queue can
+    // NEVER run it unapproved; it waits here for the explicit owner go-ahead.
+    expect(produceStep.status).toBe("AWAITING_APPROVAL");
+    expect(produceStep.requiresApproval).toBe(true);
+    const unapprovedJobs = await db.backgroundJob.count({
+      where: { kind: "riishe.workflow", status: "QUEUED", payload: { contains: produceStep.id } },
+    });
+    expect(unapprovedJobs).toBe(0);
+    // the owner's explicit approval is what starts the real pipeline
+    await approveStep(owner.id, produceStep.id, false);
+    await drainUntilSettled();
+    loaded = await loadOwned(owner.id, wf.id);
+    expect(loaded.steps[1].status).toBe("SUCCEEDED");
+    const briefResult = JSON.parse(loaded.steps[0].resultJson) as { briefTaskId: string; verification: { ok: boolean } };
+    const produceResult = JSON.parse(loaded.steps[1].resultJson) as { conversationId: string; verification: { ok: boolean } };
     expect(briefResult.verification.ok).toBe(true);
     expect(produceResult.verification.ok).toBe(true);
     // the chain carried the REAL briefTaskId into the production conversation
