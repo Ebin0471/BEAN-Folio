@@ -6,7 +6,7 @@
   "new_suite": {
     "file": "tests/riishe-m358-concurrency.test.ts",
     "tests": 12,
-    "runs": "6 total executions (1 focused + 5 stability re-runs + 1 in the per-file battery) — 12/12 pass every run",
+    "runs": "7 total executions against the isolated QA database (1 focused + 5 stability re-runs + 1 in the per-file battery) — 12/12 pass in every QA-database run; two earlier development iterations on a separate scratch database failed 2 assertions with incorrect EXPECTED values (LaxiiMessage counts the USER turn + ASSISTANT generation row; leftover creation-time queue row in one test) — assertion fixes, not race leaks",
     "scenarios": [
       "two workers claim the same READY step simultaneously (controlled barrier) — exactly one atomic claim wins, wrong ownership tokens refused",
       "two workers execute the same READY step through the real queue entrypoint (barrier + Promise.all) — one attempt, one artifact, one execution audit pair",
