@@ -34,7 +34,9 @@ export type SpecialistId =
   | "business-analyst"
   | "people-operations"
   | "docs-knowledge"
-  | "creative-producer";
+  | "creative-producer"
+  | "people-finder"
+  | "portfolio-intelligence";
 
 export type WorkspaceScope = "PERSONAL" | "ORGANIZATION";
 
@@ -295,6 +297,100 @@ export const SPECIALISTS: SpecialistDefinition[] = [
         "laxii.job.status",
       ]),
   },
+  {
+    // M36.1 (role 11, docs/M36_MULTI_AGENT_WORKFORCE_ARCHITECTURE.md §3):
+    // personal people discovery over the EXISTING public-discovery, shortlist
+    // and enquiry services — never a second discovery pipeline, never
+    // organization candidate discovery (that stays Talent Scout + OX).
+    id: "people-finder",
+    name: "People Finder",
+    description:
+      "Helps you find professionals, collaborators, mentors and co-founders from real public profiles — explains why each person matches, saves picks to your private shortlist and prepares enquiries for your review.",
+    capabilities: [
+      "Discover suitable creators and professionals from public profiles",
+      "Find collaborators, mentors and co-founders",
+      "Explain the actual discovery factors behind every match",
+      "Retrieve public work evidence through the consent-aware public-evidence tool",
+      "Save selected people to your personal shortlist",
+      "Prepare enquiry drafts for your review — nothing is sent without your approval",
+    ],
+    taskCategories: ["discovery", "collaboration", "outreach"],
+    toolNames: ["discovery.searchCreators", "shortlist.addCreators", "enquiry.draft", "portfolio.publicEvidence"],
+    workspaceScopes: ["PERSONAL"],
+    riskPolicy: { maxAutomationLevel: 1, approvalsAlwaysHuman: true },
+    limits: { maxSteps: 6, defaultTimeoutMs: 45_000 },
+    routingKeywords: [
+      "find a mentor",
+      "find mentors",
+      "find a co-founder",
+      "co-founder",
+      "cofounder",
+      "find a collaborator",
+      "find collaborators",
+      "collaborator",
+      "find creators",
+      "find people",
+      "find a video editor",
+      "find a photographer",
+      "find a developer",
+      "find a designer",
+      "find an editor",
+      "creators for a collaboration",
+      "people with skills similar",
+      "people like me",
+    ],
+    auditNote:
+      "Personal workspace only: discovery runs the existing public ladder (no blocked counterparties, no contact exposure). Organization candidate discovery stays with Talent Scout and the Opportunity Exchange consent boundary.",
+    available: () =>
+      toolsAvailable(["discovery.searchCreators", "shortlist.addCreators", "enquiry.draft", "portfolio.publicEvidence"]),
+  },
+  {
+    // M36.1 (role 12, docs/M36_MULTI_AGENT_WORKFORCE_ARCHITECTURE.md §3):
+    // evidence analysis over the owner's own records (self) plus the shared
+    // consent-aware public-evidence retrieval. The candidate/organization
+    // scope is deliberately NOT implemented in M36.1 (later M36 phase, fresh
+    // OX discovery authorization + AI_PROCESSING consent). Evidence levels
+    // DECLARED/DEMONSTRATED/VERIFIED/UNKNOWN are binding; verification is
+    // never synthesized beyond real TrustVerification rows.
+    id: "portfolio-intelligence",
+    name: "Portfolio Intelligence Analyst",
+    description:
+      "Analyses your own portfolio and available work evidence with an honest evidence ladder — which skills are declared, demonstrated, verified or unknown — and recommends what to highlight and what evidence to add.",
+    capabilities: [
+      "Analyse your own professional work and project evidence",
+      "Identify which declared skills have relevant project evidence",
+      "Explain portfolio strengths and gaps with sources",
+      "Recommend projects to highlight",
+      "Compare work evidence against a supplied profession or role requirement",
+      "Retrieve another person's public work only through the consent-aware public-evidence tool",
+    ],
+    taskCategories: ["portfolio", "career", "discovery"],
+    toolNames: ["portfolio.evidenceReport", "portfolio.publicEvidence"],
+    workspaceScopes: ["PERSONAL"],
+    riskPolicy: { maxAutomationLevel: 1, approvalsAlwaysHuman: true },
+    limits: { maxSteps: 5, defaultTimeoutMs: 45_000 },
+    routingKeywords: [
+      "portfolio review",
+      "review my portfolio",
+      "my portfolio",
+      "portfolio strengths",
+      "portfolio gaps",
+      "portfolio evidence",
+      "improve my portfolio",
+      "analyze my portfolio",
+      "analyze my work",
+      "project evidence",
+      "evidence report",
+      "highlight projects",
+      "which projects should",
+      "their portfolio",
+      "their public work",
+      "show their work",
+    ],
+    auditNote:
+      "Self-analysis reads only the owner's own records (deterministic evidence ladder — no scores, no synthesized verification). Third-party public evidence honours the visibility ladder, blocks and the subject's AI_PROCESSING consent on every execution.",
+    available: () => toolsAvailable(["portfolio.evidenceReport", "portfolio.publicEvidence"]),
+  },
 ];
 
 export function getSpecialist(id: string): SpecialistDefinition | null {
@@ -318,11 +414,23 @@ export function specialistCatalogForPlanner(): string {
  * hints. Returns the best specialist above a minimal threshold, else null.
  * Conservative by design — ambiguous goals fall through to the LLM planner
  * or plain chat, never to a wrong specialist.
+ *
+ * M36.1 (architecture §7.1): when a workspace type is supplied, only
+ * workspace-ELIGIBLE specialists are scored — the same keywords route
+ * differently per workspace (e.g. personal "find a mentor" → People Finder
+ * in a PERSONAL workspace, while ORGANIZATION candidate/recruitment language
+ * stays with Talent Scout). Without a workspace the historic behavior is
+ * unchanged (all available specialists score; the caller checks
+ * `specialistAllowsWorkspace` afterwards).
  */
-export function classifySpecialist(goal: string): SpecialistDefinition | null {
+export function classifySpecialist(
+  goal: string,
+  workspaceType?: "PERSONAL" | "ORGANIZATION"
+): SpecialistDefinition | null {
   const g = goal.toLowerCase();
   let best: { s: SpecialistDefinition; score: number } | null = null;
   for (const s of availableSpecialists()) {
+    if (workspaceType && !specialistAllowsWorkspace(s, workspaceType)) continue;
     let score = 0;
     for (const kw of s.routingKeywords) {
       if (g.includes(kw)) score += kw.includes(" ") ? 2 : 1;

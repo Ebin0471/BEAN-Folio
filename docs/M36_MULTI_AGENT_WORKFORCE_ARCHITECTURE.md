@@ -10,6 +10,20 @@ read-only audit; the tree was not modified. Branch `main`, publication via `scri
 (§3 approval gates) are binding. Every schema change, security-sensitive behavior change or API contract
 change named in this document requires explicit owner approval BEFORE implementation (Protocol §3).
 
+> **M36.1 implementation addendum (2026-11-26).** The first implementation milestone is COMPLETE for the
+> PERSONAL scope: specialists `people-finder` (§3-11) and `portfolio-intelligence` (§3-12) are registered
+> over real tools; `portfolio.evidenceReport` (§5.1, self-subject only) and `portfolio.publicEvidence`
+> (§5.2) are registered read-only LOW/Level-1 tools in the ONE registry; §10.3's AI_PROCESSING
+> consumption gap is CLOSED (fresh per-execution `getCurrentConsent(userId, "AI_PROCESSING")` read plus a
+> current `OX_CONSENT_VERSION` check, conservative degradation to declared/link-level output without
+> consent); workspace-aware routing (§7.1) is implemented via an optional workspace argument on
+> `classifySpecialist`. Live registry counts are now **12 specialists / 37 tools**. NOT implemented in
+> M36.1, exactly as scoped: the candidate subject branch of `portfolio.evidenceReport` (§5.1 candidate
+> arm — M36.3), all ORG roles 13–16, GIFTZ/LAXII roles 17–19, typed `evidenceRef` fan-out (§9 — a
+> creator-array reference was deliberately NOT fabricated; §8 Diagram 2's step-2 auto-fan-out remains a
+> recorded limitation for the M36.8 orchestration milestone), and per-step attribution (§7.2, OD-1). The
+> original architectural decisions below are unchanged. See `docs/reports/M36.1_IMPLEMENTATION_REPORT.md`.
+
 **Capability labels used throughout:**
 
 | Label | Meaning |

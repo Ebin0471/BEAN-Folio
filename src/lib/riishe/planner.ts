@@ -171,7 +171,7 @@ export async function planWithModel(
  * sequentially (the safe default), and return a plan — or null when nothing
  * maps (the caller then keeps the plain chat behavior).
  */
-export function planDeterministically(goal: string): PlannerPlan | null {
+export function planDeterministically(goal: string, workspaceType?: "PERSONAL" | "ORGANIZATION"): PlannerPlan | null {
   const clauses = goal
     .split(
       /(?:,\s*(?:and\s+)?then\b|\bthen\b|;\s*|\.\s+|\band also\b|(?:^|\n)\s*\d+[.)]\s*|,\s*and\s+(?=(?:remind|draft|send|schedule|shortlist|find|discover|publish|post|prepare|message)\b)|\band\s+(?=(?:remind|draft|send|schedule|shortlist|publish)\b))/i
@@ -207,7 +207,9 @@ export function planDeterministically(goal: string): PlannerPlan | null {
   }
 
   if (steps.length === 0) return null;
-  const specialist = classifySpecialist(goal);
+  // M36.1: workspace-aware attribution — a PERSONAL-only specialist (e.g.
+  // People Finder) is never attributed to an organization-workspace plan.
+  const specialist = classifySpecialist(goal, workspaceType);
   return {
     title: goal.replace(/\s+/g, " ").slice(0, 60) || "Workflow",
     summary: "Deterministic plan built from your request.",
@@ -319,6 +321,63 @@ function specialistStepForClause(
       params: {},
     };
   }
+  // M36.1 people-finder clauses — personal people discovery the intent
+  // engine does not already handle (mentor / co-founder / collaborator
+  // language). Only the EXISTING discovery tool is planned; no invented
+  // people or terms (the discovery criteria carry only words from the goal).
+  if (
+    /\b(find|help me find|looking for|need|want)\b[^?!.]*\b(mentor|co-?founder|collaborator|collaborators)\b/.test(c) &&
+    getTool("discovery.searchCreators")
+  ) {
+    return {
+      id,
+      tool: "discovery.searchCreators",
+      title: "Discover potential collaborators",
+      params: {
+        terms: (clause.match(/\b(filmmakers?|designers?|photographers?|developers?|editors?|videographers?|animators?|illustrators?|musicians?|writers?)\b/gi) ?? [])
+          .slice(0, 4)
+          .map((t) => t.toLowerCase()),
+        goal: "collaboration",
+        limit: extractLimit(clause) ?? 5,
+      },
+    };
+  }
+  // M36.1 portfolio-intelligence clause — the deterministic self evidence
+  // report (read-only, subject "self" only in M36.1).
+  if (
+    /\b(portfolio review|review my portfolio|portfolio strengths|portfolio gaps|analyze my portfolio|analyz(e|ing) my work|my portfolio evidence|portfolio evidence report)\b/.test(c) &&
+    getTool("portfolio.evidenceReport")
+  ) {
+    const skills = clause
+      .split(/\b(?:for|against|comparing?|versus|vs)\b/i)[1]
+      ?.split(/[\s,]+/)
+      .filter((w) => w.length > 3)
+      .slice(0, 3);
+    return {
+      id,
+      tool: "portfolio.evidenceReport",
+      title: "Compile the portfolio evidence report",
+      params: {
+        subject: { kind: "self" },
+        ...(skills && skills.length > 0 ? { againstRole: { requiredSkills: skills } } : {}),
+      },
+    };
+  }
+  // M36.1 portfolio-intelligence clause — public work evidence for a
+  // SPECIFIC username the user named. Never invented: no username, no step.
+  if (
+    /\b(show|see|pull|retrieve|check)\b[^?!.]*\b(their|his|her)\b[^?!.]*\b(work|portfolio|projects|publications)\b/.test(c) &&
+    getTool("portfolio.publicEvidence")
+  ) {
+    const username = extractUsernames(clause)[0];
+    if (!username) return null;
+    return {
+      id,
+      tool: "portfolio.publicEvidence",
+      title: `Retrieve public work evidence for @${username}`,
+      params: { username },
+    };
+  }
   return null;
 }
 
@@ -338,9 +397,13 @@ export async function planSpecialistWorkflow(
   goal: string,
   opts?: { conversationId?: string | null }
 ): Promise<(ReturnType<typeof toWorkflowDTO> & { planner: string }) | null> {
-  const specialist = classifySpecialist(goal);
-  if (!specialist) return null;
   const workspace = await safeResolveWorkspace(user.id);
+  // M36.1: workspace-aware classification — PERSONAL-only specialists (People
+  // Finder, Portfolio Intelligence in M36.1) are never classified inside an
+  // organization workspace, so organization recruitment language keeps
+  // routing to Talent Scout and the Opportunity Exchange.
+  const specialist = classifySpecialist(goal, workspace.type);
+  if (!specialist) return null;
   if (!specialistAllowsWorkspace(specialist, workspace.type)) return null;
 
   const step = specialistStepForClause(goal, () => "s1", 0);
@@ -545,7 +608,7 @@ export async function planAndCreateWorkflow(
     }
   }
   if (!created) {
-    const fallback = planDeterministically(goal);
+    const fallback = planDeterministically(goal, workspace.type);
     if (!fallback) return null;
     planner = "deterministic";
     try {

@@ -43,7 +43,7 @@ async function execTool(tool: { execute: (c: ToolContext, i: never) => Promise<R
 }
 
 describe("M31 specialist registry contract", () => {
-  test("all ten specialists are registered with stable ids and complete manifests", () => {
+  test("all twelve specialists are registered with stable ids and complete manifests", () => {
     const ids = SPECIALISTS.map((s) => s.id);
     expect(ids).toEqual([
       "career-guide",
@@ -57,6 +57,10 @@ describe("M31 specialist registry contract", () => {
       "docs-knowledge",
       // M35: the Creative Producer over the registered giftz.*/laxii.* tools.
       "creative-producer",
+      // M36.1: the two new PERSONAL-scope specialists (People Finder,
+      // Portfolio Intelligence Analyst) — real registrations over real tools.
+      "people-finder",
+      "portfolio-intelligence",
     ]);
     for (const s of SPECIALISTS) {
       expect(s.name.length).toBeGreaterThan(0);
@@ -99,6 +103,33 @@ describe("M31 specialist registry contract", () => {
     expect(classifySpecialist("show me my metrics for this month")?.id).toBe("business-analyst");
     expect(classifySpecialist("prepare onboarding for our new hire")?.id).toBe("people-operations");
     expect(classifySpecialist("find my document about the pricing draft")?.id).toBe("docs-knowledge");
+  });
+
+  test("M36.1: the two new PERSONAL specialists classify their own requests (no workspace arg)", () => {
+    expect(classifySpecialist("help me find a mentor for my design career")?.id).toBe("people-finder");
+    expect(classifySpecialist("I want a co-founder for my film startup")?.id).toBe("people-finder");
+    expect(classifySpecialist("find a video editor for my project")?.id).toBe("people-finder");
+    expect(classifySpecialist("find creators for a collaboration on my short film")?.id).toBe("people-finder");
+    expect(classifySpecialist("please do a portfolio review for me")?.id).toBe("portfolio-intelligence");
+    expect(classifySpecialist("what are my portfolio strengths and gaps")?.id).toBe("portfolio-intelligence");
+    expect(classifySpecialist("analyze my portfolio for a senior editor role")?.id).toBe("portfolio-intelligence");
+  });
+
+  test("M36.1: workspace-aware classification keeps organization recruitment with Talent Scout", () => {
+    // PERSONAL: people-finding language routes to People Finder.
+    expect(classifySpecialist("find a video editor for my project", "PERSONAL")?.id).toBe("people-finder");
+    // ORGANIZATION: People Finder and Portfolio Intelligence (PERSONAL-only in
+    // M36.1) are never eligible — the same keywords cannot leak there.
+    expect(classifySpecialist("find a video editor for my project", "ORGANIZATION")?.id).not.toBe("people-finder");
+    // ORGANIZATION recruitment language keeps routing to Talent Scout.
+    expect(classifySpecialist("find candidates for the senior editor role", "ORGANIZATION")?.id).toBe("talent-scout");
+    expect(classifySpecialist("find candidates for the senior editor role", "PERSONAL")?.id).toBe("talent-scout");
+    // ORGANIZATION-only specialists still resolve in ORG scope only.
+    expect(classifySpecialist("write an SOP for our release process", "ORGANIZATION")?.id).toBe("business-operations");
+    expect(classifySpecialist("write an SOP for our release process", "PERSONAL")).toBeNull();
+    // Ambiguous goals still fall through (conservative, unchanged).
+    expect(classifySpecialist("hello", "PERSONAL")).toBeNull();
+    expect(classifySpecialist("hello", "ORGANIZATION")).toBeNull();
   });
 
   test("ambiguous goals fall through to null (never a wrong specialist)", () => {

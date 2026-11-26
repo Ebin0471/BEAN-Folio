@@ -16,4 +16,10 @@ export const SPECIALIST_NAME_BY_ID: Record<string, string> = {
   "business-analyst": "Business Analyst",
   "people-operations": "People Operations",
   "docs-knowledge": "Document & Knowledge Assistant",
+  // M35: the Creative Producer identity (attribution honesty — workflows it
+  // owns show its chip, not a fallback).
+  "creative-producer": "Creative Producer",
+  // M36.1: the two new registered specialists.
+  "people-finder": "People Finder",
+  "portfolio-intelligence": "Portfolio Intelligence Analyst",
 };

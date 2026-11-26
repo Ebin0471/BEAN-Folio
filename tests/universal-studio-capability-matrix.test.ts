@@ -41,6 +41,7 @@ import { STEP_TOOLS } from "@/lib/ai-design/tools";
 import { RIISHE_TOOLS } from "@/lib/riishe/tools";
 import { SPECIALIST_TOOLS } from "@/lib/riishe/specialist-tools";
 import { CREATIVE_TOOLS } from "@/lib/riishe/creative-tools";
+import { PORTFOLIO_TOOLS } from "@/lib/riishe/portfolio-tools";
 import { SPECIALISTS } from "@/lib/riishe/specialists";
 import { RIISHE_MODES } from "@/lib/riishe/modes";
 import { BANNER_PRESETS } from "@/lib/laxii/banner-presets";
@@ -126,6 +127,17 @@ describe("capability matrix — registry counts match the live code", () => {
       expect(RIISHE_TOOLS[id]).toBeDefined();
     }
     expect(docCount("Registered M35 creative tools")).toBe(Object.keys(CREATIVE_TOOLS).length);
+  });
+
+  test("the 'M36.1 portfolio evidence tools' claim matches the live portfolio registry", () => {
+    expect(Object.keys(PORTFOLIO_TOOLS).length).toBe(2);
+    expect(Object.keys(PORTFOLIO_TOOLS).sort()).toEqual(["portfolio.evidenceReport", "portfolio.publicEvidence"]);
+    for (const id of Object.keys(PORTFOLIO_TOOLS)) {
+      expect(RIISHE_TOOLS[id]).toBeDefined();
+      expect(RIISHE_TOOLS[id].risk).toBe("LOW");
+      expect(RIISHE_TOOLS[id].level).toBe(1);
+    }
+    expect(docCount("Registered M36.1 portfolio tools")).toBe(Object.keys(PORTFOLIO_TOOLS).length);
   });
 });
 

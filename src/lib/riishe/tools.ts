@@ -61,6 +61,7 @@ import {
 } from "@/lib/riishe/tool-contracts";
 import { SPECIALIST_TOOLS } from "@/lib/riishe/specialist-tools";
 import { CREATIVE_TOOLS } from "@/lib/riishe/creative-tools";
+import { PORTFOLIO_TOOLS } from "@/lib/riishe/portfolio-tools";
 export {
   TOOL_RISKS,
   TOOL_LEVELS,
@@ -913,6 +914,9 @@ export const RIISHE_TOOLS: Record<string, RiisheToolDef<never>> = {
   // M35: real GIFTZ / LAXII / career-document services as registered tools
   // (same contracts, same approval ladder, same audit trail).
   ...CREATIVE_TOOLS,
+  // M36.1: read-only portfolio evidence tools (self evidence report +
+  // consent-gated public evidence) — same contracts, same audit trail.
+  ...PORTFOLIO_TOOLS,
 };
 
 export function getTool(name: string): RiisheToolDef<never> | null {

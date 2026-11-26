@@ -583,6 +583,10 @@ function WorkflowCardView({ action, onDismiss }: { action: Extract<RiisheActionC
               <p className="mt-1 text-xs text-muted-foreground">Scheduled for {new Date(s.scheduledFor).toLocaleString()}</p>
             ) : null}
             {s.error ? <p className="mt-1 text-xs text-red-500">{s.error}</p> : null}
+            {/* M36.1: evidence-ladder chips + limitations + public work links
+                for portfolio report steps — honest inline rendering, never
+                collapsed behind a tooltip (architecture §13.2). */}
+            <EvidenceSummaryView result={s.result} />
             {s.status === "AWAITING_APPROVAL" ? (
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 {s.risk === "DESTRUCTIVE" ? (
@@ -676,6 +680,91 @@ function ShortlistCard({ action }: { action: Extract<RiisheActionCard, { kind: "
           {action.refused.map((r) => (
             <li key={r.username} className="text-xs text-muted-foreground">
               @{r.username}: {r.reason}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * M36.1 — inline evidence rendering for portfolio report steps. Reads ONLY a
+ * duck-typed `evidenceSummary` block from the step's real result payload;
+ * absent or malformed results render nothing (never a fabricated summary).
+ * Evidence-ladder chips + limitations stay inline (never tooltip-collapsed);
+ * public work links are real platform-relative anchors (/p/... and /u/...).
+ */
+const EVIDENCE_LEVEL_CHIP_STYLES: Record<string, string> = {
+  DECLARED: "border-secondary-foreground/30 text-secondary-foreground",
+  DEMONSTRATED: "border-emerald-600/40 text-emerald-700 dark:text-emerald-400",
+  VERIFIED: "border-primary/50 text-primary",
+  UNKNOWN: "border-muted-foreground/40 text-muted-foreground",
+};
+
+function EvidenceSummaryView({ result }: { result: Record<string, unknown> | null }) {
+  const raw = result?.["evidenceSummary"];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const counts = (raw as { counts?: unknown }).counts;
+  if (!counts || typeof counts !== "object" || Array.isArray(counts)) return null;
+  const entries = (["DECLARED", "DEMONSTRATED", "VERIFIED", "UNKNOWN"] as const)
+    .map((level) => [level, (counts as Record<string, unknown>)[level]] as const)
+    .filter(([, v]) => typeof v === "number" && (v as number) > 0);
+  const limitations = (raw as { limitations?: unknown }).limitations;
+  const links = (raw as { publicLinks?: unknown }).publicLinks;
+  const safeLimitations =
+    Array.isArray(limitations)
+      ? limitations.filter((l): l is string => typeof l === "string" && l.length > 0).slice(0, 4)
+      : [];
+  const safeLinks = Array.isArray(links)
+    ? links
+        .filter(
+          (l): l is { label: string; url: string } =>
+            Boolean(l) && typeof l === "object" && !Array.isArray(l) &&
+            typeof (l as { label?: unknown }).label === "string" &&
+            typeof (l as { url?: unknown }).url === "string" &&
+            ((l as { url: string }).url.startsWith("/p/") || (l as { url: string }).url.startsWith("/u/"))
+        )
+        .slice(0, 5)
+    : [];
+  if (entries.length === 0 && safeLimitations.length === 0 && safeLinks.length === 0) return null;
+  return (
+    <div className="mt-2 rounded-md border border-border/50 bg-muted/30 p-2">
+      {entries.length > 0 ? (
+        <div className="flex flex-wrap gap-1" aria-label="Evidence levels">
+          {entries.map(([level, count]) => (
+            <span
+              key={level}
+              className={cn(
+                "rounded-full border bg-background px-2 py-0.5 text-[10px] font-medium",
+                EVIDENCE_LEVEL_CHIP_STYLES[level] ?? ""
+              )}
+            >
+              {level} · {count as number}
+            </span>
+          ))}
+        </div>
+      ) : null}
+      {safeLinks.length > 0 ? (
+        <ul className="mt-1.5 space-y-0.5">
+          {safeLinks.map((l) => (
+            <li key={l.url}>
+              {/* Real hash-router anchor: keyboard navigable, middle-clickable. */}
+              <a
+                href={`#${l.url}`}
+                className="text-xs font-medium text-primary underline-offset-2 hover:underline"
+              >
+                {l.label.slice(0, 80)}
+              </a>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {safeLimitations.length > 0 ? (
+        <ul className="mt-1.5 space-y-0.5">
+          {safeLimitations.map((l, i) => (
+            <li key={i} className="text-[11px] leading-snug text-muted-foreground">
+              {l}
             </li>
           ))}
         </ul>
