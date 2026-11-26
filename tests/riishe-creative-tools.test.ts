@@ -199,7 +199,7 @@ describe("M35 giftz.* tools", () => {
     const tool = getTool("giftz.site.plan")!;
     const parsed = tool.inputSchema.parse({ brief: "A portfolio website for a wedding photographer with a gallery and a contact page" });
     const result = await tool.execute({ userId: owner.id }, parsed as never);
-    const plan = (result as { plan: { family?: { id?: string }; sitemap?: unknown[]; featureMatrix?: unknown[] } }).plan;
+    const plan = (result as { plan: { family: { id: string }; sitemap: unknown[]; featureMatrix: unknown[] } }).plan;
     expect(plan).toBeDefined();
     expect(plan.family.id.length).toBeGreaterThan(0);
     expect(Array.isArray(plan.sitemap)).toBe(true);
