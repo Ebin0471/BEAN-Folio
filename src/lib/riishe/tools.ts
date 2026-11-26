@@ -60,6 +60,7 @@ import {
   type RiisheToolDef,
 } from "@/lib/riishe/tool-contracts";
 import { SPECIALIST_TOOLS } from "@/lib/riishe/specialist-tools";
+import { CREATIVE_TOOLS } from "@/lib/riishe/creative-tools";
 export {
   TOOL_RISKS,
   TOOL_LEVELS,
@@ -652,11 +653,33 @@ async function verifyNoteSaved(ctx: ToolContext, _input: unknown, result: Record
 // ---------------------------------------------------------------- registry
 
 /**
- * Cross-step references: a param key ending in "Ref" (draftRef, postRef)
- * carries a PLANNER step id; the executor replaces it with the referenced
- * step's concrete result value (draftTaskId / postId) before the tool runs.
+ * Cross-step references: a param key in REF_FIELDS carries a PLANNER step id;
+ * the executor replaces it with the referenced step's concrete result value
+ * (per REF_RESULT_KEYS below) before the tool runs.
  */
-export const REF_FIELDS = new Set(["draftRef", "postRef"]);
+export const REF_FIELDS = new Set([
+  "draftRef",
+  "postRef",
+  // M35 typed artefact references (creative chains):
+  "briefTaskRef", // laxii.banner.brief → laxii.banner.produce
+  "giftzTaskRef", // giftz.task.create → giftz.task.approve / giftz.task.status
+  "siteRef", // giftz.site.create → downstream site steps
+  "resumeRef", // career.resume.analyze → career.resume.tailoredCopy / career.coverLetter.draft
+  "letterRef", // career.coverLetter.draft → downstream letter steps
+  "jobRef", // laxii.banner.produce → laxii.job.status
+]);
+
+/** Ref param key → the key of the referenced step's result value it resolves to. */
+export const REF_RESULT_KEYS: Record<string, string> = {
+  draftRef: "draftTaskId",
+  postRef: "postId",
+  briefTaskRef: "briefTaskId",
+  giftzTaskRef: "taskId",
+  siteRef: "siteId",
+  resumeRef: "conversationId",
+  letterRef: "letterId",
+  jobRef: "messageId",
+};
 
 /**
  * Registry erasure: each entry keeps its concrete input generic locally; the
@@ -887,6 +910,9 @@ export const RIISHE_TOOLS: Record<string, RiisheToolDef<never>> = {
   // M31: specialist tools merge into the SAME registry — the planner and
   // executor see one authoritative tool catalog (no second registry).
   ...SPECIALIST_TOOLS,
+  // M35: real GIFTZ / LAXII / career-document services as registered tools
+  // (same contracts, same approval ladder, same audit trail).
+  ...CREATIVE_TOOLS,
 };
 
 export function getTool(name: string): RiisheToolDef<never> | null {

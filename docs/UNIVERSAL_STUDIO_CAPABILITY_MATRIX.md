@@ -134,12 +134,13 @@ Baseline: `main` at `74123a5` (PR #7 merge, 2026-11-24). North star:
 
 ## 3. RIISHE — conversational agent and governed orchestration
 
-### 3.1 Verified registry sizes (live imports, baseline `74123a5`)
+### 3.1 Verified registry sizes (live imports, baseline `73cf553` + M35)
 
 | Registry | Count | Source of truth |
 | --- | --- | --- |
-| Registered tools (`RIISHE_TOOLS`, incl. 9 specialist tools) | 23 | `src/lib/riishe/tools.ts`, `src/lib/riishe/specialist-tools.ts` |
-| Specialists (`SPECIALISTS`) | 9 | `src/lib/riishe/specialists.ts` |
+| Registered tools (`RIISHE_TOOLS`, incl. 9 specialist tools + 12 M35 creative tools) | 35 | `src/lib/riishe/tools.ts`, `src/lib/riishe/specialist-tools.ts`, `src/lib/riishe/creative-tools.ts` |
+| Registered M35 creative tools (`giftz.*`/`laxii.*`/career-document) | 12 | `src/lib/riishe/creative-tools.ts` |
+| Specialists (`SPECIALISTS`, incl. `creative-producer`) | 10 | `src/lib/riishe/specialists.ts` |
 | Response modes (`RIISHE_MODES`) | 8 | `src/lib/riishe/modes.ts` |
 | Automation intent kinds (`RiisheIntentKind`) | 11 | `src/lib/riishe/intents.ts` |
 | RIISHE API route files under `src/app/api/riishe/` | 13 | route-tree count |
@@ -156,18 +157,19 @@ Baseline: `main` at `74123a5` (PR #7 merge, 2026-11-24). North star:
 | Append-only audit events | Existing | `src/lib/riishe/audit.ts` | Never throws; every tool declares `auditAction`. |
 | Specialist routing (deterministic keyword classifier + LLM planner attribution) | Existing | `src/lib/riishe/specialists.ts`, `src/app/api/ai/chat/route.ts` | Conservative: ambiguous goals fall through to advisory chat. |
 | GIFTZ/LAXII delegation via durable briefs | Existing (brief handoff, **not** tool execution) | `src/lib/intelligence/delegation.ts`, `src/app/api/laxii/brief/route.ts` | One hop: `AgentTask` AWAITING_APPROVAL; user executes follow-through. |
-| Registered `giftz.*` tools in `RIISHE_TOOLS` | Unsupported (today) | live registry: zero keys starting `giftz.` | Planned as M35 via the existing registry — not permission to fake. |
-| Registered `laxii.*` tools in `RIISHE_TOOLS` | Unsupported (today) | live registry: zero keys starting `laxii.` | Same as above. |
+| Registered `giftz.*` tools in `RIISHE_TOOLS` | Existing (M35) | `src/lib/riishe/creative-tools.ts` (`giftz.site.plan/create`, `giftz.task.create/status/approve`), tests `tests/riishe-creative-tools.test.ts` | Real services wrapped via `defineTool`; `giftz.task.approve` is HIGH/level-2 (explicit confirmation, never queue-run); every persistent effect has a verify hook that re-reads the backend. |
+| Registered `laxii.*` tools in `RIISHE_TOOLS` | Existing (M35) | `src/lib/riishe/creative-tools.ts` (`laxii.banner.brief/produce`, `laxii.job.status`) | `laxii.banner.produce` runs the shared `startBriefDrivenBanner` entry (same code the studio route calls); daily image/cost guards apply end-to-end. |
+| Registered career-document tools in `RIISHE_TOOLS` | Existing (M35) | `src/lib/riishe/creative-tools.ts` (`career.resume.analyze/importProposal/tailoredCopy`, `career.coverLetter.draft`) | M33.5 deterministic analysis, import proposal (nothing persisted), tailored copies (master untouched) and the guarded cover-letter writer. |
 | Payment / spend tools | Unsupported by design | `src/lib/riishe/tool-contracts.ts` header | "RIISHE has NO tools for spending money" — permanent. |
-| Streaming chat (SSE) | Partial | `src/app/api/ai/chat-stream/route.ts` | Route exists and is tested; the live surface (`IntelligenceView`) uses the non-streaming `/api/ai/chat`; the streaming UI component is currently orphaned. |
+| Streaming chat (SSE) | Partial (route tested; live surface uses the action path) | `src/app/api/ai/chat-stream/route.ts`, `src/views/IntelligenceView.tsx` | M35 retired the orphaned floating assistant (`RiisheAssistant` deleted); the live surface deliberately stays on `/api/ai/chat` because the action path carries the governance cards (delegation/workflow/automation). Wiring streaming INTO the governance surface requires sharing the execution pipeline with the stream route — future work, not faked. |
 
 ### 3.3 RIISHE gaps (priority register)
 
 | Gap | Priority | Notes |
 | --- | --- | --- |
-| `giftz.brief.create` / `giftz.site.plan` / `giftz.project.build` style registered tools | M35 | Must reuse `defineTool` + registry contracts; approval gates re-checked at execution. |
-| `laxii.banner.produce` / `laxii.resume.*` style registered tools | M35 | Same. |
-| Wire streaming UI to the live surface (or retire the orphaned component) | M35+ | Honesty: route tested, UI orphaned. |
+| `giftz.brief.create` / `giftz.site.plan` / `giftz.project.build` style registered tools | **Resolved (M35)** | `src/lib/riishe/creative-tools.ts` — 5 `giftz.*` tools reuse `defineTool` + registry contracts; the approval gate is re-checked at execution (`mayExecuteStep`). |
+| `laxii.banner.produce` / `laxii.resume.*` style registered tools | **Resolved (M35)** | Same file — 3 `laxii.*` tools + 4 career-document tools over the real M33.5/M33.4 services. |
+| Wire streaming UI to the live surface (or retire the orphaned component) | **Resolved (M35, retire branch)** | The orphaned `RiisheAssistant` component is deleted; the tested stream route remains. Streaming into the governance surface stays future work (needs the execution pipeline shared with the stream route) — recorded honestly in §3.2. |
 
 ---
 

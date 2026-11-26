@@ -273,6 +273,68 @@ export function describeBrief(brief: DesignBrief): string {
 }
 
 /**
+ * Persist ONE durable BANNER_DESIGN AgentTask carrying a structured brief
+ * (M35: the shared persistence for BOTH the delegation flow and the
+ * registered `laxii.banner.brief` tool — one code path, no drift). Stamps
+ * the task id back onto the brief (sourceTaskId) exactly like prepareDelegation.
+ */
+export async function persistStructuredBriefTask(
+  user: Pick<User, "id">,
+  brief: DesignBrief,
+  humanBrief: string,
+  destination: { url: string; label: string }
+): Promise<{ taskId: string }> {
+  const steps = [
+    { step: "brief-prepared", status: "done", note: "Structured design brief built (own data only)." },
+    { step: "user-review", status: "awaiting-approval", note: "Open LAXII to review the brief and create — nothing is generated or changed automatically." },
+    { step: "execute", status: "pending", note: "Generate in the LAXII studio (banner canvas 2048×687 enforced)." },
+  ];
+
+  const task = await db.agentTask.create({
+    data: {
+      userId: user.id,
+      agent: "LAXII",
+      kind: "BANNER_DESIGN",
+      title: brief.request.slice(0, 80),
+      status: "AWAITING_APPROVAL",
+      stepsJson: JSON.stringify(steps),
+      resultJson: JSON.stringify({
+        brief: humanBrief,
+        structuredBrief: brief,
+        destinationUrl: destination.url,
+        destinationLabel: destination.label,
+      } satisfies AgentTaskResult),
+    },
+  });
+
+  // The structured brief must reference its durable task row.
+  const stamped = { ...brief, sourceTaskId: task.id, createdAt: task.createdAt.toISOString() };
+  await db.agentTask.update({
+    where: { id: task.id },
+    data: {
+      resultJson: JSON.stringify({
+        brief: humanBrief,
+        structuredBrief: stamped,
+        destinationUrl: destination.url,
+        destinationLabel: destination.label,
+      } satisfies AgentTaskResult),
+    },
+  });
+
+  logGatewayEvent({
+    event: "gateway.request",
+    agent: "RIISHE",
+    feature: "delegation.banner_design",
+    capability: "task",
+    outcome: "success",
+    userId: user.id,
+    error: `task ${task.id} → LAXII`,
+  });
+
+  return { taskId: task.id };
+}
+
+/**
  * Prepare a portfolio-grounded design brief and persist the AgentTask.
  * BANNER delegations carry the full STRUCTURED brief (Phase 3); other kinds
  * keep the human-readable brief. Returns the task id + the plan for the UI card.
@@ -283,12 +345,24 @@ export async function prepareDelegation(
   userMessage: string
 ): Promise<{ taskId: string; plan: DelegationPlan }> {
   let brief: string;
-  let structuredBrief: DesignBrief | undefined;
 
   if (plan.kind === "BANNER_DESIGN") {
     const built = await buildStructuredBannerBrief(user, userMessage);
-    structuredBrief = built.brief;
-    brief = describeBrief(structuredBrief);
+    const humanBrief = describeBrief(built.brief);
+    const persisted = await persistStructuredBriefTask(user, built.brief, humanBrief, {
+      url: plan.destinationUrl,
+      label: plan.destinationLabel,
+    });
+    logGatewayEvent({
+      event: "gateway.request",
+      agent: "RIISHE",
+      feature: `delegation.${plan.kind.toLowerCase()}`,
+      capability: "task",
+      outcome: "success",
+      userId: user.id,
+      error: `task ${persisted.taskId} → ${plan.targetAgent}`,
+    });
+    return { taskId: persisted.taskId, plan };
   } else {
     const { profileBlock, projectsBlock } = await buildPortfolioContext(user);
     brief = [
@@ -311,9 +385,9 @@ export async function prepareDelegation(
   plan.brief = brief;
 
   const steps = [
-    { step: "brief-prepared", status: "done", note: structuredBrief ? "Structured design brief built (own data only)." : "Portfolio context gathered (own data only)." },
+    { step: "brief-prepared", status: "done", note: "Portfolio context gathered (own data only)." },
     { step: "user-review", status: "awaiting-approval", note: `Open ${plan.targetAgent === "LAXII" ? "LAXII" : "Website Studio"} to review the brief and create — nothing is generated or changed automatically.` },
-    { step: "execute", status: "pending", note: plan.targetAgent === "LAXII" ? "Generate in the LAXII studio (banner canvas 2048×687 enforced)." : "Plan/execute in Website Studio with explicit approval." },
+    { step: "execute", status: "pending", note: plan.targetAgent === "LAXII" ? "Generate in the LAXII studio." : "Plan/execute in Website Studio with explicit approval." },
   ];
 
   const task = await db.agentTask.create({
@@ -326,29 +400,11 @@ export async function prepareDelegation(
       stepsJson: JSON.stringify(steps),
       resultJson: JSON.stringify({
         brief,
-        ...(structuredBrief ? { structuredBrief } : {}),
         destinationUrl: plan.destinationUrl,
         destinationLabel: plan.destinationLabel,
       } satisfies AgentTaskResult),
     },
   });
-
-  // The structured brief must reference its durable task row.
-  if (structuredBrief) {
-    structuredBrief.sourceTaskId = task.id;
-    structuredBrief.createdAt = task.createdAt.toISOString();
-    await db.agentTask.update({
-      where: { id: task.id },
-      data: {
-        resultJson: JSON.stringify({
-          brief,
-          structuredBrief,
-          destinationUrl: plan.destinationUrl,
-          destinationLabel: plan.destinationLabel,
-        } satisfies AgentTaskResult),
-      },
-    });
-  }
 
   logGatewayEvent({
     event: "gateway.request",
@@ -364,7 +420,8 @@ export async function prepareDelegation(
 }
 
 // ---------------------------------------------------------------------------
-// Phase 3 — brief task lifecycle helpers (used by /api/laxii/brief)
+// Phase 3 — brief task lifecycle helpers (used by /api/laxii/brief and the
+// registered laxii.banner.* tools)
 // ---------------------------------------------------------------------------
 
 export interface LoadedBriefTask {
