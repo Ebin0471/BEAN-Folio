@@ -223,6 +223,21 @@ describe("B2 registry — permission declarations are registry-level and real", 
         "pm.statusReport",
         "research.webBrief",
         "talent.searchCandidates",
+        // M35 creative tools (real GIFTZ/LAXII/career-document services,
+        // registered through the SAME contracts — see
+        // tests/riishe-creative-tools.test.ts)
+        "career.coverLetter.draft",
+        "career.resume.analyze",
+        "career.resume.importProposal",
+        "career.resume.tailoredCopy",
+        "giftz.site.create",
+        "giftz.site.plan",
+        "giftz.task.approve",
+        "giftz.task.create",
+        "giftz.task.status",
+        "laxii.banner.brief",
+        "laxii.banner.produce",
+        "laxii.job.status",
       ].sort()
     );
   });
