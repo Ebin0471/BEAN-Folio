@@ -47,6 +47,36 @@ change named in this document requires explicit owner approval BEFORE implementa
 > **13 specialists / 38 tools**. The original architectural decisions below are unchanged. See
 > `docs/reports/M36.2_IMPLEMENTATION_REPORT.md`.
 
+> **M36.3 implementation addendum (2026-11-27).** The second ORGANIZATION milestone is COMPLETE:
+> specialist `talent-intelligence` (§3-14) is registered ORGANIZATION-only over the real read-only
+> `ox.match.explain` tool plus the SAME registered `portfolio.evidenceReport` tool (the deferred
+> §5.1 candidate branch — no duplicate tool). `matching.ts` is UNTOUCHED: `ox.match.explain` quotes
+> the stored `O4-MATCH-V1` score and factor explanations verbatim and never calls
+> `runDiscoveryForOpportunity`/`recomputeSingleMatch` — missing/expired/wrong-version stored rows
+> return a truthful `MATCH_REFRESH_REQUIRED` outcome with zero writes (match generation stays on the
+> employer Matches page); PAUSED/FILLED/CLOSED rows are explained FROZEN/TERMINAL per the existing
+> route semantics; DRAFT/PENDING_REVIEW return opportunity-owned requirement-readiness info only (no
+> candidate records are read). Authorization mirrors the match routes exactly (ACTIVE
+> OWNER/ADMIN/RECRUITER via `requireOrgRole`, VERIFIED non-SUSPENDED organization, tenant-bound
+> opportunity) with a FRESH `assertCandidateDiscoverableToOrg` before any candidate disclosure; the
+> stored row never grants visibility (D9); masked states reuse `serializeMatchForEmployer` +
+> `maskedStateFor` (no candidate content) and fabricate no disclosure audit; authorized disclosure
+> records `ox.candidate.viewed` with the route's metadata plus a minimal RIISHE marker. AI-generated
+> verification questions are advisory-only and gated by a FRESH candidate AI_PROCESSING consent at
+> the current `OX_CONSENT_VERSION` — without it there is NO gateway call carrying candidate data, the
+> deterministic explanation still returns, and the employer sees only a generic unavailability note
+> (never the private consent state). The candidate-scope evidence report additionally requires the
+> candidate's fresh AI_PROCESSING consent and refuses with one generic unavailable response
+> otherwise (DISCOVERY never substitutes; self-analysis stays deterministic and byte-unchanged).
+> The typed producer reference `matchRef` → `matchId` (§9) is registered with every M35.7 rule
+> preserved PLUS the mandatory M36 rule: resolution re-verifies the referenced row's CURRENT
+> authorization state (`src/lib/ox/match-reference.ts`: row exists → tenant org → ACTIVE role →
+> VERIFIED non-SUSPENDED org → fresh candidate discovery boundary) — revocation, blocks, role loss,
+> organization suspension or lost opportunity access between producer and consumer fail the
+> resolution. Live registry counts are now **14 specialists / 39 tools**. No schema change was made
+> (OD-3/OD-6 remain OPEN; production OX PostgreSQL migrations have not been executed). The original
+> architectural decisions below are unchanged. See `docs/reports/M36.3_IMPLEMENTATION_REPORT.md`.
+
 **Capability labels used throughout:**
 
 | Label | Meaning |
