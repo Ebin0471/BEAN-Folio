@@ -625,6 +625,18 @@ output: { questionSets: [{ area, questions[] }], planOutline[], sourcedFrom[] } 
 Proposing/confirming/rescheduling interviews remains the existing human flow (`proposeInterview` …
 `completeInterview` in `src/lib/ox/room.ts`).
 
+> **M36.4.1 authorization-parity correction (2026-11-28).** The room-backed branch of
+> `ox.interview.prepare` additionally re-reads the organization fresh from the room's authoritative
+> `organizationId` (after the workspace binding and the `resolveRoomParty` audience decision) and
+> refuses `UNAUTHORIZED` when the organization does not exist, is SUSPENDED or is not VERIFIED
+> (`orgIsVerified` convention) — the same organization-state gate the room-less path
+> (`authorizeOrgWorkspace`), the employer room routes (`requireRoomEmployerAccess`) and §5.7's
+> `ox.room.brief` already enforce, applied before any opportunity read or AI call and to every
+> permitted audience (employer roles and the actively assigned HIRING_MANAGER alike). `resolveRoomParty`
+> alone proves membership/role/assignment, never organization standing. Regression evidence:
+> `docs/reports/M36.4.1_IMPLEMENTATION_REPORT.md` (the M36.4 suite had not covered this specific
+> room-backed gate; the correction is verified red-at-baseline / green-at-tip).
+
 ### 5.7 `ox.room.brief` (role 15) — LOW / level 1 (read-only)
 
 ```
