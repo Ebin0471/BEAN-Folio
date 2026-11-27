@@ -235,10 +235,11 @@ describe("M36.2 registry contract — the 13th specialist over the ONE registry"
     expect(String(tool!.undo!.how)).toContain("employer opportunities UI");
   });
 
-  test("live registry counts derive to 13 specialists and 38 tools (no hard-coding)", () => {
-    expect(SPECIALISTS.length).toBe(13);
-    expect(Object.keys(RIISHE_TOOLS).length).toBe(38);
-    // The new tool is the ONLY M36.2 addition; every other group unchanged.
+  test("live registry counts derive to 14 specialists and 39 tools (no hard-coding)", () => {
+    expect(SPECIALISTS.length).toBe(14);
+    expect(Object.keys(RIISHE_TOOLS).length).toBe(39);
+    // The new M36.3 tool is the only later addition; this milestone's own
+    // group is unchanged (see tests/riishe-m363-talent-intelligence.test.ts).
     expect(Object.keys(WORKFORCE_TOOLS)).toEqual(["ox.opportunity.draft"]);
     // Every tool referenced by ANY specialist exists in the registry.
     for (const s of SPECIALISTS) {
