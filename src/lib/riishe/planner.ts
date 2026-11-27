@@ -187,6 +187,18 @@ export function planDeterministically(goal: string, workspaceType?: "PERSONAL" |
   const nextId = () => `s${++counter}`;
 
   for (const clause of clauses) {
+    // M36.3: an EXPLICIT match-explanation request carrying both identifiers
+    // ("candidate <id>" + "opportunity <id>") is never stolen by the broad
+    // opportunity-radar intent — the Talent Intelligence clause below owns
+    // it. Clauses without both explicit tokens keep the historic intent path
+    // unchanged.
+    if (
+      /\b(explain|why|analyze|analysis)\b/i.test(clause) &&
+      /\bcandidate\s+[A-Za-z0-9_-]{8,64}\b/i.test(clause) &&
+      /\bopportunity\s+[A-Za-z0-9_-]{8,64}\b/i.test(clause)
+    ) {
+      continue;
+    }
     const intent = detectAutomationIntent(clause);
     if (!intent) continue;
     const mapped = mapIntentToStep(intent, clause, { prevId, pendingDraftId, nextId, steps });

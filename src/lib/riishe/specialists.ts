@@ -466,10 +466,12 @@ export const SPECIALISTS: SpecialistDefinition[] = [
     limits: { maxSteps: 5, defaultTimeoutMs: 45_000 },
     routingKeywords: [
       "explain why this candidate",
+      "explain why candidate",
       "explain the match",
       "explain this match",
       "explain the o4 match",
       "match factors",
+      "match explanation",
       "analyze this candidate",
       "analyze the candidate match",
       "candidate match explanation",

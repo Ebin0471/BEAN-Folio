@@ -1308,11 +1308,12 @@ describe("M36.3 candidate-scope portfolio.evidenceReport — same tool, fresh du
 
   test("employer-side denials keep clear reasons: role, org state, tenant, lifecycle", async () => {
     const f = await evidenceFixture("deny", { candidateSpec: { aiProcessing: "grant" } });
-    const c = (role: string, orgOverride?: string) =>
-      ctx(f.owner.id, { type: "ORGANIZATION", organizationId: orgOverride ?? f.org.id, membershipRole: role });
 
-    // VIEWER denied
-    let result = await execTool(evidenceTool(), c("VIEWER"), {
+    // A REAL VIEWER membership is denied (the workspace hint is never
+    // trusted — the DB membership decides).
+    const viewer = await makeUser("Evidence Viewer User");
+    await makeMember(f.org.id, viewer.id, "VIEWER");
+    let result = await execTool(evidenceTool(), ctx(viewer.id, { type: "ORGANIZATION", organizationId: f.org.id, membershipRole: "VIEWER" }), {
       subject: { kind: "candidate", candidateUserId: f.candidate.user.id },
       opportunityId: f.opportunity.id,
     });
@@ -1589,14 +1590,21 @@ describe("M36.3 audit and typed references — disclosure audit + pointer re-ver
     cleanupWorkflows.push(wf.id);
     const s1 = wf.steps.find((s) => s.ref === "s1")!;
     const s2 = wf.steps.find((s) => s.ref === "s2")!;
+    // The consumer step's params gain the typed reference directly (the
+    // resolver is the unit under test — M36.4's consumers will declare the
+    // matchRef field in their own schemas).
+    const consumerStep = await db.riisheWorkflowStep.update({
+      where: { id: s2.id },
+      data: { paramsJson: JSON.stringify({ subject: { kind: "self" }, matchRef: "s1" }) },
+    });
 
     // FAILED producer → honest dependency-failed.
     await db.riisheWorkflowStep.update({ where: { id: s1.id }, data: { status: "FAILED" } });
-    await expect(resolveStepParams(wf.id, s2)).rejects.toThrow(/has not completed successfully \(status: FAILED\)/);
+    await expect(resolveStepParams(wf.id, consumerStep)).rejects.toThrow(/has not completed successfully \(status: FAILED\)/);
 
     // SUCCEEDED producer WITHOUT the artefact → dependency-missing.
     await db.riisheWorkflowStep.update({ where: { id: s1.id }, data: { status: "SUCCEEDED", resultJson: JSON.stringify({ status: "MATCH_MASKED" }) } });
-    await expect(resolveStepParams(wf.id, s2)).rejects.toThrow(/produced no matchId/);
+    await expect(resolveStepParams(wf.id, consumerStep)).rejects.toThrow(/produced no matchId/);
 
     // Successful producer with matchId → resolves (consumer kind only used to
     // drive the resolver; the M36.4 consumers will accept the pointer).
@@ -1604,11 +1612,7 @@ describe("M36.3 audit and typed references — disclosure audit + pointer re-ver
       where: { id: s1.id },
       data: { status: "SUCCEEDED", resultJson: JSON.stringify({ status: "MATCH_EXPLAINED", matchId: stored.id }) },
     });
-    const consumer = await db.riisheWorkflowStep.update({
-      where: { id: s2.id },
-      data: { paramsJson: JSON.stringify({ subject: { kind: "self" }, matchRef: "s1" }) },
-    });
-    const resolved = await resolveStepParams(wf.id, consumer);
+    const resolved = await resolveStepParams(wf.id, consumerStep);
     expect(resolved.matchRef).toBe(stored.id);
   });
 
@@ -1658,14 +1662,10 @@ describe("M36.3 audit and typed references — disclosure audit + pointer re-ver
     if (!v.ok) expect(v.reason).toBe("CANDIDATE_NOT_DISCOVERABLE");
     await db.block.delete({ where: { blockerId_blockedId: { blockerId: candidate.user.id, blockedId: owner.id } } });
 
-    // Lost opportunity access fails.
+    // Lost opportunity access fails (the TalentMatch row cascade-deletes with
+    // its opportunity — the referenced row no longer exists).
     await db.opportunity.delete({ where: { id: opportunity.id } });
-    v = await verifyMatchRefAuthorization(owner.id, stored.id);
-    expect(v.ok).toBe(false);
-    if (!v.ok) expect(v.reason).toBe("OPPORTUNITY_MISSING");
-
-    // A deleted match row fails.
-    await db.talentMatch.delete({ where: { id: stored.id } });
+    expect(await db.talentMatch.count({ where: { id: stored.id } })).toBe(0);
     v = await verifyMatchRefAuthorization(owner.id, stored.id);
     expect(v.ok).toBe(false);
     if (!v.ok) expect(v.reason).toBe("MATCH_ROW_MISSING");
