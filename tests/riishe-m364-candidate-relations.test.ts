@@ -1443,6 +1443,102 @@ describe("M36.4 ox.interview.prepare — private preparation artifact", () => {
     });
     expect(mismatch.status).toBe("CONTEXT_MISMATCH");
   });
+
+  // M36.4.1 — room-backed organization-state parity. resolveRoomParty proves
+  // membership/role/assignment but NOT organization standing; the room-backed
+  // path must refuse non-VERIFIED and SUSPENDED organizations exactly like
+  // the room-less path, the employer room routes and ox.room.brief already
+  // do — for EVERY permitted audience (OWNER/ADMIN/RECRUITER and the actively
+  // assigned HIRING_MANAGER), before any opportunity read or AI call.
+  async function roomOrgStateFixture(verificationStatus: string) {
+    const owner = await makeUser("OrgState Owner");
+    const org = await makeOrg(owner.id, { suffix: `prep-orgstate-${randomUUID().slice(0, 6)}`, verificationStatus });
+    await makeMember(org.id, owner.id, "OWNER");
+    const admin = await makeUser("OrgState Admin");
+    await makeMember(org.id, admin.id, "ADMIN");
+    const candidate = await makeCandidate("OrgState Candidate", {});
+    const opportunity = await makeOpportunity(org.id, owner.id, {});
+    await makeRealMatch(opportunity, candidate, {});
+    const invitation = await makeInvitationRow(org.id, opportunity.id, candidate.user.id, owner.id, { status: "ACCEPTED", activeToken: null });
+    const room = await makeRoom(org.id, invitation.id, opportunity.id, candidate.user.id);
+    const assigned = await makeUser("OrgState Assigned");
+    await makeMember(org.id, assigned.id, "HIRING_MANAGER");
+    await makeRoomMember(room.id, assigned.id);
+    return { owner, org, admin, candidate, opportunity, room, assigned };
+  }
+
+  /** Shared zero-effect proof for every refused room-backed preparation. */
+  async function expectRefusedRoomPreparation(
+    c: ToolContext,
+    roomId: string,
+    room: { id: string },
+    f: { org: { id: string; displayName: string }; candidate: { user: { id: string } } }
+  ) {
+    const interviewsBefore = await db.interview.count({ where: { roomId } });
+    const roomBefore = await db.hiringRoom.findUnique({ where: { id: roomId }, select: { updatedAt: true, currentStage: true, status: true } });
+    const notificationsBefore = await db.notification.count({ where: { userId: f.candidate.user.id } });
+
+    const result = await execTool(interviewTool(), c, { roomId });
+    expect(result.status).toBe("UNAUTHORIZED");
+
+    expect(AI_CALLS.length).toBe(0);
+    expect(await db.interview.count({ where: { roomId } })).toBe(interviewsBefore);
+    const roomAfter = await db.hiringRoom.findUnique({ where: { id: roomId }, select: { updatedAt: true, currentStage: true, status: true } });
+    expect(roomAfter!.updatedAt.getTime()).toBe(roomBefore!.updatedAt.getTime());
+    expect(roomAfter!.currentStage).toBe(roomBefore!.currentStage);
+    expect(roomAfter!.status).toBe(roomBefore!.status);
+    expect(await db.notification.count({ where: { userId: f.candidate.user.id } })).toBe(notificationsBefore);
+
+    // No private room, organization or candidate data is disclosed in the refusal.
+    const out = JSON.stringify(result);
+    expect(out).not.toContain(room.id);
+    expect(out).not.toContain(f.org.id);
+    expect(out).not.toContain(f.org.displayName);
+    expect(out).not.toContain(f.candidate.user.id);
+    expect(out).not.toContain("Room Candidate");
+    return result;
+  }
+
+  test("a PENDING-verification organization refuses the room-backed interview preparation for an OWNER (same gate as the room-less path and ox.room.brief)", async () => {
+    const f = await roomOrgStateFixture("PENDING");
+    await expectRefusedRoomPreparation(
+      ctx(f.owner.id, { type: "ORGANIZATION", organizationId: f.org.id, membershipRole: "OWNER" }),
+      f.room.id,
+      f.room,
+      f
+    );
+  });
+
+  test("a SUSPENDED organization refuses the room-backed interview preparation for an OWNER", async () => {
+    const f = await roomOrgStateFixture("SUSPENDED");
+    const result = await expectRefusedRoomPreparation(
+      ctx(f.owner.id, { type: "ORGANIZATION", organizationId: f.org.id, membershipRole: "OWNER" }),
+      f.room.id,
+      f.room,
+      f
+    );
+    expect(JSON.stringify(result)).toContain("suspended");
+  });
+
+  test("an actively assigned HIRING_MANAGER in an unverified organization is refused — assignment never bypasses the organization gate", async () => {
+    const f = await roomOrgStateFixture("PENDING");
+    await expectRefusedRoomPreparation(
+      ctx(f.assigned.id, { type: "ORGANIZATION", organizationId: f.org.id, membershipRole: "HIRING_MANAGER" }),
+      f.room.id,
+      f.room,
+      f
+    );
+  });
+
+  test("an ADMIN (authorized employer role) in an unverified organization is refused with UNAUTHORIZED", async () => {
+    const f = await roomOrgStateFixture("PENDING");
+    await expectRefusedRoomPreparation(
+      ctx(f.admin.id, { type: "ORGANIZATION", organizationId: f.org.id, membershipRole: "ADMIN" }),
+      f.room.id,
+      f.room,
+      f
+    );
+  });
 });
 
 // =====================================================================================
