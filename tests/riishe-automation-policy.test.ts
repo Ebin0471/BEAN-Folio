@@ -259,6 +259,14 @@ describe("B2 registry — permission declarations are registry-level and real", 
         // tests/riishe-m363-talent-intelligence.test.ts): read-only O4 match
         // explanation over EXISTING TalentMatch rows, never a recompute.
         "ox.match.explain",
+        // M36.4 candidate-relations tools (real, registered, tested — see
+        // tests/riishe-m364-candidate-relations.test.ts): prepare-only
+        // invitation DRAFT creation, private interview preparation and a
+        // read-only room brief — sending, interview mutation and stage
+        // transitions stay the existing human flows.
+        "ox.invitation.prepare",
+        "ox.interview.prepare",
+        "ox.room.brief",
       ].sort()
     );
   });

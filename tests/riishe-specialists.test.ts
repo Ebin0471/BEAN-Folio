@@ -67,6 +67,9 @@ describe("M31 specialist registry contract", () => {
       // M36.3: the ORGANIZATION-scope Talent Intelligence Analyst over the
       // real read-only O4 match-explanation tool.
       "talent-intelligence",
+      // M36.4: the ORGANIZATION-scope Candidate Relations Agent over the
+      // three real prepare-only Opportunity Exchange tools.
+      "candidate-relations",
     ]);
     for (const s of SPECIALISTS) {
       expect(s.name.length).toBeGreaterThan(0);
