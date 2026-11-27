@@ -618,7 +618,7 @@ describe("M36.4 registry contract — the 15th specialist over the ONE registry"
   test("deterministic planner: invitation steps need explicit candidate AND opportunity identifiers — never invented", () => {
     const M364_TOOLS = ["ox.invitation.prepare", "ox.interview.prepare", "ox.room.brief"];
     const withoutIds = planDeterministically("prepare an invitation draft for this selected candidate");
-    expect(withoutIds?.steps.some((s) => M364_TOOLS.includes(s.tool))).toBe(false);
+    expect(withoutIds?.steps.some((s) => M364_TOOLS.includes(s.tool)) ?? false).toBe(false);
     const withIds = planDeterministically("prepare an invitation draft for candidate cmdontscanthis01 for opportunity cmopportunity123456");
     expect(withIds?.steps[0]?.tool).toBe("ox.invitation.prepare");
     expect(withIds?.steps[0]?.params).toMatchObject({
@@ -633,7 +633,7 @@ describe("M36.4 registry contract — the 15th specialist over the ONE registry"
     // Without explicit identifiers the historic behavior is unchanged — no
     // M36.4 tool is ever planned from role-only language.
     const withoutIds = planDeterministically("prepare interview questions for the video editor role");
-    expect(withoutIds?.steps.some((s) => s.tool === "ox.interview.prepare")).toBe(false);
+    expect(withoutIds?.steps.some((s) => s.tool === "ox.interview.prepare") ?? false).toBe(false);
     const withOpp = planDeterministically("prepare interview questions for the screening stage for opportunity cmopportunity123456");
     expect(withOpp?.steps[0]?.tool).toBe("ox.interview.prepare");
     expect(withOpp?.steps[0]?.params).toMatchObject({ opportunityId: "cmopportunity123456", stage: "SCREENING" });
@@ -1874,13 +1874,18 @@ describe("M36.4 typed invitationRef — pointer, never permission", () => {
     expect(oxTools.some((k) => k.includes("send"))).toBe(false);
     expect(oxTools).toContain("ox.invitation.prepare");
     expect(oxTools).not.toContain("ox.invitation.send");
-    // The M36.4 tools that accept invitationRef: ox.room.brief only.
-    const briefSchemaKeys = Object.keys((roomBriefTool().inputSchema as unknown as { _def: { shape: () => Record<string, unknown> } })._def.shape());
-    expect(briefSchemaKeys).toContain("invitationRef");
-    expect(briefSchemaKeys).not.toContain("status");
-    const invitationSchemaKeys = Object.keys((invitationTool().inputSchema as unknown as { _def: { shape: () => Record<string, unknown> } })._def.shape());
-    expect(invitationSchemaKeys).not.toContain("invitationRef");
-    expect(invitationSchemaKeys).not.toContain("status");
+    // The M36.4 tools that accept invitationRef: ox.room.brief only; no
+    // tool schema carries an invitation-status input (statuses are
+    // server-owned) and the brief schema accepts exactly one locator.
+    const brief = roomBriefTool().inputSchema;
+    expect(brief.safeParse({ invitationRef: "cminvitationpointer0001" }).success).toBe(true);
+    expect(brief.safeParse({ roomId: "cmroompointer000000001" }).success).toBe(true);
+    expect(brief.safeParse({ roomId: "a", invitationRef: "b" }).success).toBe(false);
+    expect(brief.safeParse({ status: "SENT", roomId: "cmroompointer000000001" }).success).toBe(false); // strict: no status input
+    const invitation = invitationTool().inputSchema;
+    expect(invitation.safeParse({ opportunityId: "cmopportunity12345678", candidateUserId: "cmcandidatenotused01", offer: VALID_OFFER }).success).toBe(true);
+    expect(invitation.safeParse({ opportunityId: "cmopportunity12345678", candidateUserId: "cmcandidatenotused01", offer: VALID_OFFER, invitationRef: "cminvitationpointer0001" }).success).toBe(false);
+    expect(invitation.safeParse({ opportunityId: "cmopportunity12345678", candidateUserId: "cmcandidatenotused01", offer: VALID_OFFER, status: "SENT" }).success).toBe(false); // strict: no status input
   });
 
   test("M35.7 safety rules stay intact for the new reference (self / forward / undeclared refs refused)", async () => {

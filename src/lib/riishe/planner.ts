@@ -312,7 +312,11 @@ function specialistStepForClause(
     const opportunityToken = clause.match(/\bopportunity\s+([A-Za-z0-9_-]{8,64})/i)?.[1];
     const roomToken = clause.match(/\broom\s+([A-Za-z0-9_-]{8,64})/i)?.[1];
     if (!opportunityToken && !roomToken) return null;
-    const stageToken = clause.match(/\b(initial review|screening|interview|assessment|reference check|offer)\b/i)?.[1];
+    // The stage word is the LAST occurrence in the clause — "interview
+    // questions for the screening stage" resolves to SCREENING, while
+    // "prepare a structured interview plan" (no other stage word) resolves
+    // to INTERVIEW.
+    const stageToken = [...clause.matchAll(/\b(initial review|screening|interview|assessment|reference check|offer)\b/gi)].pop()?.[1];
     const stageMap: Record<string, string> = {
       "initial review": "INITIAL_REVIEW",
       screening: "SCREENING",
