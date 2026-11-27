@@ -36,6 +36,7 @@ import { notify } from "@/lib/notify";
 import { enqueue, cancelQueued } from "@/lib/queue";
 import { auditEvent } from "@/lib/riishe/audit";
 import { getTool, toolApprovalRequired, REF_FIELDS, REF_RESULT_KEYS, type RiisheToolDef, type ToolContext } from "@/lib/riishe/tools";
+import { verifyMatchRefAuthorization } from "@/lib/ox/match-reference";
 import {
   dailyActionCapStatus,
   initialStatusForStep,
@@ -431,6 +432,17 @@ export async function scheduleReadySteps(workflowId: string, userId: string): Pr
  *  4. only then is the artefact read from the source step's result — a
  *     successful producer that carried no such artefact fails honestly
  *     (dependency-missing).
+ * M36.3 addition (architecture §9, mandatory): a `matchRef` param is a
+ * POINTER, never authorization — after the generic extraction succeeds, the
+ * referenced TalentMatch row's CURRENT authorization state is re-verified
+ * through src/lib/ox/match-reference.ts (row exists → tenant org → ACTIVE
+ * OWNER/ADMIN/RECRUITER membership of the workflow owner → VERIFIED,
+ * non-SUSPENDED organization → fresh candidate discovery boundary including
+ * a fresh DISCOVERY-consent read). Revocation, blocks, role loss,
+ * organization suspension or lost opportunity access between producer and
+ * consumer FAIL the resolution — the stored id never grants visibility.
+ * Existing ref behavior is unchanged (all other keys resolve exactly as
+ * before).
  * Exported for the M35.7 safety suite (all error classes pinned against the
  * REAL engine + database).
  */
@@ -474,6 +486,22 @@ export async function resolveStepParams(
         `referenced step "${v}" produced no ${resultKey || k} (status: ${refStep.status})`,
         "dependency-missing"
       );
+    }
+    // M36.3: matchRef resolution re-verifies CURRENT authorization — the
+    // stored match id is only a pointer, never permission.
+    if (k === "matchRef") {
+      const workflow = await db.riisheWorkflow.findUnique({
+        where: { id: workflowId },
+        select: { userId: true },
+      });
+      if (!workflow) throw new WorkflowError("workflow not found for matchRef authorization re-verification", "not-found");
+      const verification = await verifyMatchRefAuthorization(workflow.userId, value);
+      if (!verification.ok) {
+        throw new WorkflowError(
+          `the referenced match "${value}" is no longer authorized (reason: ${verification.reason}) — a stored match id is a pointer, never permission`,
+          "authorization-revoked"
+        );
+      }
     }
     resolved[k] = value;
   }

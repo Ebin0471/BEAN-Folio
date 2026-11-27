@@ -22,4 +22,10 @@ export const SPECIALIST_NAME_BY_ID: Record<string, string> = {
   // M36.1: the two new registered specialists.
   "people-finder": "People Finder",
   "portfolio-intelligence": "Portfolio Intelligence Analyst",
+  // M36.2: the ORGANIZATION hiring-request specialist (display-name record
+  // was completed additively in M36.3 — the workflow chip previously fell
+  // back to the generic label).
+  "workforce-strategist": "Workforce Strategist",
+  // M36.3: the ORGANIZATION match-explanation specialist.
+  "talent-intelligence": "Talent Intelligence Analyst",
 };

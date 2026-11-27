@@ -37,7 +37,8 @@ export type SpecialistId =
   | "creative-producer"
   | "people-finder"
   | "portfolio-intelligence"
-  | "workforce-strategist";
+  | "workforce-strategist"
+  | "talent-intelligence";
 
 export type WorkspaceScope = "PERSONAL" | "ORGANIZATION";
 
@@ -435,6 +436,53 @@ export const SPECIALISTS: SpecialistDefinition[] = [
     auditNote:
       "Organization workspace only: the Opportunity Exchange creation boundary (ACTIVE OWNER/ADMIN/RECRUITER membership) is re-verified on every execution and the same organization-scoped creation rate limit applies. Creates exactly one private DRAFT — submission, publication and admin review stay human; candidate matching and invitations are separate authorized flows.",
     available: () => toolsAvailable(["ox.opportunity.draft"]),
+  },
+  {
+    // M36.3 (role 14, docs/M36_MULTI_AGENT_WORKFORCE_ARCHITECTURE.md §3-14):
+    // explains ONE existing candidate↔opportunity match with the EXISTING
+    // deterministic O4 engine — never a replacement score, never a ranking,
+    // never global search. Candidate-search language stays with Talent
+    // Scout; requirement drafting stays with Workforce Strategist; personal
+    // discovery stays with People Finder. The candidate-scope portfolio
+    // evidence analysis reuses the SAME registered portfolio.evidenceReport
+    // tool (no duplicate) under fresh discovery + AI_PROCESSING consent.
+    id: "talent-intelligence",
+    name: "Talent Intelligence Analyst",
+    description:
+      "Explains one existing candidate-to-opportunity match using the platform's deterministic O4 engine — factor states, skill coverage, missing information and advisory verification questions for a human recruiter — and compiles an authorized candidate evidence report only under the candidate's current AI_PROCESSING consent.",
+    capabilities: [
+      "Explain why a selected candidate matches a specific opportunity",
+      "Describe the deterministic O4 match factors and their applied/not-applied states",
+      "Explain required and preferred skill coverage, profession alignment, evidence availability, work-mode, location, availability and compensation factor states",
+      "Identify missing or unevaluable information with the real reasons",
+      "Prepare advisory verification questions for a human recruiter (AI-generated only under the candidate's current AI_PROCESSING consent)",
+      "Compile a candidate evidence report through the consent-aware portfolio evidence tool",
+      "Explain limitations honestly — the score is an explanation aid, never a hiring prediction or rejection decision",
+    ],
+    taskCategories: ["recruiting", "candidates", "organization"],
+    toolNames: ["ox.match.explain", "portfolio.evidenceReport"],
+    workspaceScopes: ["ORGANIZATION"],
+    riskPolicy: { maxAutomationLevel: 1, approvalsAlwaysHuman: true },
+    limits: { maxSteps: 5, defaultTimeoutMs: 45_000 },
+    routingKeywords: [
+      "explain why this candidate",
+      "explain the match",
+      "explain this match",
+      "explain the o4 match",
+      "match factors",
+      "analyze this candidate",
+      "analyze the candidate match",
+      "candidate match explanation",
+      "why does this candidate match",
+      "verification questions for this candidate",
+      "missing evidence for this candidate",
+      "explain the candidate's match",
+      "candidate against this role",
+      "candidate against this opportunity",
+    ],
+    auditNote:
+      "Organization workspace only: the exact match-route authorization chain (ACTIVE OWNER/ADMIN/RECRUITER membership, VERIFIED non-SUSPENDED organization, tenant-bound opportunity) is re-verified on every execution together with a fresh candidate discovery check. Read-only over existing O4 match rows — the score is never recomputed or replaced, matches are never generated or refreshed here, and no hiring decision is ever made. Candidate-specific AI calls require a fresh AI_PROCESSING consent.",
+    available: () => toolsAvailable(["ox.match.explain", "portfolio.evidenceReport"]),
   },
 ];
 

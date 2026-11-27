@@ -63,6 +63,7 @@ import { SPECIALIST_TOOLS } from "@/lib/riishe/specialist-tools";
 import { CREATIVE_TOOLS } from "@/lib/riishe/creative-tools";
 import { PORTFOLIO_TOOLS } from "@/lib/riishe/portfolio-tools";
 import { WORKFORCE_TOOLS } from "@/lib/riishe/workforce-tools";
+import { TALENT_INTELLIGENCE_TOOLS } from "@/lib/riishe/talent-intelligence-tools";
 export {
   TOOL_RISKS,
   TOOL_LEVELS,
@@ -671,6 +672,10 @@ export const REF_FIELDS = new Set([
   "jobRef", // laxii.banner.produce → laxii.job.status
   // M36.2 typed producer reference (architecture §9):
   "opportunityRef", // ox.opportunity.draft → M36.3 opportunity consumers
+  // M36.3 typed producer reference (architecture §9): a POINTER, never
+  // authorization — resolution re-verifies the referenced row's CURRENT
+  // authorization state through src/lib/ox/match-reference.ts.
+  "matchRef", // ox.match.explain → M36.4 invitation preparation / room brief
 ]);
 
 /** Ref param key → the key of the referenced step's result value it resolves to. */
@@ -684,6 +689,7 @@ export const REF_RESULT_KEYS: Record<string, string> = {
   letterRef: "letterId",
   jobRef: "messageId",
   opportunityRef: "opportunityId",
+  matchRef: "matchId",
 };
 
 /**
@@ -925,6 +931,10 @@ export const RIISHE_TOOLS: Record<string, RiisheToolDef<never>> = {
   // (DRAFT-only, tenant re-authorized per execution) — same contracts, same
   // approval ladder, same audit trail.
   ...WORKFORCE_TOOLS,
+  // M36.3: the Talent Intelligence Analyst's read-only O4 match explanation
+  // tool (fresh authorization + discovery revalidation per execution; the O4
+  // score is quoted, never recomputed) — same contracts, same audit trail.
+  ...TALENT_INTELLIGENCE_TOOLS,
 };
 
 export function getTool(name: string): RiisheToolDef<never> | null {

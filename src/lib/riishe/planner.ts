@@ -72,8 +72,9 @@ Rules:
 - Keep plans at most ${MAX_WORKFLOW_STEPS} steps.
 - Steps that need another step's output must list it in dependsOn.
 - Reference params (draftRef, postRef, briefTaskRef, giftzTaskRef, siteRef,
-  resumeRef, letterRef, jobRef, opportunityRef) take the PLANNER ID of the
-  earlier step that produced the artefact — never a fabricated database id.
+  resumeRef, letterRef, jobRef, opportunityRef, matchRef) take the PLANNER ID
+  of the earlier step that produced the artefact — never a fabricated
+  database id.
 - Tools that accept an explicit id (taskId, conversationId, briefTaskId) can
   also run standalone: omit the id and the tool resolves the owner's latest
   record honestly, or fails with a clear message.
@@ -400,6 +401,33 @@ function specialistStepForClause(
       tool: "ox.opportunity.draft",
       title: "Prepare an opportunity draft",
       params: { requirementsBrief: clause.slice(0, 8000) },
+    };
+  }
+  // M36.3 talent-intelligence clause — explaining ONE EXISTING candidate
+  // match (ORGANIZATION scope; the workspace-aware classifier and the tool's
+  // per-execution authorization keep personal workspaces and unauthorized
+  // members out). DELIBERATELY conservative: a step is planned only when the
+  // user explicitly supplies BOTH a candidate identifier and an opportunity
+  // identifier ("candidate <id>" / "opportunity <id>") — a candidate id is a
+  // pointer obtained from an authorized match result, never something the
+  // planner may invent. Explain-the-match language WITHOUT an explicit
+  // candidate selection produces NO step (the chat asks for the selection
+  // instead of guessing).
+  if (
+    /\b(explain|why|analyze|analysis|verify|verification questions?|missing evidence)\b[^?!.]*\bmatch(?:es|ing)?\b|\bmatch factors\b|\bexplain the o4 match\b/.test(c) &&
+    getTool("ox.match.explain")
+  ) {
+    const candidateToken = clause.match(/\bcandidate\s+([A-Za-z0-9_-]{8,64})/i)?.[1];
+    const opportunityToken = clause.match(/\bopportunity\s+([A-Za-z0-9_-]{8,64})/i)?.[1];
+    if (!candidateToken || !opportunityToken) return null;
+    return {
+      id,
+      tool: "ox.match.explain",
+      title: "Explain the candidate match",
+      params: {
+        opportunityId: opportunityToken,
+        candidateUserId: candidateToken,
+      },
     };
   }
   return null;
