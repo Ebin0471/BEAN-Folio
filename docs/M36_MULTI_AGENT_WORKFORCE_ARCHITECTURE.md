@@ -77,6 +77,59 @@ change named in this document requires explicit owner approval BEFORE implementa
 > (OD-3/OD-6 remain OPEN; production OX PostgreSQL migrations have not been executed). The original
 > architectural decisions below are unchanged. See `docs/reports/M36.3_IMPLEMENTATION_REPORT.md`.
 
+> **M36.4 implementation addendum (2026-11-28).** The third ORGANIZATION milestone is COMPLETE —
+> PREPARE-ONLY by construction: specialist `candidate-relations` (§3-15) is registered
+> ORGANIZATION-only over exactly the three real tools (`ox.invitation.prepare`, `ox.interview.prepare`,
+> `ox.room.brief`). `ox.invitation.prepare` composes ONE employer-private invitation DRAFT through the
+> ONLY permitted invitation-writing service, the existing `createInvitationDraft()` (one-active
+> invariant, transactional creation, database uniqueness backstop, `ox.invitation.drafted` audit inside
+> its transaction — no duplicate OX draft event is fabricated). Eligibility is established INDEPENDENTLY
+> per execution (ACTIVE OWNER/ADMIN/RECRUITER, VERIFIED non-SUSPENDED organization, tenant-owned
+> PUBLISHED opportunity, the EXACT `assertSendGates()` source-of-selection rule — one current eligible
+> TalentMatch or an ACTIVE CandidateShortlist entry — and a FRESH `assertCandidateDiscoverableToOrg`);
+> the send-time stack rechecks everything again at human send. Offer terms reuse the EXISTING
+> `invitationOfferSchema` verbatim (safe-integer paise, ₹10 crore ceiling, ISO 4217, the existing
+> period vocabulary, min ≤ max); missing or invalid terms return `NEEDS_CLARIFICATION` with ZERO writes
+> and amounts are NEVER invented (no candidate salary preferences, disclosures, match factors, model
+> output or market estimates). `personalNote`/`interviewFocusHints` are EPHEMERAL preparation context
+> (`stored: false`) — the OpportunityInvitation model has no such fields, none were added, nothing is
+> copied into `CandidateShortlist.privateNote`, and neither field ever becomes outbound communication.
+> `sendInvitationDraft`, `createAndSendInvitation` and `notifyCandidateOf` are NEVER called: no
+> candidate notification, no `sentAt`, no SENT status, no quota/cooldown consumption (drafts bind
+> quotas at send, RD-4/RD-17). Honest retry posture: `idempotent: false`, `maxAttempts: 1` (no
+> idempotency field exists — never claim exactly-once); the verify hook re-reads tenant ownership,
+> candidate, DRAFT status and actor. `ox.interview.prepare` produces a PRIVATE question pack + plan
+> outline in the workflow result only — ZERO Interview rows, zero room mutations, zero meeting links,
+> zero notifications; `proposeInterview`/`confirmInterview`/`alternateInterview`/`rescheduleInterview`/
+> `cancelInterview`/`completeInterview` are never called. Its AI layer processes ONLY organization-owned
+> data (requirements, stage, recruiter focus hints) wrapped as untrusted content — NO candidate-specific
+> profile, evidence, match or interview-response data is ever retrieved or sent, so no AI_PROCESSING
+> consent is consumed or substituted (candidate-scope AI would additionally require the candidate's
+> fresh current-version consent through the M36.1 resolver). Invalid AI output is rejected and the
+> deterministic pack stands; gateway failure degrades honestly. `ox.room.brief` is READ-ONLY over the
+> EXISTING room services (`resolveRoomParty`, `getRoomActivityTimeline`, `serializeRoomForEmployer`)
+> with the exact audience matrix: OWNER/ADMIN/RECRUITER (EMPLOYER_ROLES) and an actively ASSIGNED
+> HIRING_MANAGER receive the brief; VIEWER, the room's candidate, an unassigned HIRING_MANAGER and
+> every outsider are existence-hiding denied. Employer-private `HiringStageEvent.note` content is
+> included ONLY in the EMPLOYER_ROLES branch (assigned managers receive a note-free projection — the
+> serializer allowlist is narrowed, never broadened); meeting links follow the existing serializer rule;
+> organization VERIFIED/non-SUSPENDED follows the employer room policy; the EXISTING `ox:room-read`
+> rate-limit bucket is reused (no new quota path). No chat, document or candidate-response records are
+> invented (deferred by O7 RD-16/RD-17 — stated honestly); zero writes to room, stage or interview
+> rows. The typed producer reference `invitationRef` → `invitationId` (§9) is registered with every
+> M35.7 rule preserved PLUS the mandatory M36 rule: resolution re-verifies the referenced row's CURRENT
+> authorization state (`src/lib/ox/invitation-reference.ts`: row exists → tenant org from the row →
+> ACTIVE OWNER/ADMIN/RECRUITER membership of the workflow owner → VERIFIED non-SUSPENDED organization)
+> and consumers re-read and bind to the current workspace organization (a workflow in organization A
+> never uses an organization B match or invitation merely because the owner is a member of B). No
+> M36.4 tool accepts an invitation reference for any sending purpose — a DRAFT pointer can never
+> become authority for a send. Rooms are never created by the agent: they come from the existing
+> authorized human flow after an invitation is accepted. Casual `Inquiry` records stay out of
+> recruitment (O0 rule preserved). Live registry counts are now **15 specialists / 42 tools**. No
+> schema change was made (OD-2/OD-3/OD-4/OD-6 remain OPEN; production OX PostgreSQL migrations have
+> not been executed — employer-side OX is still NOT production-ready). The original architectural
+> decisions below are unchanged. See `docs/reports/M36.4_IMPLEMENTATION_REPORT.md`.
+
 **Capability labels used throughout:**
 
 | Label | Meaning |
