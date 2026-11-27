@@ -62,6 +62,7 @@ import {
 import { SPECIALIST_TOOLS } from "@/lib/riishe/specialist-tools";
 import { CREATIVE_TOOLS } from "@/lib/riishe/creative-tools";
 import { PORTFOLIO_TOOLS } from "@/lib/riishe/portfolio-tools";
+import { WORKFORCE_TOOLS } from "@/lib/riishe/workforce-tools";
 export {
   TOOL_RISKS,
   TOOL_LEVELS,
@@ -668,6 +669,8 @@ export const REF_FIELDS = new Set([
   "resumeRef", // career.resume.analyze → career.resume.tailoredCopy / career.coverLetter.draft
   "letterRef", // career.coverLetter.draft → downstream letter steps
   "jobRef", // laxii.banner.produce → laxii.job.status
+  // M36.2 typed producer reference (architecture §9):
+  "opportunityRef", // ox.opportunity.draft → M36.3 opportunity consumers
 ]);
 
 /** Ref param key → the key of the referenced step's result value it resolves to. */
@@ -680,6 +683,7 @@ export const REF_RESULT_KEYS: Record<string, string> = {
   resumeRef: "conversationId",
   letterRef: "letterId",
   jobRef: "messageId",
+  opportunityRef: "opportunityId",
 };
 
 /**
@@ -917,6 +921,10 @@ export const RIISHE_TOOLS: Record<string, RiisheToolDef<never>> = {
   // M36.1: read-only portfolio evidence tools (self evidence report +
   // consent-gated public evidence) — same contracts, same audit trail.
   ...PORTFOLIO_TOOLS,
+  // M36.2: the Workforce Strategist's real Opportunity Exchange draft tool
+  // (DRAFT-only, tenant re-authorized per execution) — same contracts, same
+  // approval ladder, same audit trail.
+  ...WORKFORCE_TOOLS,
 };
 
 export function getTool(name: string): RiisheToolDef<never> | null {

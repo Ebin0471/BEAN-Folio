@@ -180,7 +180,9 @@ describe("M35 creative tools — registry contracts", () => {
     expect(s!.available()).toBe(true);
     for (const t of s!.toolNames) expect(getTool(t)).not.toBeNull();
     // M36.1: 10 existing + People Finder + Portfolio Intelligence Analyst.
-    expect(SPECIALISTS.length).toBe(12);
+    // M36.2 added the 13th (Workforce Strategist — see
+    // tests/riishe-m362-workforce-strategist.test.ts).
+    expect(SPECIALISTS.length).toBe(13);
     // banner goals route to the creative producer
     expect(classifySpecialist("prepare a banner design brief for my channel art")?.id).toBe("creative-producer");
   });

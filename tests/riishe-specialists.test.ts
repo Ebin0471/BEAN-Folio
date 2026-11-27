@@ -43,7 +43,7 @@ async function execTool(tool: { execute: (c: ToolContext, i: never) => Promise<R
 }
 
 describe("M31 specialist registry contract", () => {
-  test("all twelve specialists are registered with stable ids and complete manifests", () => {
+  test("all thirteen specialists are registered with stable ids and complete manifests", () => {
     const ids = SPECIALISTS.map((s) => s.id);
     expect(ids).toEqual([
       "career-guide",
@@ -61,6 +61,9 @@ describe("M31 specialist registry contract", () => {
       // Portfolio Intelligence Analyst) — real registrations over real tools.
       "people-finder",
       "portfolio-intelligence",
+      // M36.2: the ORGANIZATION-scope Workforce Strategist over the real
+      // Opportunity Exchange draft boundary.
+      "workforce-strategist",
     ]);
     for (const s of SPECIALISTS) {
       expect(s.name.length).toBeGreaterThan(0);
@@ -127,6 +130,10 @@ describe("M31 specialist registry contract", () => {
     // ORGANIZATION-only specialists still resolve in ORG scope only.
     expect(classifySpecialist("write an SOP for our release process", "ORGANIZATION")?.id).toBe("business-operations");
     expect(classifySpecialist("write an SOP for our release process", "PERSONAL")).toBeNull();
+    // M36.2: employer-side hiring-request language resolves the Workforce
+    // Strategist in ORG scope only — never in a personal workspace.
+    expect(classifySpecialist("Draft a job description for a senior video editor", "ORGANIZATION")?.id).toBe("workforce-strategist");
+    expect(classifySpecialist("Draft a job description for a senior video editor", "PERSONAL")?.id).not.toBe("workforce-strategist");
     // Ambiguous goals still fall through (conservative, unchanged).
     expect(classifySpecialist("hello", "PERSONAL")).toBeNull();
     expect(classifySpecialist("hello", "ORGANIZATION")).toBeNull();

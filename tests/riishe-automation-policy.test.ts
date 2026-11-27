@@ -251,6 +251,10 @@ describe("B2 registry — permission declarations are registry-level and real", 
         // tests/riishe-portfolio-evidence.test.ts)
         "portfolio.evidenceReport",
         "portfolio.publicEvidence",
+        // M36.2 workforce tool (real, registered, tested — see
+        // tests/riishe-m362-workforce-strategist.test.ts): DRAFT-only
+        // Opportunity Exchange creation through the shared guarded service.
+        "ox.opportunity.draft",
       ].sort()
     );
   });

@@ -72,8 +72,8 @@ Rules:
 - Keep plans at most ${MAX_WORKFLOW_STEPS} steps.
 - Steps that need another step's output must list it in dependsOn.
 - Reference params (draftRef, postRef, briefTaskRef, giftzTaskRef, siteRef,
-  resumeRef, letterRef, jobRef) take the PLANNER ID of the earlier step that
-  produced the artefact — never a fabricated database id.
+  resumeRef, letterRef, jobRef, opportunityRef) take the PLANNER ID of the
+  earlier step that produced the artefact — never a fabricated database id.
 - Tools that accept an explicit id (taskId, conversationId, briefTaskId) can
   also run standalone: omit the id and the tool resolves the owner's latest
   record honestly, or fails with a clear message.
@@ -380,6 +380,26 @@ function specialistStepForClause(
       tool: "portfolio.publicEvidence",
       title: `Retrieve public work evidence for @${username}`,
       params: { username },
+    };
+  }
+  // M36.2 workforce-strategist clause — employer-side hiring-request
+  // drafting (ORGANIZATION scope; the workspace-aware classifier and the
+  // tool's own per-execution authorization keep personal workspaces out).
+  // Candidate-search language (find/hire/candidates) never matches here —
+  // it stays with the intent engine, Talent Scout and People Finder. The
+  // brief passed to the tool is the user's own clause verbatim — nothing is
+  // invented; a too-short clause produces no step (the tool's bounded brief
+  // requires at least 20 characters).
+  if (
+    /\b(job description|opportunity draft|draft an opportunity|prepare an opportunity|hiring requirements|recruitment request|hiring request|role requirement|hiring brief|draft a role requirement|turn our hiring|structure our hiring|draft (?:a|the|our) (?:job|hiring|role))\b/.test(c) &&
+    getTool("ox.opportunity.draft") &&
+    clause.trim().length >= 20
+  ) {
+    return {
+      id,
+      tool: "ox.opportunity.draft",
+      title: "Prepare an opportunity draft",
+      params: { requirementsBrief: clause.slice(0, 8000) },
     };
   }
   return null;

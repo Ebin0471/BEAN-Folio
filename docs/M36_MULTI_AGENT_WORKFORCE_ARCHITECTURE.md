@@ -24,6 +24,29 @@ change named in this document requires explicit owner approval BEFORE implementa
 > recorded limitation for the M36.8 orchestration milestone), and per-step attribution (§7.2, OD-1). The
 > original architectural decisions below are unchanged. See `docs/reports/M36.1_IMPLEMENTATION_REPORT.md`.
 
+> **M36.2 implementation addendum (2026-11-27).** The first ORGANIZATION milestone is COMPLETE:
+> specialist `workforce-strategist` (§3-13) is registered ORGANIZATION-only over the real
+> `ox.opportunity.draft` tool — one registered LOW/Level-1/outreach tool in the ONE registry that
+> reuses the EXISTING Opportunity Exchange creation boundary (`createOpportunitySchema`,
+> `validateOpportunitySkillPayload`, `resolveOpportunitySkillIds` taxonomy-only,
+> `salaryPaiseToStorage`, `requireOrgRole` + `OX_OPPORTUNITY_WRITE_ROLES`, the shared
+> `ox:opportunity-create:<orgId>` rate-limit bucket, `auditOX ox.opportunity.created`) through the new
+> shared service `src/lib/ox/opportunity-create.ts` (the POST route now reuses the same service with a
+> byte-equivalent HTTP contract). The typed producer reference `opportunityRef` → `opportunityId` (§9)
+> is registered in `REF_FIELDS`/`REF_RESULT_KEYS` with M35.7 validation unchanged; the consumer
+> (`ox.match.explain`, M36.3) is deliberately NOT implemented. DRAFT-only is enforced by construction
+> (status hardcoded in the shared service). The AI extraction is grounded (brief = untrusted data; the
+> model never emits salary numbers or identifiers); compensation is parsed deterministically over the
+> raw brief (narrow tested range grammar — ambiguity becomes clarification, never fabricated paise);
+> unknown skill/profession references are reported and never upserted; OD-3 future requirements
+> (team context, engagement duration, experience expectations) are returned with
+> `storedInOpportunityRecord: false` — OD-3 remains UNAPPROVED and no schema change was made. Honest
+> retry posture: `idempotent: false`, `maxAttempts: 1`; at-least-once recovery after a mid-execution
+> worker death remains possible (the Opportunity model has no workflow-idempotency column — an
+> owner-approved additive column would be required to strengthen this). Live registry counts are now
+> **13 specialists / 38 tools**. The original architectural decisions below are unchanged. See
+> `docs/reports/M36.2_IMPLEMENTATION_REPORT.md`.
+
 **Capability labels used throughout:**
 
 | Label | Meaning |

@@ -36,7 +36,8 @@ export type SpecialistId =
   | "docs-knowledge"
   | "creative-producer"
   | "people-finder"
-  | "portfolio-intelligence";
+  | "portfolio-intelligence"
+  | "workforce-strategist";
 
 export type WorkspaceScope = "PERSONAL" | "ORGANIZATION";
 
@@ -390,6 +391,50 @@ export const SPECIALISTS: SpecialistDefinition[] = [
     auditNote:
       "Self-analysis reads only the owner's own records (deterministic evidence ladder — no scores, no synthesized verification). Third-party public evidence honours the visibility ladder, blocks and the subject's AI_PROCESSING consent on every execution.",
     available: () => toolsAvailable(["portfolio.evidenceReport", "portfolio.publicEvidence"]),
+  },
+  {
+    // M36.2 (role 13, docs/M36_MULTI_AGENT_WORKFORCE_ARCHITECTURE.md §3.13):
+    // employer-side requirement elicitation over the EXISTING Opportunity
+    // Exchange creation boundary — never candidate discovery (Talent Scout
+    // + OX consent), never personal discovery (People Finder), never a
+    // second creation path. DRAFT-only by construction; submission and
+    // publication stay in the existing human/admin flows.
+    id: "workforce-strategist",
+    name: "Workforce Strategist",
+    description:
+      "Turns your organization's hiring requirements into a structured recruitment request and prepares a private Opportunity draft — flags missing or contradictory requirements, and reports anything the opportunity schema cannot store instead of dropping it.",
+    capabilities: [
+      "Translate a requirements brief into a structured hiring request",
+      "Identify role/profession, required and preferred skills, responsibilities and deliverables",
+      "Extract location, employment type, work mode and positions when supplied",
+      "Identify missing information and contradictory requirements",
+      "Preserve requirements the Opportunity model cannot store (OD-3, owner decision pending)",
+      "Prepare a private Opportunity DRAFT — never submit or publish",
+    ],
+    taskCategories: ["opportunities", "recruiting", "organization"],
+    toolNames: ["ox.opportunity.draft"],
+    workspaceScopes: ["ORGANIZATION"],
+    riskPolicy: { maxAutomationLevel: 1, approvalsAlwaysHuman: true },
+    limits: { maxSteps: 5, defaultTimeoutMs: 60_000 },
+    routingKeywords: [
+      "draft a job description",
+      "job description",
+      "opportunity draft",
+      "draft an opportunity",
+      "hiring requirements",
+      "recruitment request",
+      "hiring request",
+      "role requirement",
+      "hiring brief",
+      "draft a role",
+      "prepare an opportunity",
+      "turn our hiring requirements",
+      "structure our hiring brief",
+      "create a draft role requirement",
+    ],
+    auditNote:
+      "Organization workspace only: the Opportunity Exchange creation boundary (ACTIVE OWNER/ADMIN/RECRUITER membership) is re-verified on every execution and the same organization-scoped creation rate limit applies. Creates exactly one private DRAFT — submission, publication and admin review stay human; candidate matching and invitations are separate authorized flows.",
+    available: () => toolsAvailable(["ox.opportunity.draft"]),
   },
 ];
 

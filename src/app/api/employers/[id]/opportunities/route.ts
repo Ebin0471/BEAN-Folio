@@ -5,15 +5,11 @@ import { db } from "@/lib/db";
 import { requireOrgRole } from "@/lib/ox/authz";
 import {
   createOpportunitySchema,
-  validateOpportunitySkillPayload,
-  salaryPaiseToStorage,
   OX_OPPORTUNITY_STATUSES,
-  OX_OPPORTUNITY_WRITE_ROLES,
   OX_ORG_ROLES,
   type CreateOpportunityInput,
 } from "@/lib/ox/validation";
-import { resolveOpportunitySkillIds } from "@/lib/ox/opportunity-skills";
-import { auditOX, OX_AUDIT_ACTIONS, OX_TARGET } from "@/lib/ox/audit";
+import { createOpportunityRecord } from "@/lib/ox/opportunity-create";
 import { serializeOpportunity } from "@/lib/ox/dto";
 
 export const dynamic = "force-dynamic";
@@ -80,57 +76,22 @@ export const POST = handler(async (req: NextRequest, { params }: RouteParams) =>
   if (r.response !== undefined) return r.response;
   const input: CreateOpportunityInput = r.data;
 
-  // Pre-write payload rules (standard 400, zero database writes).
-  const skillViolation = input.skills ? validateOpportunitySkillPayload(input.skills) : null;
-  if (skillViolation) return err(skillViolation, 400, skillViolation);
-
-  const membership = await requireOrgRole(id, user.id, OX_OPPORTUNITY_WRITE_ROLES);
-  if (!membership) return ERR.notFound();
-
-  const resolved = await resolveOpportunitySkillIds(input.skills ?? []);
-  if (!resolved.ok) return err("Unknown skill reference — the existing skill taxonomy is reused, never extended", 400, resolved.error);
-
-  if (input.professionId !== undefined) {
-    const professionExists = await db.profession.findUnique({ where: { id: input.professionId }, select: { id: true } });
-    if (!professionExists) return err("Unknown profession reference", 400, "OPPORTUNITY_PROFESSION_NOT_FOUND");
+  // M36.2: the guarded creation core (payload rules → ACTIVE OWNER/ADMIN/
+  // RECRUITER membership → taxonomy-only skill resolution → profession
+  // existence → transactional DRAFT create + audit) now lives in ONE shared
+  // service reused by the RIISHE ox.opportunity.draft tool — same rules, same
+  // audit, same status codes. The HTTP contract below is byte-equivalent.
+  const result = await createOpportunityRecord(user.id, id, input);
+  if (!result.ok) {
+    if (result.stage === "membership") return ERR.notFound();
+    if (result.stage === "skill-resolve") {
+      return err("Unknown skill reference — the existing skill taxonomy is reused, never extended", 400, result.code);
+    }
+    if (result.stage === "profession") {
+      return err("Unknown profession reference", 400, "OPPORTUNITY_PROFESSION_NOT_FOUND");
+    }
+    return err(result.code, 400, result.code);
   }
 
-  const created = await db.$transaction(async (tx) => {
-    const row = await tx.opportunity.create({
-      data: {
-        organizationId: id,
-        createdByUserId: user.id,
-        title: input.title,
-        description: input.description,
-        status: "DRAFT",
-        professionId: input.professionId,
-        location: input.location === undefined ? undefined : input.location === "" ? null : input.location,
-        employmentType: input.employmentType,
-        workMode: input.workMode,
-        positions: input.positions,
-        salaryMinPaise: input.salaryMinPaise === undefined ? undefined : salaryPaiseToStorage(input.salaryMinPaise),
-        salaryMaxPaise: input.salaryMaxPaise === undefined ? undefined : salaryPaiseToStorage(input.salaryMaxPaise),
-        salaryCurrency: input.salaryCurrency,
-        compensationPeriod: input.compensationPeriod,
-      },
-    });
-    if (resolved.resolved.length > 0) {
-      await tx.opportunitySkill.createMany({
-        data: resolved.resolved.map((s) => ({ opportunityId: row.id, skillId: s.skillId, kind: s.kind })),
-      });
-    }
-    return tx.opportunity.findUniqueOrThrow({
-      where: { id: row.id },
-      include: SKILL_INCLUDE,
-    });
-  });
-
-  await auditOX(user.id, OX_AUDIT_ACTIONS.opportunityCreated, OX_TARGET.opportunity, created.id, {
-    organizationId: id,
-    status: "DRAFT",
-    actorRole: membership.role,
-    skillCount: created.skills.length,
-  });
-
-  return ok({ opportunity: serializeOpportunity(created, created.skills) }, 201);
+  return ok({ opportunity: serializeOpportunity(result.created, result.created.skills) }, 201);
 });

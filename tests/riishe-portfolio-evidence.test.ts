@@ -147,7 +147,9 @@ describe("M36.1 registry contract — two real specialists, two real tools", () 
     expect(pia!.toolNames).toEqual(["portfolio.evidenceReport", "portfolio.publicEvidence"]);
     expect(finder!.available()).toBe(true);
     expect(pia!.available()).toBe(true);
-    expect(SPECIALISTS.length).toBe(12);
+    // M36.2 added the 13th specialist (Workforce Strategist) — see
+    // tests/riishe-m362-workforce-strategist.test.ts.
+    expect(SPECIALISTS.length).toBe(13);
   });
 
   test("both new tools live in the ONE registry with LOW / level-1 / discovery contracts", () => {
@@ -169,13 +171,14 @@ describe("M36.1 registry contract — two real specialists, two real tools", () 
     expect(getTool("portfolio.publicEvidence")!.auditAction).toBe("riishe.tool.public_evidence");
   });
 
-  test("live registry counts derive to 12 specialists and 37 tools (no hard-coding)", () => {
-    expect(SPECIALISTS.length).toBe(12);
-    // 35 pre-M36.1 registry tools unchanged + exactly 2 new portfolio tools.
+  test("live registry counts derive to 13 specialists and 38 tools (no hard-coding)", () => {
+    expect(SPECIALISTS.length).toBe(13);
+    // 35 pre-M36.1 registry tools + 2 M36.1 portfolio tools + 1 M36.2
+    // workforce tool (ox.opportunity.draft).
     const preExisting = { ...RIISHE_TOOLS };
     for (const k of Object.keys(PORTFOLIO_TOOLS)) delete preExisting[k];
-    expect(Object.keys(preExisting).length).toBe(35);
-    expect(Object.keys(RIISHE_TOOLS).length).toBe(37);
+    expect(Object.keys(preExisting).length).toBe(36);
+    expect(Object.keys(RIISHE_TOOLS).length).toBe(38);
     // Every tool referenced by ANY specialist exists in the registry.
     for (const s of SPECIALISTS) {
       for (const t of s.toolNames) expect(getTool(t)).not.toBeNull();
@@ -696,15 +699,17 @@ describe("M36.1 deterministic planner clauses", () => {
   });
 
   test("multi-person fan-out does NOT exist: no creator-array reference was fabricated", async () => {
-    // The engine's REF_FIELDS/REF_RESULT_KEYS stay unchanged by M36.1 —
-    // discovery results are arrays and are never auto-fanned into per-person
-    // evidence steps (recorded limitation, later orchestration milestone).
+    // The engine's REF_FIELDS/REF_RESULT_KEYS stay guarded: discovery results
+    // are arrays and are never auto-fanned into per-person evidence steps
+    // (recorded limitation, later orchestration milestone). M36.2 added the
+    // single-opportunity typed reference `opportunityRef` (result key
+    // `opportunityId`) — a scalar producer, not a fan-out mechanism.
     const { REF_FIELDS, REF_RESULT_KEYS } = await import("@/lib/riishe/tools");
     expect([...REF_FIELDS]).not.toContain("creatorMatchesRef");
     expect(Object.keys(REF_RESULT_KEYS)).not.toContain("creatorMatchesRef");
     expect(Object.keys(REF_RESULT_KEYS)).toEqual(
-      expect.arrayContaining(["draftRef", "postRef", "briefTaskRef", "giftzTaskRef", "siteRef", "resumeRef", "letterRef", "jobRef"])
+      expect.arrayContaining(["draftRef", "postRef", "briefTaskRef", "giftzTaskRef", "siteRef", "resumeRef", "letterRef", "jobRef", "opportunityRef"])
     );
-    expect(Object.keys(REF_RESULT_KEYS).length).toBe(8);
+    expect(Object.keys(REF_RESULT_KEYS).length).toBe(9);
   });
 });
