@@ -177,10 +177,10 @@ describe("M36.1 registry contract — two real specialists, two real tools", () 
     expect(SPECIALISTS.length).toBe(15);
     // 35 pre-M36.1 registry tools + 2 M36.1 portfolio tools + 1 M36.2
     // workforce tool (ox.opportunity.draft) + 1 M36.3 talent-intelligence
-    // tool (ox.match.explain).
+    // tool (ox.match.explain) + 3 M36.4 candidate-relations tools.
     const preExisting = { ...RIISHE_TOOLS };
     for (const k of Object.keys(PORTFOLIO_TOOLS)) delete preExisting[k];
-    expect(Object.keys(preExisting).length).toBe(37);
+    expect(Object.keys(preExisting).length).toBe(40);
     expect(Object.keys(RIISHE_TOOLS).length).toBe(42);
     // Every tool referenced by ANY specialist exists in the registry.
     for (const s of SPECIALISTS) {
