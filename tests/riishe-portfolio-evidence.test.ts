@@ -377,27 +377,58 @@ describe("M36.1 portfolio.publicEvidence — strict public ladder", () => {
     expect(hidden.username).toBeTruthy(); // rows existed; the tool never said so
   });
 
-  test("blocks in EITHER direction prevent disclosure", async () => {
+  test("blocked lookups in EITHER direction are refused with the exact existence-blind refusal (M36.1.1)", async () => {
     const viewer = await makeUser("Block Viewer");
     const subject = await makeUser("Blocked Creator", { username: `m361-blocked-${RUN}` });
     await db.project.create({ data: { ownerId: subject.id, title: `Blocked Work ${RUN}`, status: "PUBLISHED", visibility: "PUBLIC", publishedAt: new Date() } });
 
-    await db.block.create({ data: { blockerId: subject.id, blockedId: viewer.id } });
-    try {
-      await execTool(publicEvidence, ctx(viewer.id), { username: `m361-blocked-${RUN}` });
-      expect.unreachable();
-    } catch (e) {
-      expect(e instanceof Error && e.message.includes("block")).toBe(true);
+    // The generic existence-blind refusal — the exact string already pinned
+    // for hidden/deleted/demo/missing accounts in the ladder test above.
+    const GENERIC = "no public portfolio is available for that username here";
+
+    async function refusalFor(username: string): Promise<string> {
+      try {
+        await execTool(publicEvidence, ctx(viewer.id), { username });
+        return "NO-THROW (refusal missing)";
+      } catch (e) {
+        return e instanceof Error ? e.message : String(e);
+      }
     }
+
+    // 1. subject blocks viewer → refused
+    await db.block.create({ data: { blockerId: subject.id, blockedId: viewer.id } });
+    const subjectBlocked = await refusalFor(`m361-blocked-${RUN}`);
     await db.block.delete({ where: { blockerId_blockedId: { blockerId: subject.id, blockedId: viewer.id } } });
 
+    // 2. viewer blocks subject → refused
     await db.block.create({ data: { blockerId: viewer.id, blockedId: subject.id } });
-    try {
-      await execTool(publicEvidence, ctx(viewer.id), { username: `m361-blocked-${RUN}` });
-      expect.unreachable();
-    } catch (e) {
-      expect(e instanceof Error && e.message.includes("block")).toBe(true);
-    }
+    const viewerBlocked = await refusalFor(`m361-blocked-${RUN}`);
+
+    // 8. both-direction block enforcement remains intact: the viewer block
+    // is still present and the lookups above never returned evidence.
+    const blocks = await db.block.count({
+      where: { OR: [{ blockerId: viewer.id, blockedId: subject.id }, { blockerId: subject.id, blockedId: viewer.id }] },
+    });
+    expect(blocks).toBe(1);
+
+    // Existence-blind control: a missing account in the same test run.
+    const missing = await refusalFor(`m361-missing-${RUN}`);
+
+    // 3. BOTH block refusals equal EXACTLY the generic message used for
+    // missing/hidden accounts — the exact refusal string is compared, never
+    // a loose substring such as "block", and the block's direction is never
+    // disclosed.
+    expect(subjectBlocked).toBe(GENERIC);
+    expect(viewerBlocked).toBe(GENERIC);
+    expect(missing).toBe(GENERIC);
+
+    // 5. no public project content is returned for any refused lookup
+    // (the only externally visible output is the refusal string itself).
+    expect(subjectBlocked.includes(`Blocked Work ${RUN}`)).toBe(false);
+    expect(viewerBlocked.includes(`Blocked Work ${RUN}`)).toBe(false);
+
+    // 6. no AI gateway call occurs for any refused lookup (spy records every
+    // aiComplete invocation across ALL four lookups above).
     expect(AI_CALLS.length).toBe(0);
   });
 

@@ -510,7 +510,9 @@ async function publicEvidenceExecute(ctx: ToolContext, input: z.infer<typeof pub
   });
 
   // Refusals that must never reveal whether the account exists: the SAME
-  // honest message covers missing, demo, deleted and non-PUBLIC profiles.
+  // honest message covers missing, demo, deleted, non-PUBLIC and BLOCKED
+  // accounts (the block refusal below reuses this exact message — a block
+  // must not disclose the account's existence or the block's direction).
   // (isProfilePubliclyVisible with isSelf=false is the existing ladder; the
   // target can never be "self" here — that case is refused below.)
   if (!target || !isProfilePubliclyVisible(target, false)) {
@@ -521,6 +523,10 @@ async function publicEvidenceExecute(ctx: ToolContext, input: z.infer<typeof pub
   }
 
   // Block in EITHER direction prevents disclosure (same rule as discovery).
+  // The refusal is the SAME existence-blind message as above: a block must
+  // not reveal the account's existence or whether the block was initiated by
+  // the viewer or the subject. Enforcement is unchanged — evidence retrieval
+  // never proceeds past a block in either direction.
   const block = await db.block.findFirst({
     where: {
       OR: [
@@ -531,7 +537,7 @@ async function publicEvidenceExecute(ctx: ToolContext, input: z.infer<typeof pub
     select: { blockerId: true },
   });
   if (block) {
-    throw new Error("public evidence is not available between these accounts — a block exists in either direction");
+    throw new Error("no public portfolio is available for that username here");
   }
 
   // Fresh public-project retrieval — the ONLY permitted work-evidence source
