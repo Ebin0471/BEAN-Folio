@@ -644,17 +644,24 @@ async function interviewPrepareExecute(
   ctx: ToolContext,
   input: InterviewPrepareInput
 ): Promise<InterviewOutcome> {
-  // 1. Authorization — fresh per execution. Room-less preparation runs on
-  //    the employer-role trio; a supplied room additionally goes through
-  //    the existing resolveRoomParty audience resolution.
-  const auth = await authorizeOrgWorkspace(ctx);
-  if (!auth.ok) return { status: "UNAUTHORIZED", reason: auth.reason };
+  // 1. Workspace check first (the hint is re-verified; the ROLE gate depends
+  //    on the audience path below).
+  const workspace = ctx.workspace;
+  if (!workspace || workspace.type !== "ORGANIZATION" || !workspace.organizationId) {
+    return {
+      status: "UNAUTHORIZED",
+      reason:
+        "Candidate Relations works only in an organization workspace — switch to one in Settings first (personal workspaces never touch the Opportunity Exchange).",
+    };
+  }
 
   // 2. Room context (optional). A room id is a pointer, not authorization:
   //    the room is re-read, bound to the current organization and resolved
   //    through the EXISTING party resolver. VIEWER, the candidate, an
-  //    unassigned HIRING_MANAGER and outsiders never obtain restricted
-  //    room content.
+  //    unassigned HIRING_MANAGER and outsiders never obtain restricted room
+  //    content; the actively ASSIGNED HIRING_MANAGER is permitted here per
+  //    the room permission matrix (employer roles pass through the same
+  //    resolver as EMPLOYER_ROLES).
   let roomStage: string | null = null;
   let roomId: string | null = null;
   let roomOpportunity: { id: string; title: string; status: string } | null = null;
@@ -663,7 +670,7 @@ async function interviewPrepareExecute(
     if (!party.access || !party.room) {
       return { status: "ROOM_NOT_ACCESSIBLE", reason: "No accessible hiring room exists for this request." };
     }
-    if (party.room.organizationId !== auth.organizationId) {
+    if (party.room.organizationId !== workspace.organizationId) {
       return {
         status: "ROOM_NOT_ACCESSIBLE",
         reason: "The referenced room belongs to a different organization — nothing was prepared.",
@@ -685,14 +692,20 @@ async function interviewPrepareExecute(
     }
     // Derive the opportunity from the room through the authorized workspace.
     const opportunity = await db.opportunity.findFirst({
-      where: { id: roomOpportunityId, organizationId: auth.organizationId },
+      where: { id: roomOpportunityId, organizationId: workspace.organizationId },
       select: { id: true, title: true, status: true },
     });
     if (!opportunity) {
       return { status: "OPPORTUNITY_NOT_AVAILABLE", reason: "The room's opportunity no longer exists in this organization." };
     }
     roomOpportunity = opportunity;
+  } else {
+    // Room-less preparation runs on the employer-role trio (the same gate
+    // the other org-scope Opportunity Exchange tools use).
+    const auth = await authorizeOrgWorkspace(ctx);
+    if (!auth.ok) return { status: "UNAUTHORIZED", reason: auth.reason };
   }
+  const organizationId = workspace.organizationId;
 
   // 3. Opportunity grounding. Exactly one locator was accepted by the
   //    schema; the room path has already resolved it above.
@@ -700,7 +713,7 @@ async function interviewPrepareExecute(
   if (!opportunityRow) {
     const opportunityId = (input.opportunityId ?? input.opportunityRef)!.trim();
     const found = await db.opportunity.findFirst({
-      where: { id: opportunityId, organizationId: auth.organizationId },
+      where: { id: opportunityId, organizationId },
       select: { id: true, title: true, status: true },
     });
     if (!found) {
