@@ -255,6 +255,10 @@ describe("B2 registry — permission declarations are registry-level and real", 
         // tests/riishe-m362-workforce-strategist.test.ts): DRAFT-only
         // Opportunity Exchange creation through the shared guarded service.
         "ox.opportunity.draft",
+        // M36.3 talent-intelligence tool (real, registered, tested — see
+        // tests/riishe-m363-talent-intelligence.test.ts): read-only O4 match
+        // explanation over EXISTING TalentMatch rows, never a recompute.
+        "ox.match.explain",
       ].sort()
     );
   });
