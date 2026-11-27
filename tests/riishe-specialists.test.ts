@@ -43,7 +43,7 @@ async function execTool(tool: { execute: (c: ToolContext, i: never) => Promise<R
 }
 
 describe("M31 specialist registry contract", () => {
-  test("all thirteen specialists are registered with stable ids and complete manifests", () => {
+  test("all fourteen specialists are registered with stable ids and complete manifests", () => {
     const ids = SPECIALISTS.map((s) => s.id);
     expect(ids).toEqual([
       "career-guide",
@@ -64,6 +64,9 @@ describe("M31 specialist registry contract", () => {
       // M36.2: the ORGANIZATION-scope Workforce Strategist over the real
       // Opportunity Exchange draft boundary.
       "workforce-strategist",
+      // M36.3: the ORGANIZATION-scope Talent Intelligence Analyst over the
+      // real read-only O4 match-explanation tool.
+      "talent-intelligence",
     ]);
     for (const s of SPECIALISTS) {
       expect(s.name.length).toBeGreaterThan(0);
