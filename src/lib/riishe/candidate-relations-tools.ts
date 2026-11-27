@@ -680,6 +680,29 @@ async function interviewPrepareExecute(
     if (party.access !== "EMPLOYER_ROLES" && party.access !== "ASSIGNED_MANAGER") {
       return { status: "ROOM_NOT_ACCESSIBLE", reason: "This room is not accessible to your role — nothing was prepared." };
     }
+    // M36.4.1 — organization-state parity. resolveRoomParty proves ACTIVE
+    // membership, role and assignment; it does NOT prove organization
+    // standing. After the room is bound to this workspace, the organization
+    // is re-read fresh from the ROOM's authoritative organizationId and must
+    // exist, be non-SUSPENDED and VERIFIED — the SAME gate the room-less
+    // path (authorizeOrgWorkspace), the employer room routes
+    // (requireRoomEmployerAccess) and ox.room.brief already enforce. This
+    // runs before any opportunity read or AI call; the refusal discloses no
+    // private room or organization data.
+    const roomOrg = await getOrg(party.room.organizationId);
+    if (!roomOrg) {
+      return { status: "UNAUTHORIZED", reason: "No accessible hiring room exists for this request." };
+    }
+    if (roomOrg.verificationStatus === "SUSPENDED") {
+      return { status: "UNAUTHORIZED", reason: "This organization is suspended — hiring-room access is unavailable." };
+    }
+    if (!orgIsVerified(roomOrg)) {
+      return {
+        status: "UNAUTHORIZED",
+        reason:
+          "Employer verification is required for hiring-room access — verify the organization in the Opportunity Exchange first.",
+      };
+    }
     roomStage = party.room.currentStage;
     roomId = party.room.id;
     const roomOpportunityId = party.room.opportunityId;
