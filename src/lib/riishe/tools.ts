@@ -64,6 +64,7 @@ import { CREATIVE_TOOLS } from "@/lib/riishe/creative-tools";
 import { PORTFOLIO_TOOLS } from "@/lib/riishe/portfolio-tools";
 import { WORKFORCE_TOOLS } from "@/lib/riishe/workforce-tools";
 import { TALENT_INTELLIGENCE_TOOLS } from "@/lib/riishe/talent-intelligence-tools";
+import { CANDIDATE_RELATIONS_TOOLS } from "@/lib/riishe/candidate-relations-tools";
 export {
   TOOL_RISKS,
   TOOL_LEVELS,
@@ -676,6 +677,11 @@ export const REF_FIELDS = new Set([
   // authorization — resolution re-verifies the referenced row's CURRENT
   // authorization state through src/lib/ox/match-reference.ts.
   "matchRef", // ox.match.explain → M36.4 invitation preparation / room brief
+  // M36.4 typed producer reference (architecture §9): a POINTER, never
+  // authorization — resolution re-verifies the referenced row's CURRENT
+  // authorization state through src/lib/ox/invitation-reference.ts. A stored
+  // invitation pointer can never become authority for a send.
+  "invitationRef", // ox.invitation.prepare → M36.4 room brief
 ]);
 
 /** Ref param key → the key of the referenced step's result value it resolves to. */
@@ -690,6 +696,7 @@ export const REF_RESULT_KEYS: Record<string, string> = {
   jobRef: "messageId",
   opportunityRef: "opportunityId",
   matchRef: "matchId",
+  invitationRef: "invitationId",
 };
 
 /**
@@ -935,6 +942,11 @@ export const RIISHE_TOOLS: Record<string, RiisheToolDef<never>> = {
   // tool (fresh authorization + discovery revalidation per execution; the O4
   // score is quoted, never recomputed) — same contracts, same audit trail.
   ...TALENT_INTELLIGENCE_TOOLS,
+  // M36.4: the Candidate Relations Agent's prepare-only tools (invitation
+  // DRAFT through the existing creation service, private interview
+  // preparation, read-only room brief — send/interview/stage mutations stay
+  // the existing human flows) — same contracts, same audit trail.
+  ...CANDIDATE_RELATIONS_TOOLS,
 };
 
 export function getTool(name: string): RiisheToolDef<never> | null {

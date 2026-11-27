@@ -38,7 +38,8 @@ export type SpecialistId =
   | "people-finder"
   | "portfolio-intelligence"
   | "workforce-strategist"
-  | "talent-intelligence";
+  | "talent-intelligence"
+  | "candidate-relations";
 
 export type WorkspaceScope = "PERSONAL" | "ORGANIZATION";
 
@@ -485,6 +486,55 @@ export const SPECIALISTS: SpecialistDefinition[] = [
     auditNote:
       "Organization workspace only: the exact match-route authorization chain (ACTIVE OWNER/ADMIN/RECRUITER membership, VERIFIED non-SUSPENDED organization, tenant-bound opportunity) is re-verified on every execution together with a fresh candidate discovery check. Read-only over existing O4 match rows — the score is never recomputed or replaced, matches are never generated or refreshed here, and no hiring decision is ever made. Candidate-specific AI calls require a fresh AI_PROCESSING consent.",
     available: () => toolsAvailable(["ox.match.explain", "portfolio.evidenceReport"]),
+  },
+  {
+    // M36.4 (role 15, docs/M36_MULTI_AGENT_WORKFORCE_ARCHITECTURE.md §3-15):
+    // PREPARE-ONLY hiring coordination over the EXISTING Opportunity Exchange
+    // invitation and room services. It NEVER sends invitations, proposes or
+    // confirms interviews, changes interview dates, transitions hiring
+    // stages, creates rooms or makes hiring decisions — the human-facing
+    // Opportunity Exchange and Hiring Room flows stay authoritative for
+    // every consequential action. It does not duplicate Talent Scout
+    // (candidate discovery), Talent Intelligence (O4 match explanation),
+    // Workforce Strategist (employer requirement drafting), Growth &
+    // Communications (personal outreach) or Portfolio Intelligence
+    // (portfolio evidence); casual Inquiry records are never turned into
+    // recruitment records (O0 rule preserved).
+    id: "candidate-relations",
+    name: "Candidate Relations Agent",
+    description:
+      "Prepares invitation drafts, role-specific interview question sets, structured interview plans and authorized hiring-room summaries inside the Opportunity Exchange — always prepare-only: sending, interview scheduling and stage transitions stay the existing human flows.",
+    capabilities: [
+      "Prepare a personalized invitation DRAFT for one selected candidate (explicit offer terms required; amounts never invented)",
+      "Prepare role-specific interview question sets grounded in the opportunity's real requirements",
+      "Prepare structured interview plans for a chosen hiring stage",
+      "Summarize an authorized hiring room's stage history, interviews and audit-derived activity",
+      "Identify genuinely unanswered requirements only where actual records support the conclusion",
+      "Prepare follow-up suggestions for human recruiters",
+      "Explain lifecycle and communication limitations honestly — the agent never sends, schedules or decides",
+    ],
+    taskCategories: ["recruiting", "candidates", "organization"],
+    toolNames: ["ox.invitation.prepare", "ox.interview.prepare", "ox.room.brief"],
+    workspaceScopes: ["ORGANIZATION"],
+    riskPolicy: { maxAutomationLevel: 1, approvalsAlwaysHuman: true },
+    limits: { maxSteps: 5, defaultTimeoutMs: 45_000 },
+    routingKeywords: [
+      "prepare an invitation draft",
+      "draft an invitation",
+      "invitation draft for this candidate",
+      "prepare interview questions",
+      "interview question set",
+      "structured interview plan",
+      "prepare a structured interview plan",
+      "summarize this hiring room",
+      "summarize this authorized hiring room",
+      "room brief",
+      "hiring room summary",
+      "follow-up checklist for this room",
+    ],
+    auditNote:
+      "Organization workspace only: the employer invitation/room authorization chains (ACTIVE OWNER/ADMIN/RECRUITER or an actively assigned HIRING_MANAGER where the room matrix allows it, VERIFIED non-SUSPENDED organization, tenant-bound opportunity, fresh candidate discovery boundary and the existing source-of-selection rules) are re-verified on every execution. PREPARE-ONLY: the invitation tool creates one private DRAFT through the existing createInvitationDraft service and never sends or notifies; the interview tool persists nothing; the room brief is read-only. No interview is proposed or confirmed, no stage transitions, no room creation, no hiring decisions — human flows stay authoritative. The offer terms are never invented.",
+    available: () => toolsAvailable(["ox.invitation.prepare", "ox.interview.prepare", "ox.room.brief"]),
   },
 ];
 

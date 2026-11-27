@@ -28,4 +28,6 @@ export const SPECIALIST_NAME_BY_ID: Record<string, string> = {
   "workforce-strategist": "Workforce Strategist",
   // M36.3: the ORGANIZATION match-explanation specialist.
   "talent-intelligence": "Talent Intelligence Analyst",
+  // M36.4: the ORGANIZATION prepare-only hiring-coordination specialist.
+  "candidate-relations": "Candidate Relations Agent",
 };

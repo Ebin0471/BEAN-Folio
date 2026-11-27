@@ -37,6 +37,7 @@ import { enqueue, cancelQueued } from "@/lib/queue";
 import { auditEvent } from "@/lib/riishe/audit";
 import { getTool, toolApprovalRequired, REF_FIELDS, REF_RESULT_KEYS, type RiisheToolDef, type ToolContext } from "@/lib/riishe/tools";
 import { verifyMatchRefAuthorization } from "@/lib/ox/match-reference";
+import { verifyInvitationRefAuthorization } from "@/lib/ox/invitation-reference";
 import {
   dailyActionCapStatus,
   initialStatusForStep,
@@ -441,6 +442,14 @@ export async function scheduleReadySteps(workflowId: string, userId: string): Pr
  * a fresh DISCOVERY-consent read). Revocation, blocks, role loss,
  * organization suspension or lost opportunity access between producer and
  * consumer FAIL the resolution — the stored id never grants visibility.
+ * M36.4 addition (same convention): an `invitationRef` param is likewise a
+ * POINTER, never authorization — the referenced OpportunityInvitation row's
+ * CURRENT authorization state is re-verified through
+ * src/lib/ox/invitation-reference.ts (row exists → tenant org from the row
+ * → ACTIVE OWNER/ADMIN/RECRUITER membership of the workflow owner → VERIFIED,
+ * non-SUSPENDED organization). Invitation-STATUS fitness for a consumer's
+ * intended use stays the consumer's own per-execution check, and no M36.4
+ * tool accepts an invitation reference for any sending purpose.
  * Existing ref behavior is unchanged (all other keys resolve exactly as
  * before).
  * Exported for the M35.7 safety suite (all error classes pinned against the
@@ -499,6 +508,23 @@ export async function resolveStepParams(
       if (!verification.ok) {
         throw new WorkflowError(
           `the referenced match "${value}" is no longer authorized (reason: ${verification.reason}) — a stored match id is a pointer, never permission`,
+          "authorization-revoked"
+        );
+      }
+    }
+    // M36.4: invitationRef resolution re-verifies CURRENT authorization —
+    // the stored invitation id is only a pointer, never permission (and
+    // never authority for a send).
+    if (k === "invitationRef") {
+      const workflow = await db.riisheWorkflow.findUnique({
+        where: { id: workflowId },
+        select: { userId: true },
+      });
+      if (!workflow) throw new WorkflowError("workflow not found for invitationRef authorization re-verification", "not-found");
+      const verification = await verifyInvitationRefAuthorization(workflow.userId, value);
+      if (!verification.ok) {
+        throw new WorkflowError(
+          `the referenced invitation "${value}" is no longer authorized (reason: ${verification.reason}) — a stored invitation id is a pointer, never permission`,
           "authorization-revoked"
         );
       }
