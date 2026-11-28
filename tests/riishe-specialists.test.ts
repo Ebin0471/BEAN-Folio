@@ -70,6 +70,12 @@ describe("M31 specialist registry contract", () => {
       // M36.4: the ORGANIZATION-scope Candidate Relations Agent over the
       // three real prepare-only Opportunity Exchange tools.
       "candidate-relations",
+      // M36.6: the two GIFTZ specialists (PERSONAL + ORGANIZATION) — the
+      // Product Architect over the EXISTING registered GIFTZ tools and the
+      // Experience & Quality Auditor over the ONE real read-only
+      // giftz.quality.report (see tests/riishe-m366-giftz-specialists.test.ts).
+      "giftz-product-architect",
+      "giftz-quality-auditor",
     ]);
     for (const s of SPECIALISTS) {
       expect(s.name.length).toBeGreaterThan(0);
