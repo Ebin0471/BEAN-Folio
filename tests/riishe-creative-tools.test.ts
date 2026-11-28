@@ -181,9 +181,11 @@ describe("M35 creative tools — registry contracts", () => {
     for (const t of s!.toolNames) expect(getTool(t)).not.toBeNull();
     // M36.1: 10 existing + People Finder + Portfolio Intelligence Analyst.
     // M36.2 added the 13th (Workforce Strategist), M36.3 the 14th
-    // (Talent Intelligence Analyst) and M36.4 the 15th (Candidate Relations
-    // Agent — see tests/riishe-m364-candidate-relations.test.ts).
-    expect(SPECIALISTS.length).toBe(15);
+    // (Talent Intelligence Analyst), M36.4 the 15th (Candidate Relations
+    // Agent) and M36.6 the 16th and 17th (GIFTZ Product Architect and GIFTZ
+    // Experience & Quality Auditor — see
+    // tests/riishe-m366-giftz-specialists.test.ts).
+    expect(SPECIALISTS.length).toBe(17);
     // banner goals route to the creative producer
     expect(classifySpecialist("prepare a banner design brief for my channel art")?.id).toBe("creative-producer");
   });

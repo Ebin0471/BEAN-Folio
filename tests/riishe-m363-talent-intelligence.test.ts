@@ -465,9 +465,9 @@ describe("M36.3 registry contract — the 14th specialist over the ONE registry"
     expect(tool!.idempotent).toBe(true);
   });
 
-  test("live registry counts derive to the live registries (15 specialists / 42 tools after M36.4)", () => {
-    expect(SPECIALISTS.length).toBe(15);
-    expect(Object.keys(RIISHE_TOOLS).length).toBe(42);
+  test("live registry counts derive to the live registries (17 specialists / 43 tools after M36.6)", () => {
+    expect(SPECIALISTS.length).toBe(17);
+    expect(Object.keys(RIISHE_TOOLS).length).toBe(43);
     // Every tool referenced by ANY specialist exists in the registry.
     for (const s of SPECIALISTS) {
       for (const t of s.toolNames) expect(getTool(t)).not.toBeNull();

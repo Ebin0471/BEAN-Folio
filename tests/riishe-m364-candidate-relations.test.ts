@@ -10,7 +10,9 @@
  * Contracts pinned here (docs/M36_MULTI_AGENT_WORKFORCE_ARCHITECTURE.md
  * §3-15, §5.5–§5.7, §6, §9, §11, §14, §15; milestone M36.4 §1–§15):
  *  - Registry: the 15th specialist (ORGANIZATION-only) owning EXACTLY the
- *    three real tools; live counts derive to 15 specialists / 42 tools;
+ *    three real tools; live counts derive to 17 specialists / 43 tools
+ *    (the M36.6 GIFTZ specialists added the 16th/17th specialist and the
+ *    43rd tool — see tests/riishe-m366-giftz-specialists.test.ts);
  *    `invitationRef` joins `opportunityRef`/`matchRef` in the ONE reference
  *    registry (result key `invitationId`).
  *  - Invitation preparation: ONE employer-private DRAFT through the EXISTING
@@ -573,10 +575,10 @@ describe("M36.4 registry contract — the 15th specialist over the ONE registry"
     expect(brief.undo).toBeNull();
   });
 
-  test("live registry counts derive to 15 specialists and 42 tools (no hard-coding)", () => {
-    expect(SPECIALISTS.length).toBe(15);
+  test("live registry counts derive to 17 specialists and 43 tools (no hard-coding)", () => {
+    expect(SPECIALISTS.length).toBe(17);
     const toolCount = Object.keys(RIISHE_TOOLS).length;
-    expect(toolCount).toBe(42);
+    expect(toolCount).toBe(43);
     // The three new tools are exactly the delta from the M36.3 registry.
     for (const name of ["ox.invitation.prepare", "ox.interview.prepare", "ox.room.brief"]) {
       expect(Object.keys(RIISHE_TOOLS).filter((k) => k === name).length).toBe(1);

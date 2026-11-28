@@ -267,6 +267,11 @@ describe("B2 registry — permission declarations are registry-level and real", 
         "ox.invitation.prepare",
         "ox.interview.prepare",
         "ox.room.brief",
+        // M36.6 GIFTZ quality tool (real, registered, tested — see
+        // tests/riishe-m366-giftz-specialists.test.ts): read-only static
+        // quality report over the owner's own stored project files through
+        // the EXISTING runQualityGate path — no second gate, no persistence.
+        "giftz.quality.report",
       ].sort()
     );
   });
