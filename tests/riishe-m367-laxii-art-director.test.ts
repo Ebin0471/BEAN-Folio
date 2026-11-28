@@ -237,7 +237,7 @@ async function mutationSnapshot(userId: string, briefTaskId: string, messageId: 
     conversations: await db.laxiiConversation.count({ where: { userId } }),
     messages: await db.laxiiMessage.count({ where: { conversation: { userId } } }),
     versions: await db.laxiiImageVersion.count({ where: { conversation: { userId } } }),
-    mediaAssets: await db.mediaAsset.count({ where: { userId } }),
+    mediaAssets: await db.mediaAsset.count({ where: { ownerId: userId } }),
     usage: await db.laxiiUsage.count({ where: { userId } }),
     taskResultJson: task?.resultJson ?? null,
     taskStatus: task?.status ?? null,
@@ -436,7 +436,7 @@ describe("M36.7 direction and recommendations — registry-backed, advisory only
     expect(result.palette.provided).toBe(false);
     expect(result.palette.note).toContain("none are invented");
     expect(result.compositionEvidence.note).toContain("laxii.banner.brief");
-    expect(JSON.stringify(result)).not.match(/#[0-9a-fA-F]{6}/); // no invented hex anywhere
+    expect(/#[0-9a-fA-F]{6}/.test(JSON.stringify(result))).toBe(false); // no invented hex anywhere
   });
 
   test("brand-kit rejections and warnings remain visible; unknown ids are never substituted", async () => {
@@ -835,7 +835,7 @@ describe("M36.7 routing — Art Director owns its language; nothing else is stol
     expect(classifySpecialist("review my banner generation cmd1234567890abcdefgh")?.id).toBe("laxii-art-director");
     // Both workspace scopes.
     expect(classifySpecialist("advise on the visual direction for our campaign banner", "ORGANIZATION")?.id).toBe("laxii-art-director");
-    expect(classifySpecialist("advise on the visual direction for my portfolio banner", "PERSONAL")?.id).toBe("laxii-art-director");
+    expect(classifySpecialist("advise on the visual direction for my banner", "PERSONAL")?.id).toBe("laxii-art-director");
   });
 
   test("banner production and cross-studio chains stay with Creative Producer; career language stays with Career Guide", () => {
