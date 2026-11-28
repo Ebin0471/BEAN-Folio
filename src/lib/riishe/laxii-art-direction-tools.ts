@@ -80,7 +80,7 @@ import {
   BrandKitFieldError,
   type BrandKitRawInput,
 } from "@/lib/brand-kit";
-import { refinementDirectives, type QualityReport } from "@/lib/laxii/quality";
+import { refinementDirectives, type QualityFinding, type QualityReport } from "@/lib/laxii/quality";
 import { loadBriefTask } from "@/lib/intelligence/delegation";
 import { defineTool, type RiisheToolDef, type ToolContext } from "@/lib/riishe/tool-contracts";
 
@@ -206,6 +206,13 @@ const DIRECTION_STYLE_MAP: Record<ArtDirectionId, string[]> = {
  * pipeline, persisted by the existing worker). Returns null when the record
  * does not parse into the honest report shape — the caller then refuses to
  * infer a verdict instead of guessing.
+ *
+ * M36.7.1 (Fix A): the stored object is validated with the existing
+ * compatibility rules, but the returned value is a NEW allowlisted object
+ * rebuilt from explicitly approved fields at EVERY nesting level (top-level,
+ * each finding, the optional aiReview block and its findings). Unexpected or
+ * hostile properties stored alongside the report can never survive into the
+ * tool response; legitimate stored reports reconstruct field-for-field.
  */
 function validateStoredQualityReport(raw: unknown): QualityReport | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
@@ -216,6 +223,9 @@ function validateStoredQualityReport(raw: unknown): QualityReport | null {
   if (!Array.isArray(r.findings) || r.findings.length > 200) return null;
   const areas = new Set(["technical", "visual", "typography", "compliance"]);
   const statuses = new Set(["pass", "warn", "fail"]);
+  // Findings: validate with the existing rules, then rebuild each one from
+  // approved fields only — no raw stored finding is ever passed through.
+  const findings: QualityFinding[] = [];
   for (const f of r.findings) {
     if (!f || typeof f !== "object" || Array.isArray(f)) return null;
     const finding = f as Record<string, unknown>;
@@ -225,7 +235,17 @@ function validateStoredQualityReport(raw: unknown): QualityReport | null {
     if (typeof finding.check !== "string" || finding.check.length === 0 || finding.check.length > 600) return null;
     if (finding.measured !== undefined && (typeof finding.measured !== "string" || finding.measured.length > 600)) return null;
     if (finding.note !== undefined && (typeof finding.note !== "string" || finding.note.length > 600)) return null;
+    findings.push({
+      id: finding.id,
+      area: finding.area as QualityFinding["area"],
+      status: finding.status as QualityFinding["status"],
+      check: finding.check,
+      ...(typeof finding.measured === "string" ? { measured: finding.measured } : {}),
+      ...(typeof finding.note === "string" ? { note: finding.note } : {}),
+    });
   }
+  // The optional aiReview block: rebuilt from approved fields only.
+  let aiReview: QualityReport["aiReview"];
   if (r.aiReview !== undefined) {
     const ai = r.aiReview;
     if (!ai || typeof ai !== "object" || Array.isArray(ai)) return null;
@@ -233,15 +253,27 @@ function validateStoredQualityReport(raw: unknown): QualityReport | null {
     if (review.ran !== true) return null;
     if (typeof review.note !== "string" || review.note.length === 0 || review.note.length > 600) return null;
     if (!Array.isArray(review.findings) || review.findings.length > 8) return null;
+    const aiFindings: { area: string; severity: "minor" | "major"; note: string }[] = [];
     for (const item of review.findings) {
       if (!item || typeof item !== "object" || Array.isArray(item)) return null;
       const f = item as Record<string, unknown>;
       if (typeof f.area !== "string" || f.area.length === 0 || f.area.length > 40) return null;
       if (f.severity !== "minor" && f.severity !== "major") return null;
       if (typeof f.note !== "string" || f.note.length === 0 || f.note.length > 300) return null;
+      aiFindings.push({ area: f.area, severity: f.severity, note: f.note });
     }
+    aiReview = { ran: true, findings: aiFindings, note: review.note };
   }
-  return raw as QualityReport;
+  // Top level: a NEW object built from the approved fields only. The raw
+  // stored object never crosses this boundary, so unexpected top-level
+  // properties cannot survive validation.
+  return {
+    overall: r.overall as QualityReport["overall"],
+    findings,
+    evaluator: r.evaluator as QualityReport["evaluator"],
+    ...(aiReview ? { aiReview } : {}),
+    evaluatedAt: r.evaluatedAt,
+  };
 }
 
 /** Public style metadata only — the server-side promptFragment is never shipped. */
@@ -313,10 +345,16 @@ async function reviewGenerationJob(
   const messageId = (input.messageId ?? input.jobRef)!.trim();
 
   // Owner-scoped read through the OWNING conversation — the pointer is never
-  // permission. Only report-relevant fields are selected: no binary image
-  // data, no version media, no provider internals.
+  // permission. M36.7.1 (Fix B): the referenced message must be an
+  // ASSISTANT-generated LAXII job — the same role constraint the existing
+  // LAXII job lookups enforce (src/lib/laxii/service.ts getJob/listJobs) —
+  // so a user's own USER/SYSTEM message can never be interpreted as a
+  // completed generation job. Ineligible and inaccessible rows stay
+  // indistinguishable from missing (the ONE generic refusal below). Only
+  // report-relevant fields are selected: no binary image data, no version
+  // media, no provider internals.
   const msg = await db.laxiiMessage.findFirst({
-    where: { id: messageId, conversation: { userId: ctx.userId } },
+    where: { id: messageId, role: "ASSISTANT", conversation: { userId: ctx.userId } },
     select: { id: true, conversationId: true, role: true, operation: true, status: true, error: true, metaJson: true },
   });
   if (!msg) {
