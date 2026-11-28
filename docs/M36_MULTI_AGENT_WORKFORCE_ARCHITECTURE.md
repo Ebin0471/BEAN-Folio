@@ -1219,7 +1219,13 @@ authoritative for consequential actions; dashboard/tool counts derived from live
 ## 14. Implementation milestones and dependencies
 
 Evaluation of the proposed sequence against the audit: the order is **dependency-correct** with two
-adjustments — (1) M36.5 is blocked by owner decisions (OD-2/OD-4) and must be gated explicitly, and
+adjustments — (1) M36.5 was originally blocked by owner decisions OD-2/OD-4; both are now
+**APPROVED** (M36.5 Owner Decision Record — decision gate SATISFIED) and the detailed M36.5
+implementation plan is prepared and clarified through the owner-review findings amendments
+(`docs/reports/M36.5_IMPLEMENTATION_PLAN.md`), while the remaining §9 owner decisions, the separate
+M36.5 implementation authorization and the PostgreSQL concurrency runtime verification remain
+**PENDING** — M36.5 is officially positioned on the Opportunity Exchange roadmap as the employer-side
+workforce module (§18) but is NOT implementation-ready and must stay explicitly gated; and
 (2) M36.6/M36.7 have no OX dependency and could be pulled earlier if the owner wants creative value
 sooner (they reuse fully-existing tools); the evidence-ladder vocabulary built in M36.1 is reused by
 M36.3/M36.4, which supports the proposed order otherwise.
@@ -1230,7 +1236,7 @@ M36.3/M36.4, which supports the proposed order otherwise.
 | **M36.2** | Workforce Strategist: `ox.opportunity.draft` (DRAFT-only) + requirement-elicitation; unexpressed-requirements honesty list | M36.1 (evidence vocabulary optional but recommended) | OD-3 (future requirement fields register); tool must wrap the EXACT opportunity schema boundary |
 | **M36.3** | Talent Intelligence: `ox.match.explain`; candidate-scope `portfolio.evidenceReport` (AI_PROCESSING enforced) | M36.2 (opportunity exists); O4 engine unchanged | Never touch matching.ts; masked-state rendering honesty |
 | **M36.4** | Candidate Relations: `ox.invitation.prepare`, `ox.interview.prepare`, `ox.room.brief`; new OX audit actions; deep links | M36.2, M36.3 | Send/invite/interview mutations stay human; `Inquiry` untouched |
-| **M36.5** | Workforce & Team Architect | **Blocked by OD-2 (workforce consent design) + OD-4 (additive storage if required)** — do not start without owner approval | Consent design must be distinct from candidate DISCOVERY consent |
+| **M36.5 — Opportunity Exchange: Workforce & Team Architect** | The employer-side workforce and team-management module inside the EXISTING Opportunity Exchange employer workspace (§18). Scope: employee workforce-analytics consent; employee skill declarations; employee role-coverage declarations; consent-authorized OWNER/ADMIN workforce declarations; employer workforce roster and analytics; durable audit records for workforce operations; consent-aware workforce access and employee self-inspection | OD-2 (workforce consent design) + OD-4 (additive storage) **APPROVED** — decision gate SATISFIED; positioned after the completed employer (O1), candidate-discovery (O2/O4) and candidate-relations (O5–O7) foundations without reopening any of them; detailed plan prepared and clarified (`docs/reports/M36.5_IMPLEMENTATION_PLAN.md`) | Remaining §9 owner decisions, separate implementation authorization and PostgreSQL concurrency runtime verification all **PENDING** — NOT implementation-ready; do not start without owner approval. Consent design stays distinct from candidate DISCOVERY consent; no role-16 registry activation in scope |
 | **M36.6** | GIFTZ Product Architect + Experience & Quality Auditor: registrations + `giftz.quality.report` | Independent (can run any time after M36.1) | Report is response-only; correction tasks via existing services |
 | **M36.7** | LAXII Art Director: registration + `laxii.art.direction` | Independent (can run any time after M36.1) | Level-2 approvals preserved; no pipeline changes |
 | **M36.8** | Controlled cross-specialist collaboration + UI integration + end-to-end QA: multi-specialist workflows, per-step attribution (Option A or OD-1 Option B), new ref keys, full QA battery | All previous; OD-1 if true per-step attribution wanted | Attribution honesty rules; collaboration claims only when real |
@@ -1300,7 +1306,7 @@ capability-matrix update → bean-sync publish → review PR (never self-merged)
 | Item | Why it is unsupported/limited today |
 | --- | --- |
 | Per-skill / per-project VERIFIED evidence | Only `TrustVerification` kinds exist; no skill/project verification record. Never synthesize. |
-| Employee skill inventory & workforce analytics (role 16) | No model, no consent design. Blocked pending OD-2/OD-4. |
+| Employee skill inventory & workforce analytics (role 16) | Design and implementation plan now exist (OD-2/OD-4 APPROVED; `docs/reports/M36.5_IMPLEMENTATION_PLAN.md` prepared and clarified through owner-review findings amendments) — but the workforce models, services, routes and UI have not been implemented under M36.5, and implementation remains separately owner-gated. |
 | AI_PROCESSING consumption | Scope + ledger + UI exist; no enforcement consumer yet (M36.1 implements it — New Implementation). |
 | True per-step specialist attribution | `RiisheWorkflowStep` has no attribution column (OD-1; Option A mitigates display-only). |
 | OX features in production | Implemented in source; **no PostgreSQL migration ever executed** (§1.7) — rollout is owner-gated and out of M36 scope. |
@@ -1316,9 +1322,9 @@ capability-matrix update → bean-sync publish → review PR (never self-merged)
 | ID | Decision | Minimum design if approved |
 | --- | --- | --- |
 | **OD-1** | Per-step specialist attribution on `RiisheWorkflowStep` | Additive nullable `specialistId String?` + index-free (low volume), set at plan creation from a per-step plan field; planner prompt documents it; `WorkflowCardView` row chip. Alternative Option A (derived display, no schema) recommended first. |
-| **OD-2** | Workforce-analytics consent design (role 16) | New consent scope/ledger for employees (distinct from `CandidateVisibilityConsent`), member self-service grant/revoke, OWNER/ADMIN result visibility rules, audit. No reuse of DISCOVERY. |
+| **OD-2** | Workforce-analytics consent design (role 16) | New consent scope/ledger for employees (distinct from `CandidateVisibilityConsent`), member self-service grant/revoke, OWNER/ADMIN result visibility rules, audit. No reuse of DISCOVERY. **Status: APPROVED** (M36.5 Owner Decision Record) — design finalized in `docs/reports/M36.5_IMPLEMENTATION_PLAN.md` §2; implementation separately gated. |
 | **OD-3** | Additional `Opportunity` fields for requirement expressiveness (e.g. engagement context, duration) | Additive nullable columns + zod + registration docs; matching stays untouched until an owner-approved match-version bump. |
-| **OD-4** | Additive employee skill/role-coverage storage (role 16) | New additive model keyed by (organizationId, userId) with declared skills referencing the existing `Skill` taxonomy; written by the member or OWNER/ADMIN per OD-2. |
+| **OD-4** | Additive employee skill/role-coverage storage (role 16) | New additive model keyed by (organizationId, userId) with declared skills referencing the existing `Skill` taxonomy; written by the member or OWNER/ADMIN per OD-2. **Status: APPROVED** (M36.5 Owner Decision Record) — design finalized in `docs/reports/M36.5_IMPLEMENTATION_PLAN.md` §3–§4; implementation separately gated. |
 | **OD-5** | Whether AI processing of PUBLIC creator evidence requires the subject's AI_PROCESSING consent | Default design: YES (consent required; graceful degradation). Owner may choose public-data carve-out with documented rationale. |
 | **OD-6** | Production rollout of the registered O-chain PG migrations (O2.1→O7) | Out of M36 scope entirely; required before any real-employer usage of the new org specialists in production. Follows the migration-registration checklists (O2.1 destructive-adjacent gate). |
 | **OD-7** | New `ToolCategory` values (optional) | Reuse existing categories by default; new category changes preauthorization UX and needs preference-key updates. |
@@ -1339,3 +1345,151 @@ room chat (RD-16) and document sharing (RD-17) — see `docs/ops/O7_OWNER_DECISI
 - Multi-agent workflows have verifiable, inspectable handoffs (§8, §9).
 - Every implementation phase has testable acceptance criteria (§14, §15).
 - All O1–O7 implementation/deployment gaps reported accurately (§1.7).
+
+---
+
+## 18. M36.5 Opportunity Exchange Workforce Integration
+
+**Addendum status (2026-11-28):** documentation-only roadmap integration. M36.5 — Workforce &
+Team Architect is officially positioned as the employer-side workforce and team-management module
+of the EXISTING Opportunity Exchange (OX), while retaining its M36 milestone identity, its
+implementation plan, its approval gates and its technical boundaries. This addendum authorizes NO
+implementation: no code, Prisma schema, migration, database, route, UI, registry or deployment
+change exists or is permitted under it. `docs/reports/M36.5_IMPLEMENTATION_PLAN.md` remains the
+authoritative detailed plan (PLAN ONLY — awaiting separate owner implementation authorization) and
+is referenced here rather than duplicated.
+
+### A. Product placement
+
+M36.5 belongs inside the existing Opportunity Exchange employer workspace
+(`src/views/ox/OxEmployer*` surface family, §13) as its workforce and team-management module.
+
+It is NOT:
+
+- a separate social network;
+- a separate employer identity system;
+- a replacement for candidate discovery;
+- a new standalone top-level product;
+- a new O-series milestone that restarts O1–O7.
+
+Positioning: M36.5 follows the completed employer, candidate-discovery and candidate-relations
+foundations — employer identity/tenancy (O1), candidate profiles and consent (O2), opportunity
+management (O3), talent matching and discovery (O4), shortlists (O5), invitations and negotiations
+(O6), hiring rooms (O7) — and precedes only the M36.8 orchestration milestone in dependency terms.
+It reopens and replaces no completed O1–O7 milestone. M36.6, M36.7 and M36.8 dependencies and
+sequencing (§14) are unchanged.
+
+### B. Existing architecture reuse
+
+M36.5 reuses the existing platform primitives — it introduces no second identity system, no second
+tenant model, no second taxonomy and no second audit subsystem:
+
+- `User` for professional identity (employer members and employees are existing users);
+- `EmployerOrganization` for the employer tenant;
+- `EmployerMembership` for organization membership and authorization (role vocabulary and ACTIVE
+  status semantics; `requireOrgRole` 404-existence-hiding deny);
+- the existing `Skill` taxonomy (existing-rows-only resolution, never upserted);
+- the existing profession taxonomy (`src/lib/professions/taxonomy.ts`, frozen slugs) for role
+  coverage;
+- the single existing `AuditEvent` writer (`src/lib/ox/audit.ts`), including the plan's opt-in
+  strict-audit mode proposal for required workforce events (plan §A.1);
+- the existing organization authorization, tenant-binding and 404-deny conventions.
+
+The proposed M36.5 workforce models (`WorkforceAnalyticsConsent`, `EmployeeSkill`,
+`EmployeeRoleCoverage`) and services (`src/lib/wf/`) remain additive proposals documented in
+`docs/reports/M36.5_IMPLEMENTATION_PLAN.md` (§4 schema, §5 surface) and are subject to separate
+implementation authorization. Nothing in this addendum creates, modifies or activates them.
+
+### C. Separate workforce consent boundary
+
+`WorkforceAnalyticsConsent` remains independent of `CandidateVisibilityConsent` — a separate
+dedicated ledger with its own server-owned version (`WF_CONSENT_VERSION`) and scope vocabulary.
+Workforce consent must never be inferred from:
+
+- employer membership (membership is a precondition, never a grant);
+- candidate DISCOVERY consent (or any candidate scope);
+- a public portfolio;
+- existing profile visibility;
+- a manager's authorization (OWNER/ADMIN may never grant, revoke or alter anyone's consent).
+
+Employee consent is self-service and revocable: grant and revoke require the session identity to
+equal the subject, history is append-lifecycle, enforcement re-reads the ledger fresh per request,
+and the resolution is default-deny (NO_ROW / REVOKED / EXPIRED / wrong scope all mean NO consent).
+
+### D. Workforce privacy and authorization
+
+The M36.5 plan's rules are carried forward unchanged:
+
+- Employees can inspect their own workforce information and consent history.
+- Employees can declare their own skills and role coverage.
+- OWNER/ADMIN manager-targeted declarations require the subject's current workforce consent.
+- Manager-targeted consent read, authorization, workforce write and strict audit must share the same
+  Serializable interactive transaction (plan §A.2 four-step requirement — not limited to consent
+  grant/revoke).
+- Current membership, organization and role authorization must be enforced server-side (identity
+  from the session only; `requireOrgRole` / `getMembership` semantics unchanged).
+- Unauthorized and cross-tenant access remains existence-hidden (uniform 404 deny, no existence
+  leak).
+- OWNER/ADMIN do not receive unrestricted historical consent access in v1 (least privilege — plan
+  §A.5).
+- Workforce audit failures fail closed for required operations (strict audit mode: the audit write
+  participates in the operation's transaction; an audit failure aborts the operation — plan §A.1).
+
+### E. Keep candidate discovery independent
+
+Workforce records must not silently become candidate-discovery data. Specifically:
+
+- do not feed employee workforce declarations into `TalentMatch` or any matching input;
+- do not modify `CandidateOpportunityProfile` (candidate-side; never treated as an employee record);
+- do not weaken candidate DISCOVERY consent or the `assertCandidateDiscoverableToOrg` boundary;
+- do not expose employee workforce records to recruiters or unrelated organizations (roster access
+  is OWNER/ADMIN-only and consent-gated);
+- do not automatically create VERIFIED evidence (declared data stays `SELF_DECLARED` /
+  `OWNER_ADMIN_DECLARED` provenance — no `TrustVerification` writes, no evidence-ladder
+  interaction);
+- do not introduce cross-organization workforce benchmarking (never — tenant isolation);
+- do not introduce automated hiring, rejection, disciplinary or termination decisions (never —
+  policy).
+
+Any future matching consumption of workforce data requires a separately reviewed and authorized
+design. Nothing in this integration grants or implies it.
+
+### F. RIISHE specialist boundary
+
+M36.5 must not automatically activate role-16 specialist/tool registration ("Workforce & Team
+Architect", §3-16) in the RIISHE registry. Role-16 activation remains deferred and requires separate
+authorization, registry changes, capability-matrix updates (`docs/UNIVERSAL_STUDIO_CAPABILITY_MATRIX.md`
+— the pinned 18 specialists / 44 tools counts) and tests (§15.1). M36.5's initial milestone is the
+workforce data, consent, authorization and audit foundation. The original M36.0 capability labels
+for role 16 (§3-16 "Unsupported until OD-2/OD-4", §4 reuse-map row, §6 permission-matrix row) record
+the pre-approval audit state; the current status is §16.2 (OD-2/OD-4 APPROVED) with implementation
+still separately owner-gated.
+
+### G. Current technical gates
+
+The M36.5 implementation plan remains the authoritative technical specification. The Finding 6
+contract is carried forward accurately:
+
+- Only the documented transaction-conflict error `P2034` is presently retryable (bounded — three
+  attempts; each retry re-runs the ENTIRE transaction callback in a new transaction, including fresh
+  reads and the strict audit).
+- SQLite `P1008` and `P2028` mappings remain PENDING and fail closed — the recorded planning-time
+  probe signatures were proven NOT safely attributable to contention, so those broad error
+  categories are not retryable by error code alone.
+- PostgreSQL runtime verification remains pending (no disposable PostgreSQL environment at planning
+  time); SQLite results are never substituted for PostgreSQL verification.
+- The status-only `GRANTED` partial-unique-index fallback is NOT ready-to-implement: expiry is a
+  resolution-time concept that never updates a row in place, so an expired grant row keeps
+  `status = 'GRANTED'` and a status-only predicate would block a legitimate later re-grant —
+  predicate and lifecycle compatibility with append-history AND expiry must first be proven in a
+  separately authorized migration decision.
+- Manager-targeted workforce writes are explicitly covered by the Serializable contract (the §A.2
+  four-step requirement), not only consent grant/revoke.
+- Required audit effects must remain idempotent across any retry (a retried attempt that actually
+  committed resolves to the truthful already-applied result without appending a duplicate audit
+  row).
+
+M36.5 remains at implementation planning: the plan's §9 owner decisions are PENDING OWNER
+CONFIRMATION, separate implementation authorization is PENDING, and the PostgreSQL concurrency
+runtime verification is PENDING. Nothing in this addendum implies, grants or accelerates
+implementation.
