@@ -44,7 +44,13 @@ import {
   type ToolContext,
   type ToolVerification,
 } from "@/lib/riishe/tool-contracts";
-import { planWebsiteArchitecture } from "@/lib/giftz/site-planner";
+import { planWebsiteArchitecture, type WebsitePlanProposal } from "@/lib/giftz/site-planner";
+import {
+  COMPONENT_REGISTRY,
+  selectComponents,
+  SUPPORTED_DIRECTION_TERMS,
+  type ComponentSelection,
+} from "@/lib/giftz/component-intelligence";
 import {
   approveAndExecuteTask,
   createEngineeringTask,
@@ -138,8 +144,101 @@ async function giftzSitePlanExecute(_ctx: ToolContext, input: z.infer<typeof gif
       `The planner rejected the brief — ${result.field}: ${result.reason} Valid options include: ${result.suggestions.join(", ")}.`
     );
   }
-  return { plan: result.plan };
+  // M36.6 — the plan contract is unchanged; componentRecommendations is a
+  // separate ADDITIVE result (real registered components only, advisory only).
+  return {
+    plan: result.plan,
+    componentRecommendations: buildComponentRecommendations(result.plan, input.brief),
+  };
 }
+
+/**
+ * M36.6 — deterministic component recommendations for a returned architecture
+ * plan, built ONLY from the real registered component registry:
+ *  - visual-direction keywords are extracted from the user's brief ONLY when
+ *    they appear in `SUPPORTED_DIRECTION_TERMS` (the allowlist the selection
+ *    engine actually understands) — anything else is honest silence, never an
+ *    invented direction;
+ *  - the only recognized constraints are `no-heavy-webgl` and `offline` (the
+ *    two the selection engine consumes);
+ *  - sections come from the ACTUAL planned sitemap; the category is the
+ *    ACTUAL classified family id;
+ *  - `selectComponents()` returns real `COMPONENT_REGISTRY` ids, names,
+ *    categories and reasons — never invented component names.
+ * RECOMMENDATION IS NOT IMPLEMENTATION: the returned data never modifies a
+ * SiteConfig, never creates files, never installs anything and never applies
+ * components to a site — these are architecture suggestions for human review.
+ */
+const MAX_COMPONENT_RECOMMENDATIONS = 12;
+
+interface ComponentRecommendation {
+  id: string;
+  name: string;
+  category: string;
+  reason: string;
+}
+
+function buildComponentRecommendations(
+  plan: WebsitePlanProposal,
+  brief: string
+): Record<string, unknown> {
+  const lowerBrief = brief.toLowerCase();
+  // Direction keywords: word-boundary match against the explicit allowlist.
+  const visualDirection = SUPPORTED_DIRECTION_TERMS.filter((term) =>
+    new RegExp(`(^|[^a-z0-9])${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9]|$)`, "i").test(lowerBrief)
+  );
+  // Constraints: only the two the selection engine understands.
+  const constraints: string[] = [];
+  if (/\bno[- ]?heavy[- ]?webgl\b|\bno webgl\b|\bwithout (?:heavy )?webgl\b/.test(lowerBrief)) constraints.push("no-heavy-webgl");
+  if (/\boffline\b/.test(lowerBrief)) constraints.push("offline");
+
+  // The actual planned sections (union over the sitemap, SECTION_TYPES order
+  // preserved via the planner's own per-page arrays) and the actual family.
+  const sections = [...new Set(plan.sitemap.flatMap((p) => p.sections))];
+
+  const selection: ComponentSelection = selectComponents({
+    category: plan.family.id,
+    visualDirection,
+    sections,
+    constraints,
+  });
+
+  const recommendations: ComponentRecommendation[] = selection.components
+    .slice(0, MAX_COMPONENT_RECOMMENDATIONS)
+    .map((c, i) => ({
+      id: c.id,
+      name: c.name,
+      category: c.category,
+      reason: selection.reasons[i] ?? "registered component matching the planned sections",
+    }));
+
+  const notes: string[] = [
+    "Advisory architecture suggestions only — nothing was applied to any site: no SiteConfig change, no file creation, no dependency installation and no component was added anywhere. Components are applied later through the owner's explicit GIFTZ workflow.",
+    `Every id above comes from the live COMPONENT_REGISTRY (${String(COMPONENT_REGISTRY_SIZE)} registered components); no component outside the registry is ever suggested.`,
+  ];
+  if (visualDirection.length === 0) {
+    notes.push(
+      "The brief supplied no recognizable visual direction (only registered direction terms like cinematic, luxury, minimal, immersive are understood) — no direction was invented; recommendations follow from the planned sections and the classified website family only.",
+    );
+  }
+  if (selection.components.length > recommendations.length) {
+    notes.push(`Bounded to the ${MAX_COMPONENT_RECOMMENDATIONS} most relevant registered components (${selection.components.length} matched the plan).`);
+  }
+
+  return {
+    recommendations,
+    basis: {
+      classifiedFamily: plan.family.id,
+      plannedSections: sections,
+      recognizedVisualDirection: visualDirection,
+      recognizedConstraints: constraints,
+    },
+    notes,
+  };
+}
+
+/** Registry size for the honest provenance note (live, never hard-coded). */
+const COMPONENT_REGISTRY_SIZE: number = COMPONENT_REGISTRY.length;
 
 const giftzSiteCreateInput = z
   .object({
@@ -729,7 +828,7 @@ export const CREATIVE_TOOLS: Record<string, RiisheToolDef<never>> = {
     name: "giftz.site.plan",
     title: "Plan a website architecture",
     description:
-      "Deterministic GIFTZ planner: classify the website family and produce an honest, capability-routed architecture plan (backend-required features surface as architecture requests, never fake forms). Read-only.",
+      "Deterministic GIFTZ planner: classify the website family and produce an honest, capability-routed architecture plan (backend-required features surface as architecture requests, never fake forms), plus additive component recommendations drawn only from the registered component registry — advisory suggestions for human review, never applied to a site. Read-only.",
     risk: "LOW",
     level: 1,
     category: "content",

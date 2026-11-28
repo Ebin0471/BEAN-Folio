@@ -30,4 +30,8 @@ export const SPECIALIST_NAME_BY_ID: Record<string, string> = {
   "talent-intelligence": "Talent Intelligence Analyst",
   // M36.4: the ORGANIZATION prepare-only hiring-coordination specialist.
   "candidate-relations": "Candidate Relations Agent",
+  // M36.6: the two GIFTZ specialists (website architecture + static quality
+  // audit — display-name record only).
+  "giftz-product-architect": "GIFTZ Product Architect",
+  "giftz-quality-auditor": "GIFTZ Experience & Quality Auditor",
 };

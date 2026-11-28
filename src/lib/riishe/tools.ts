@@ -65,6 +65,7 @@ import { PORTFOLIO_TOOLS } from "@/lib/riishe/portfolio-tools";
 import { WORKFORCE_TOOLS } from "@/lib/riishe/workforce-tools";
 import { TALENT_INTELLIGENCE_TOOLS } from "@/lib/riishe/talent-intelligence-tools";
 import { CANDIDATE_RELATIONS_TOOLS } from "@/lib/riishe/candidate-relations-tools";
+import { GIFTZ_QUALITY_TOOLS } from "@/lib/riishe/giftz-quality-tools";
 export {
   TOOL_RISKS,
   TOOL_LEVELS,
@@ -947,6 +948,11 @@ export const RIISHE_TOOLS: Record<string, RiisheToolDef<never>> = {
   // preparation, read-only room brief — send/interview/stage mutations stay
   // the existing human flows) — same contracts, same audit trail.
   ...CANDIDATE_RELATIONS_TOOLS,
+  // M36.6: the GIFTZ Experience & Quality Auditor's read-only static quality
+  // report over the owner's own stored project files (the EXISTING
+  // runQualityGate path — no second quality gate) — same contracts, same
+  // audit trail.
+  ...GIFTZ_QUALITY_TOOLS,
 };
 
 export function getTool(name: string): RiisheToolDef<never> | null {

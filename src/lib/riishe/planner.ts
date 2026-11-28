@@ -416,6 +416,29 @@ function specialistStepForClause(
       params: { terms: terms && terms.length ? terms : ["draft"] },
     };
   }
+  // M36.6 GIFTZ quality-auditor clause — the deterministic static quality
+  // report over ONE of the user's own GIFTZ sites. Runs BEFORE the website
+  // plan clause so audit language is never stolen by the broad architecture
+  // keywords. DELIBERATELY conservative: a step is planned only when the user
+  // explicitly supplies a site identifier ("site <id>") — the newest site is
+  // never assumed and a site id is never invented; audit language WITHOUT an
+  // explicit site produces no step (the chat asks for the site instead).
+  // A workflow stepRef for a prior successful producer step resolves through
+  // the M35.7 engine rules before the tool runs; the tool re-checks
+  // ownership with ctx.userId regardless.
+  if (
+    /\b(quality report|site quality|quality audit|site audit|website audit|audit my (site|website)|accessibility report|seo report|broken links|quality gate|site health|website health)\b/.test(c) &&
+    getTool("giftz.quality.report")
+  ) {
+    const siteToken = clause.match(/\bsite\s+([A-Za-z0-9_-]{8,64})\b/i)?.[1];
+    if (!siteToken) return null;
+    return {
+      id,
+      tool: "giftz.quality.report",
+      title: "Report on your site's quality",
+      params: { siteId: siteToken },
+    };
+  }
   // M35 creative clauses — deterministic mapping for single-step creative
   // requests (multi-step creative chains go through the LLM planner and the
   // engine's validation like every other plan).

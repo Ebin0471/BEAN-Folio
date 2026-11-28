@@ -39,7 +39,9 @@ export type SpecialistId =
   | "portfolio-intelligence"
   | "workforce-strategist"
   | "talent-intelligence"
-  | "candidate-relations";
+  | "candidate-relations"
+  | "giftz-product-architect"
+  | "giftz-quality-auditor";
 
 export type WorkspaceScope = "PERSONAL" | "ORGANIZATION";
 
@@ -278,13 +280,22 @@ export const SPECIALISTS: SpecialistDefinition[] = [
       "channel art",
       "header image",
       "website task",
-      "site plan",
-      "plan my website",
       "engineering task",
       "giftz",
       "laxii",
       "produce the banner",
       "portfolio banner",
+      // M36.6: the cross-studio production chains (architecture §17 overlap
+      // resolution) — the GENERIC website-architecture keywords moved to the
+      // GIFTZ Product Architect so generic architecture requests are no
+      // longer stolen by these broad keywords; banner production, website
+      // tasks and creative work keep routing here unchanged.
+      "website and banner",
+      "banner for my website",
+      "site plus banner",
+      "website with a banner",
+      "banner production",
+      "creative production",
     ],
     auditNote:
       "Website task execution (giftz.task.approve) is HIGH-risk: explicit confirmation, never queue-run; banner generation runs through the real LAXII pipeline with the existing daily guards.",
@@ -535,6 +546,107 @@ export const SPECIALISTS: SpecialistDefinition[] = [
     auditNote:
       "Organization workspace only: the employer invitation/room authorization chains (ACTIVE OWNER/ADMIN/RECRUITER or an actively assigned HIRING_MANAGER where the room matrix allows it, VERIFIED non-SUSPENDED organization, tenant-bound opportunity, fresh candidate discovery boundary and the existing source-of-selection rules) are re-verified on every execution. PREPARE-ONLY: the invitation tool creates one private DRAFT through the existing createInvitationDraft service and never sends or notifies; the interview tool persists nothing; the room brief is read-only. No interview is proposed or confirmed, no stage transitions, no room creation, no hiring decisions — human flows stay authoritative. The offer terms are never invented.",
     available: () => toolsAvailable(["ox.invitation.prepare", "ox.interview.prepare", "ox.room.brief"]),
+  },
+  {
+    // M36.6 (role 17, docs/M36_MULTI_AGENT_WORKFORCE_ARCHITECTURE.md §3/§17):
+    // the deeper website-architecture role over the SAME registered GIFTZ
+    // tools — no duplicate planner, builder or task service is introduced.
+    id: "giftz-product-architect",
+    name: "GIFTZ Product Architect",
+    description:
+      "Turns a website or digital-product brief into a grounded architecture proposal — website family, sitemap, page journeys, real registered component recommendations and honest capability limits — and prepares site drafts and engineering tasks through the existing GIFTZ services (execution stays behind your explicit approval).",
+    capabilities: [
+      "Classify the website family and produce an honest, capability-routed architecture plan",
+      "Plan navigation, sitemap and page journeys from real registered section types",
+      "Recommend actual registered GIFTZ components with concrete selection reasons (advisory only — never applied)",
+      "Surface backend-required and unsupported features honestly, never as fake integrations",
+      "List missing content, assumptions and owner questions before anything is built",
+      "Prepare an owned GIFTZ site draft and engineering tasks — file edits only after your explicit approval",
+    ],
+    taskCategories: ["websites", "architecture", "creative"],
+    toolNames: [
+      "giftz.site.plan",
+      "giftz.site.create",
+      "giftz.task.create",
+      "giftz.task.status",
+      "giftz.task.approve",
+    ],
+    workspaceScopes: ["PERSONAL", "ORGANIZATION"],
+    riskPolicy: { maxAutomationLevel: 2, approvalsAlwaysHuman: true },
+    limits: { maxSteps: 8, defaultTimeoutMs: 30_000 },
+    routingKeywords: [
+      "website architecture",
+      "site architecture",
+      "information architecture",
+      "page structure",
+      "site structure",
+      "sitemap",
+      "user journey",
+      "user journeys",
+      "page journey",
+      "site journey",
+      "navigation plan",
+      "product structure",
+      "plan my website",
+      "website plan",
+      "site plan",
+      "landing page",
+      "site for my business",
+      "website sections",
+      "component recommendations",
+    ],
+    auditNote:
+      "Website architecture runs on the EXISTING deterministic planner and component registry (advisory recommendations only — never applied to a site). GIFTZ ownership stays user-scoped: GiftzSite has userId ownership and no organizationId, so an ORGANIZATION workspace never grants access to another member's sites or repositories, and no shared-ownership model is invented. giftz.task.approve stays HIGH/level-2 with the existing explicit human approval; nothing is executed by planning.",
+    available: () =>
+      toolsAvailable([
+        "giftz.site.plan",
+        "giftz.site.create",
+        "giftz.task.create",
+        "giftz.task.status",
+        "giftz.task.approve",
+      ]),
+  },
+  {
+    // M36.6 (role 18, docs/M36_MULTI_AGENT_WORKFORCE_ARCHITECTURE.md §3/§18):
+    // evidence-based static quality review over the owner's own stored GIFTZ
+    // project files through the EXISTING quality gate — no second gate, no
+    // persistence, no AI, no correction-task side effects.
+    id: "giftz-quality-auditor",
+    name: "GIFTZ Experience & Quality Auditor",
+    description:
+      "Reviews an actual GIFTZ site you own through the existing deterministic quality gate — accessibility and semantic HTML, SEO structure, broken internal links and local assets, responsive and static-performance signals, recorded build diagnostics and advisory design-consistency evidence — always distinguishing static findings from untested runtime behavior.",
+    capabilities: [
+      "Run the real static quality gate over your stored project files (real check ids, page-attributed evidence)",
+      "Report accessibility, SEO, internal-link/asset, responsive and static-performance findings",
+      "Summarize the newest recorded build diagnostics without ever reading artifact contents",
+      "Give advisory design-consistency evidence only where the stored configuration supports it",
+      "Preserve the honest untested[] list — never present static analysis as live browser proof",
+      "Point at the existing correction-task preparation (giftz.task.create) without ever creating one automatically",
+    ],
+    taskCategories: ["websites", "quality", "audit"],
+    toolNames: ["giftz.quality.report", "giftz.task.create"],
+    workspaceScopes: ["PERSONAL", "ORGANIZATION"],
+    riskPolicy: { maxAutomationLevel: 1, approvalsAlwaysHuman: true },
+    limits: { maxSteps: 5, defaultTimeoutMs: 30_000 },
+    routingKeywords: [
+      "quality report",
+      "site quality",
+      "quality audit",
+      "audit my site",
+      "audit my website",
+      "site audit",
+      "website audit",
+      "audit the site",
+      "accessibility report",
+      "seo report",
+      "broken links",
+      "quality gate",
+      "site health",
+      "website health",
+    ],
+    auditNote:
+      "Read-only over the existing runQualityGate path with the same owner-scoped re-read and the same giftz-quality-gate rate-limit bucket as the Website Studio API. GiftzSite stays user-owned (no organizationId): organization availability never grants access to another member's sites. Zero AI calls, zero persistence, zero builds, zero correction-task side effects; correction tasks remain the existing AWAITING_APPROVAL flow the user must explicitly request against an owned READY repository.",
+    available: () => toolsAvailable(["giftz.quality.report", "giftz.task.create"]),
   },
 ];
 

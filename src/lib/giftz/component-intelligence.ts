@@ -152,6 +152,15 @@ const DIRECTION_RULES: { keywords: string[]; componentIds: string[]; reason: str
 ];
 
 /**
+ * M36.6 — the explicit allowlist of visual-direction terms the selection
+ * engine actually understands (derived from DIRECTION_RULES so the two can
+ * never drift). Planners/architects extract direction keywords ONLY from
+ * this list; anything else in a brief is honest silence, never an invented
+ * direction.
+ */
+export const SUPPORTED_DIRECTION_TERMS: readonly string[] = [...new Set(DIRECTION_RULES.flatMap((r) => r.keywords))];
+
+/**
  * Deterministic component selection for a site brief. The AI planner uses
  * `componentCapabilityDoc()` for vocabulary; this pure function is the
  * fallback/consistency check that keeps selections honest and reproducible.
