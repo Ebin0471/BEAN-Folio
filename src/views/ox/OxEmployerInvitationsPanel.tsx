@@ -388,15 +388,15 @@ export default function OxEmployerInvitationsPanel() {
 
   return (
     <Card className="border-border/60">
-      <CardContent className="p-4 sm:p-6">
+      <CardContent className="p-4 sm:p-6 lg:p-8">
         <SectionHeader
           title="Invitations sent"
           description="Invite consented, currently-eligible candidates to your opportunities, negotiate compensation transparently, and keep the full immutable history."
           as="h3"
         />
 
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          <div className="space-y-1.5">
+        <div className="mt-5 grid gap-4 sm:grid-cols-2">
+          <div className="space-y-2">
             <Label htmlFor="ox-inv-org">Organization</Label>
             <Select
               value={orgId}
@@ -418,7 +418,7 @@ export default function OxEmployerInvitationsPanel() {
               </SelectContent>
             </Select>
           </div>
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             <Label htmlFor="ox-inv-opportunity">Opportunity</Label>
             <Select
               value={opportunityId}
@@ -439,7 +439,7 @@ export default function OxEmployerInvitationsPanel() {
           </div>
         </div>
 
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
           <p className="text-xs text-muted-foreground">
             {selectedOpportunity
               ? selectedOpportunitySendable
@@ -467,8 +467,9 @@ export default function OxEmployerInvitationsPanel() {
         ) : !orgId ? null : invitations === null ? (
           <p className="mt-4 text-sm text-muted-foreground">Invitations could not be loaded.</p>
         ) : invitations.length === 0 ? (
-          <div className="mt-4">
+          <div className="mt-6">
             <EmptyState
+              className="px-8 py-16"
               icon={Inbox}
               title="No invitations yet"
               description="Invite a currently-eligible match or shortlisted candidate — every send re-validates consent and eligibility in the moment."

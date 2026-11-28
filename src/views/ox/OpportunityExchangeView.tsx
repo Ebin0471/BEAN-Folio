@@ -67,7 +67,7 @@ export default function OpportunityExchangeView() {
         <OxEmployerDiscoveryPanel />
       </section>
 
-      <section aria-labelledby="ox-employer-invitations-heading" className="mt-10">
+      <section aria-labelledby="ox-employer-invitations-heading" className="mt-12">
         <h2 id="ox-employer-invitations-heading" className="sr-only">
           Invitations sent
         </h2>

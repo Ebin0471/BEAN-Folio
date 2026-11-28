@@ -292,15 +292,15 @@ export default function OxEmployerDiscoveryPanel() {
 
   return (
     <Card className="border-border/60">
-      <CardContent className="p-4 sm:p-6">
+      <CardContent className="p-4 sm:p-6 lg:p-8">
         <SectionHeader
           title="Discover talent"
           description="Deterministic, explainable matches for one published opportunity — consented candidates only, re-verified on every view."
           as="h3"
         />
 
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          <div>
+        <div className="mt-5 grid gap-4 sm:grid-cols-2">
+          <div className="space-y-2">
             <Label htmlFor="ox-discovery-org">Organization</Label>
             <Select value={orgId} onValueChange={setOrgId}>
               <SelectTrigger id="ox-discovery-org" aria-label="Organization for discovery">
@@ -315,7 +315,7 @@ export default function OxEmployerDiscoveryPanel() {
               </SelectContent>
             </Select>
           </div>
-          <div>
+          <div className="space-y-2">
             <Label htmlFor="ox-discovery-opp">Opportunity</Label>
             <Select value={opportunityId} onValueChange={selectOpportunity} disabled={!orgId}>
               <SelectTrigger id="ox-discovery-opp" aria-label="Opportunity for discovery">
@@ -333,16 +333,17 @@ export default function OxEmployerDiscoveryPanel() {
         </div>
 
         {!orgId ? (
-          <div className="mt-6">
+          <div className="mt-8">
             <EmptyState
+              className="px-8 py-16"
               icon={Search}
               title="Pick a verified organization"
               description="Talent discovery is per-opportunity and only for VERIFIED organizations."
             />
           </div>
         ) : !opportunityId ? (
-          <div className="mt-6">
-            <EmptyState icon={Search} title="Pick an opportunity" description="Matches are computed for one opportunity at a time." />
+          <div className="mt-8">
+            <EmptyState className="px-8 py-16" icon={Search} title="Pick an opportunity" description="Matches are computed for one opportunity at a time." />
           </div>
         ) : (
           <>
@@ -445,8 +446,9 @@ export default function OxEmployerDiscoveryPanel() {
                 ))}
               </ul>
             ) : (
-              <div className="mt-6">
+              <div className="mt-8">
                 <EmptyState
+                  className="px-8 py-16"
                   icon={Users}
                   title={matchState === "LIVE" ? "No eligible matches right now" : "No stored matches"}
                   description={
@@ -473,7 +475,7 @@ export default function OxEmployerDiscoveryPanel() {
                 <p className="mt-3 text-sm text-muted-foreground">Shortlist loads with the opportunity.</p>
               ) : shortlist.length === 0 ? (
                 <div className="mt-3">
-                  <EmptyState icon={Users} title="No shortlisted candidates yet" description="Add candidates from the matches above." />
+                  <EmptyState className="px-8 py-16" icon={Users} title="No shortlisted candidates yet" description="Add candidates from the matches above." />
                 </div>
               ) : (
                 <ul className="mt-3 space-y-2">
