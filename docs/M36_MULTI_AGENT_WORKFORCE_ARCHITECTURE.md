@@ -140,6 +140,37 @@ change named in this document requires explicit owner approval BEFORE implementa
 | **Owner Decision Required** | Cannot proceed without an explicit owner approval (schema change, consent design, policy). |
 | **Unsupported** | Not implementable on the current source without the owner decisions above; recorded honestly, not faked. |
 
+> **M36.6 implementation addendum (2026-11-28).** The GIFTZ milestone is COMPLETE — specialist
+> `giftz-product-architect` (§3 role 17, PERSONAL + ORGANIZATION) is registered over the EXISTING
+> registered GIFTZ tools only (`giftz.site.plan`, `giftz.site.create`, `giftz.task.create`,
+> `giftz.task.status`, `giftz.task.approve` — no duplicate planner, builder or task service), and
+> specialist `giftz-quality-auditor` (§3 role 18, PERSONAL + ORGANIZATION) owns the ONE new read-only
+> `giftz.quality.report` plus the EXISTING `giftz.task.create` reuse for correction-task PREPARATION.
+> `giftz.site.plan` gains the ADDITIVE `componentRecommendations` result: real `COMPONENT_REGISTRY`
+> ids/names/categories/reasons only, direction keywords extracted exclusively via the new
+> `SUPPORTED_DIRECTION_TERMS` allowlist (derived from the selection engine's own rules), only the
+> `no-heavy-webgl`/`offline` constraints recognized, sections from the actual planned sitemap —
+> advisory only, never applied to any site, `plan` contract unchanged.
+> `giftz.quality.report` (§5.8) runs the EXISTING `runQualityGate()` path with the exact file
+> preparation, palette convention and `giftz-quality-gate:<userId>` rate-limit bucket of the studio
+> route; the report output is passed through verbatim with the mandatory `untested[]` list; build
+> diagnostics come only from the newest stored `GiftzBuild` row's `diagnosticsJson` (`artifactJson`
+> contents are never read; failed/in-progress/absent builds stay accurately labelled); design
+> consistency is assessed only from valid stored configuration evidence (else `NOT_ASSESED`) and is
+> advisory only; no compiled pages ⇒ honest refusal; ZERO AI calls, ZERO persistence, ZERO
+> correction-task side effects. GIFTZ ownership stays USER-scoped: `GiftzSite`/`GiftzRepository` have
+> `userId` ownership and NO `organizationId` — an ORGANIZATION workspace never grants access to
+> another member's sites or repositories, shared organization sites are honestly reported as
+> unrepresentable by the current schema, and NO schema change or migration was made. Routing:
+> website-architecture/sitemap/journey language → Product Architect; banner production and LAXII
+> generation stay with Creative Producer; explicit website+banner cross-studio chains stay with
+> Creative Producer in its supported (PERSONAL) workspace (the generic `site plan`/`plan my website`
+> keywords moved OFF Creative Producer; banner, website-task and creative-work routing unchanged);
+> explicit quality-audit language → Quality Auditor, with an explicit site identifier REQUIRED by the
+> deterministic planner clause (no invented audit targets). Live registry counts are now
+> **17 specialists / 43 tools**. M36.5 remains blocked (OD-2/OD-4 owner approval) and M36.7 LAXII Art
+> Director remains an independent later milestone. See `docs/reports/M36.6_IMPLEMENTATION_REPORT.md`.
+
 ---
 
 ## 1. Current-state audit (exact source paths)
