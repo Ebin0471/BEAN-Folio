@@ -43,7 +43,7 @@ async function execTool(tool: { execute: (c: ToolContext, i: never) => Promise<R
 }
 
 describe("M31 specialist registry contract", () => {
-  test("all fourteen specialists are registered with stable ids and complete manifests", () => {
+  test("all eighteen specialists are registered with stable ids and complete manifests", () => {
     const ids = SPECIALISTS.map((s) => s.id);
     expect(ids).toEqual([
       "career-guide",
@@ -76,6 +76,10 @@ describe("M31 specialist registry contract", () => {
       // giftz.quality.report (see tests/riishe-m366-giftz-specialists.test.ts).
       "giftz-product-architect",
       "giftz-quality-auditor",
+      // M36.7: the LAXII Art Director (PERSONAL + ORGANIZATION) — advisory
+      // art direction and recorded-output review over the EXISTING LAXII
+      // services (see tests/riishe-m367-laxii-art-director.test.ts).
+      "laxii-art-director",
     ]);
     for (const s of SPECIALISTS) {
       expect(s.name.length).toBeGreaterThan(0);

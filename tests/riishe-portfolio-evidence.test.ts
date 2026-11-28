@@ -150,9 +150,11 @@ describe("M36.1 registry contract — two real specialists, two real tools", () 
     // M36.2 added the 13th specialist (Workforce Strategist) — see
     // tests/riishe-m362-workforce-strategist.test.ts. M36.3 added the 14th
     // (Talent Intelligence Analyst), M36.4 the 15th (Candidate Relations
-    // Agent) and M36.6 the 16th and 17th (GIFTZ Product Architect and GIFTZ
-    // Experience & Quality Auditor — see tests/riishe-m366-giftz-specialists.test.ts).
-    expect(SPECIALISTS.length).toBe(17);
+    // Agent), M36.6 the 16th and 17th (GIFTZ Product Architect and GIFTZ
+    // Experience & Quality Auditor — see
+    // tests/riishe-m366-giftz-specialists.test.ts) and M36.7 the 18th (LAXII
+    // Art Director — see tests/riishe-m367-laxii-art-director.test.ts).
+    expect(SPECIALISTS.length).toBe(18);
   });
 
   test("both new tools live in the ONE registry with LOW / level-1 / discovery contracts", () => {
@@ -174,16 +176,17 @@ describe("M36.1 registry contract — two real specialists, two real tools", () 
     expect(getTool("portfolio.publicEvidence")!.auditAction).toBe("riishe.tool.public_evidence");
   });
 
-  test("live registry counts derive to 17 specialists and 43 tools (no hard-coding)", () => {
-    expect(SPECIALISTS.length).toBe(17);
+  test("live registry counts derive to 18 specialists and 44 tools (no hard-coding)", () => {
+    expect(SPECIALISTS.length).toBe(18);
     // 35 pre-M36.1 registry tools + 2 M36.1 portfolio tools + 1 M36.2
     // workforce tool (ox.opportunity.draft) + 1 M36.3 talent-intelligence
     // tool (ox.match.explain) + 3 M36.4 candidate-relations tools + 1 M36.6
-    // GIFTZ quality tool (giftz.quality.report).
+    // GIFTZ quality tool (giftz.quality.report) + 1 M36.7 LAXII
+    // art-direction tool (laxii.art.direction).
     const preExisting = { ...RIISHE_TOOLS };
     for (const k of Object.keys(PORTFOLIO_TOOLS)) delete preExisting[k];
-    expect(Object.keys(preExisting).length).toBe(41);
-    expect(Object.keys(RIISHE_TOOLS).length).toBe(43);
+    expect(Object.keys(preExisting).length).toBe(42);
+    expect(Object.keys(RIISHE_TOOLS).length).toBe(44);
     // Every tool referenced by ANY specialist exists in the registry.
     for (const s of SPECIALISTS) {
       for (const t of s.toolNames) expect(getTool(t)).not.toBeNull();

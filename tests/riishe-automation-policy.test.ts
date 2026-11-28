@@ -272,6 +272,12 @@ describe("B2 registry — permission declarations are registry-level and real", 
         // quality report over the owner's own stored project files through
         // the EXISTING runQualityGate path — no second gate, no persistence.
         "giftz.quality.report",
+        // M36.7 LAXII art-direction tool (real, registered, tested — see
+        // tests/riishe-m367-laxii-art-director.test.ts): read-only advisory
+        // art direction, registry-backed style/typography recommendations,
+        // recorded-job quality review and in-memory revision previews over
+        // the EXISTING LAXII services — no second pipeline, no persistence.
+        "laxii.art.direction",
       ].sort()
     );
   });

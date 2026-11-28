@@ -575,10 +575,10 @@ describe("M36.4 registry contract — the 15th specialist over the ONE registry"
     expect(brief.undo).toBeNull();
   });
 
-  test("live registry counts derive to 17 specialists and 43 tools (no hard-coding)", () => {
-    expect(SPECIALISTS.length).toBe(17);
+  test("live registry counts derive to 18 specialists and 44 tools (no hard-coding)", () => {
+    expect(SPECIALISTS.length).toBe(18);
     const toolCount = Object.keys(RIISHE_TOOLS).length;
-    expect(toolCount).toBe(43);
+    expect(toolCount).toBe(44);
     // The three new tools are exactly the delta from the M36.3 registry.
     for (const name of ["ox.invitation.prepare", "ox.interview.prepare", "ox.room.brief"]) {
       expect(Object.keys(RIISHE_TOOLS).filter((k) => k === name).length).toBe(1);

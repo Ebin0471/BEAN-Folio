@@ -271,10 +271,10 @@ describe("M36.6 registry contract — the 16th and 17th specialists over the ONE
     expect(specialistAllowsWorkspace(qa!, "ORGANIZATION")).toBe(true);
   });
 
-  test("live registry counts derive to 17 specialists and 43 tools (no hard-coding)", () => {
-    expect(SPECIALISTS.length).toBe(17);
+  test("live registry counts derive to 18 specialists and 44 tools (no hard-coding)", () => {
+    expect(SPECIALISTS.length).toBe(18);
     const toolCount = Object.keys(RIISHE_TOOLS).length;
-    expect(toolCount).toBe(43);
+    expect(toolCount).toBe(44);
     // The new tool is registered exactly once.
     expect(Object.keys(RIISHE_TOOLS).filter((k) => k === "giftz.quality.report").length).toBe(1);
     // Every tool referenced by ANY specialist exists in the registry.

@@ -34,4 +34,7 @@ export const SPECIALIST_NAME_BY_ID: Record<string, string> = {
   // audit — display-name record only).
   "giftz-product-architect": "GIFTZ Product Architect",
   "giftz-quality-auditor": "GIFTZ Experience & Quality Auditor",
+  // M36.7: the LAXII Art Director (advisory art direction + recorded-output
+  // review — display-name record only).
+  "laxii-art-director": "LAXII Art Director",
 };

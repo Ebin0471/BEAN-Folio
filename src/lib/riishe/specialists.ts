@@ -41,7 +41,8 @@ export type SpecialistId =
   | "talent-intelligence"
   | "candidate-relations"
   | "giftz-product-architect"
-  | "giftz-quality-auditor";
+  | "giftz-quality-auditor"
+  | "laxii-art-director";
 
 export type WorkspaceScope = "PERSONAL" | "ORGANIZATION";
 
@@ -647,6 +648,66 @@ export const SPECIALISTS: SpecialistDefinition[] = [
     auditNote:
       "Read-only over the existing runQualityGate path with the same owner-scoped re-read and the same giftz-quality-gate rate-limit bucket as the Website Studio API. GiftzSite stays user-owned (no organizationId): organization availability never grants access to another member's sites. Zero AI calls, zero persistence, zero builds, zero correction-task side effects; correction tasks remain the existing AWAITING_APPROVAL flow the user must explicitly request against an owned READY repository.",
     available: () => toolsAvailable(["giftz.quality.report", "giftz.task.create"]),
+  },
+  {
+    // M36.7 (role 19, docs/M36_MULTI_AGENT_WORKFORCE_ARCHITECTURE.md §3-19):
+    // advisory art direction and output review over the EXISTING LAXII
+    // services, registries and quality-evaluation results — never a second
+    // generation pipeline, never an automatic revision writer. The ONE new
+    // tool (laxii.art.direction) is read-only; generation still goes through
+    // laxii.banner.produce (MEDIUM/level 2, explicit owner approval) and the
+    // existing durable worker.
+    id: "laxii-art-director",
+    name: "LAXII Art Director",
+    description:
+      "Acts as your art director for LAXII visual work: interprets visual briefs into one of seven professional directions, recommends registered style presets and provisioned typography pairings from real registries, preserves your explicit palette and brand information, reviews the recorded quality of your generation jobs and prepares in-memory revision previews — advisory only; production stays behind the existing approval flow.",
+    capabilities: [
+      "Interpret explicit visual briefs with the existing seven-direction classifier (deterministic — weak signals honestly unresolved)",
+      "Recommend composition and visual treatment from actual brief fields, verbatim",
+      "Recommend registered LAXII style presets where there is a real match",
+      "Recommend existing provisioned typography pairings from explicit tone, audience and purpose",
+      "Preserve explicit palette and brand information — never invent colors or claim unsupported brand facts",
+      "Review recorded generation quality where an identified job carries a stored quality report",
+      "Convert real failed/warning findings into the existing refinement directives",
+      "Prepare targeted revision previews (in-memory only — saving stays an explicit action)",
+      "Explain uncertainty, missing information and unsupported requests honestly",
+    ],
+    taskCategories: ["banners", "creative", "design"],
+    toolNames: [
+      "laxii.art.direction",
+      "laxii.banner.brief",
+      "laxii.banner.produce",
+      "laxii.job.status",
+    ],
+    workspaceScopes: ["PERSONAL", "ORGANIZATION"],
+    riskPolicy: { maxAutomationLevel: 2, approvalsAlwaysHuman: true },
+    limits: { maxSteps: 6, defaultTimeoutMs: 30_000 },
+    routingKeywords: [
+      "art direction",
+      "art-direction",
+      "visual direction",
+      "style preset",
+      "laxii style",
+      "banner style",
+      "typography recommendation",
+      "font pairing",
+      "composition advice",
+      "review my banner",
+      "banner feedback",
+      "banner quality",
+      "color direction",
+      "palette advice",
+      "laxii art",
+    ],
+    auditNote:
+      "Advisory read-only capability over the EXISTING LAXII services and registries: the deterministic classifier, real registered style presets (public metadata only — no server-side fragments), the provisioned-font recommender and already-recorded pipeline quality reports. Ownership stays user-scoped on every execution (briefs via the existing owner-scoped loader, jobs via the owning conversation); typed briefTaskRef/jobRef pointers are re-authorized at consumption. The revision preview is IN-MEMORY only — the write path reviseBriefTask is never called and saving remains an explicit user action. Generation is never started or approved here: laxii.banner.produce stays MEDIUM/level 2 with the existing explicit owner approval, image/cost guards and worker. No palette/font/style/dimension/quality value is ever invented.",
+    available: () =>
+      toolsAvailable([
+        "laxii.art.direction",
+        "laxii.banner.brief",
+        "laxii.banner.produce",
+        "laxii.job.status",
+      ]),
   },
 ];
 

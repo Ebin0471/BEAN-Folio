@@ -66,6 +66,7 @@ import { WORKFORCE_TOOLS } from "@/lib/riishe/workforce-tools";
 import { TALENT_INTELLIGENCE_TOOLS } from "@/lib/riishe/talent-intelligence-tools";
 import { CANDIDATE_RELATIONS_TOOLS } from "@/lib/riishe/candidate-relations-tools";
 import { GIFTZ_QUALITY_TOOLS } from "@/lib/riishe/giftz-quality-tools";
+import { LAXII_ART_DIRECTION_TOOLS } from "@/lib/riishe/laxii-art-direction-tools";
 export {
   TOOL_RISKS,
   TOOL_LEVELS,
@@ -953,6 +954,11 @@ export const RIISHE_TOOLS: Record<string, RiisheToolDef<never>> = {
   // runQualityGate path — no second quality gate) — same contracts, same
   // audit trail.
   ...GIFTZ_QUALITY_TOOLS,
+  // M36.7: the LAXII Art Director's read-only advisory art-direction and
+  // output-review tool over the EXISTING LAXII services, registries and
+  // recorded quality reports (no second pipeline, no persistence) — same
+  // contracts, same audit trail.
+  ...LAXII_ART_DIRECTION_TOOLS,
 };
 
 export function getTool(name: string): RiisheToolDef<never> | null {

@@ -439,6 +439,51 @@ function specialistStepForClause(
       params: { siteId: siteToken },
     };
   }
+  // M36.7 LAXII Art Director clause — advisory art direction, style,
+  // typography and recorded-output review over the EXISTING LAXII services.
+  // Runs AFTER the GIFTZ quality clause so GIFTZ site-audit language keeps
+  // its owner, and BEFORE the M35 creative clauses so art-direction/style
+  // language is not swallowed by the broad banner keywords. Two honest sub-
+  // cases, both conservative:
+  //  - REVIEW/FEEDBACK language targets an existing job or brief — a step is
+  //    planned ONLY with an explicit identifier ("job <id>" / "message <id>"
+  //    / "brief <id>"); identifiers are never invented and the newest job is
+  //    never assumed (no token ⇒ no step, the chat asks for it instead).
+  //  - DIRECTION/STYLE language is advisory advice on the user's own words —
+  //    the clause text itself is the bounded explicit request; nothing is
+  //    invented into it and no brief/job is created.
+  if (
+    /\b(art direction|art-direction|visual direction|style preset|laxii style|banner style|typography recommendation|font pairing|composition advice|color direction|palette advice|laxii art)\b/.test(c) &&
+    getTool("laxii.art.direction")
+  ) {
+    return {
+      id,
+      tool: "laxii.art.direction",
+      title: "Advise on art direction",
+      params: { request: clause.slice(0, 2000) },
+    };
+  }
+  if (
+    /\b(review my banner|banner feedback|banner quality|review the (banner|generation|job)|banner output review)\b/.test(c) &&
+    getTool("laxii.art.direction")
+  ) {
+    const jobToken = clause.match(/\b(?:job|message|generation)\s+([A-Za-z0-9_-]{8,64})\b/i)?.[1];
+    const briefToken = clause.match(/\b(?:brief|brief task)\s+([A-Za-z0-9_-]{8,64})\b/i)?.[1];
+    if (!jobToken && !briefToken) return null; // review language without a target — never the newest record
+    return jobToken
+      ? {
+          id,
+          tool: "laxii.art.direction",
+          title: "Review the recorded generation",
+          params: { messageId: jobToken },
+        }
+      : {
+          id,
+          tool: "laxii.art.direction",
+          title: "Advise from the structured brief",
+          params: { briefTaskId: briefToken! },
+        };
+  }
   // M35 creative clauses — deterministic mapping for single-step creative
   // requests (multi-step creative chains go through the LLM planner and the
   // engine's validation like every other plan).
