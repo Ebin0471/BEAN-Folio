@@ -167,9 +167,47 @@ change named in this document requires explicit owner approval BEFORE implementa
 > Creative Producer in its supported (PERSONAL) workspace (the generic `site plan`/`plan my website`
 > keywords moved OFF Creative Producer; banner, website-task and creative-work routing unchanged);
 > explicit quality-audit language → Quality Auditor, with an explicit site identifier REQUIRED by the
-> deterministic planner clause (no invented audit targets). Live registry counts are now
-> **17 specialists / 43 tools**. M36.5 remains blocked (OD-2/OD-4 owner approval) and M36.7 LAXII Art
-> Director remains an independent later milestone. See `docs/reports/M36.6_IMPLEMENTATION_REPORT.md`.
+> deterministic planner clause (no invented audit targets). Live registry counts after M36.6 were
+> **17 specialists / 43 tools**; M36.5 remains blocked (OD-2/OD-4 owner approval). See
+> `docs/reports/M36.6_IMPLEMENTATION_REPORT.md`.
+
+> **M36.7 implementation addendum (2026-11-28).** The LAXII milestone is COMPLETE — specialist
+> `laxii-art-director` (§3 role 19, PERSONAL + ORGANIZATION) is registered over the ONE new read-only
+> `laxii.art.direction` tool (§5.9, implemented as `src/lib/riishe/laxii-art-direction-tools.ts`,
+> merged into the ONE `RIISHE_TOOLS` registry) plus the EXISTING registered LAXII tools
+> (`laxii.banner.brief`, `laxii.banner.produce`, `laxii.job.status`) — no second generation pipeline,
+> no provider-router change, no revision writer. The tool is LOW / level 1 / read-only / idempotent /
+> no verification hook / null undo with exactly one source at a time: an OWNED structured brief
+> (`briefTaskId`/`briefTaskRef` through the existing owner-scoped `loadBriefTask`), an OWNED
+> generation job (`jobRef`/`messageId` through the owning conversation — only status/error/operation/
+> `metaJson.qualityReport` are read, never binary image data), or a bounded explicit `request`
+> (optional explicit `toneWords`/`audience`/`purpose`); mixed sources are schema-rejected.
+> Direction uses the EXISTING deterministic seven-direction classifier — weak/ambiguous signals
+> return an honest unresolved direction, never a fabricated best match. Style recommendations are
+> ONLY real `STYLE_PRESETS` slugs (public metadata; the server-side `promptFragment` never ships);
+> typography comes from the EXISTING `recommendBannerFontPairing` over explicit values only
+> (provisioned font ids; user-selected typography stays authoritative; no unsupported glyph-coverage
+> claims); palette/composition/canvas/safe-area are the brief's stored fields verbatim (absent
+> palettes stated honestly, hex never invented). Job review returns the ALREADY-RECORDED pipeline
+> `qualityReport` from the completed job's `metaJson` (structurally validated, actual finding
+> ids/statuses + the existing `refinementDirectives()` mapping, AI-review findings explicitly
+> advisory); RUNNING and FAILED jobs never receive a fabricated verdict; a DONE job without a
+> readable report states that quality evidence is unavailable; malformed metadata is refused rather
+> than guessed; raw `metaJson`/provider internals never leak. The optional revision preview is
+> compiled IN MEMORY with the existing `appendRevision`/`compileRevisionAddenda` — the write path
+> `reviseBriefTask` is never called, no AgentTask/resultJson/status/row is touched, the existing
+> three-revision maximum is honoured, and saving stays an explicit user action in the existing LAXII
+> workflow. The optional brand-kit proposal passes ONLY explicit schema-supported attributes;
+> unknown ids remain rejections surfaced via `brandKitRejection` — never substitutions; proposals
+> are advisory and never applied. Ownership stays USER-scoped in both workspace types (foreign,
+> missing and malformed records receive the SAME generic refusal — existence-hiding; no schema
+> change, no shared-ownership model). Routing: art-direction/visual-direction/style/typography
+> language → LAXII Art Director; banner production and cross-studio chains stay with Creative
+> Producer; explicit review/feedback language requires an explicit job/brief identifier (never the
+> newest record); Career Guide and M36.6 GIFTZ routing unchanged. ZERO AI calls, ZERO provider
+> generation, ZERO image spending, ZERO persistence on every path. Live registry counts are now
+> **18 specialists / 44 tools**. M36.5 remains blocked (OD-2/OD-4 owner approval). See
+> `docs/reports/M36.7_IMPLEMENTATION_REPORT.md`.
 
 ---
 
@@ -514,7 +552,14 @@ states: responsibility, reuse, required work, overlap resolution, and the capabi
   report a static check as proof of live runtime behavior; correction tasks go through
   `giftz.task.create` (AWAITING_APPROVAL) — the agent never edits files directly.
 
-### 19. LAXII Art Director — PERSONAL + ORGANIZATION
+### 19. LAXII Art Director — PERSONAL + ORGANIZATION — IMPLEMENTED (M36.7)
+
+> **Implementation status (M36.7).** Registered as `laxii-art-director` with the ONE new read-only
+> tool `laxii.art.direction` (see the M36.7 implementation addendum above and §5.9). The original
+> role-19 specification below is preserved verbatim as the design-of-record; the implemented
+> capability realizes it with the boundaries stated in the addendum — advisory art direction over
+> the existing seven-direction classifier, real style/typography registries, recorded-quality review
+> and in-memory revision previews; `laxii.banner.produce` keeps MEDIUM/level-2 approval unchanged.
 
 - **Responsibility:** act as the creative director for LAXII visual and document production:
   interpret visual briefs; recommend composition and creative direction; prepare structured visual
@@ -689,10 +734,38 @@ output: { overall, checks[], pagesChecked, buildDiagnostics?, untested[], static
 undo: null; verify: none; audit: riishe.tool.giftz_quality
 ```
 
-### 5.9 `laxii.art.direction` (role 19) — LOW / level 1 (read-only advisory)
+### 5.9 `laxii.art.direction` (role 19) — LOW / level 1 (read-only advisory) — IMPLEMENTED (M36.7)
+
+> **Implemented contract (M36.7, `src/lib/riishe/laxii-art-direction-tools.ts`).** The original §5.9
+> sketch below is preserved as the design-of-record; the implemented tool realizes it (deterministic
+> classifier + real style/typography registries + palette from own data; production ALWAYS via the
+> existing level-2 tools) with these exact boundaries:
+> - **Input (strict zod, exactly one source):** `briefTaskId` | `briefTaskRef` (existing M35 typed
+>   reference — a pointer, never authorization) | `jobRef` | `messageId` | `request` (1..2000);
+>   optional `toneWords`/`audience`/`purpose` (explicit request context only), optional
+>   `proposedRevision { area, instruction ≤600 }` (brief source only), optional `brandKitContext`
+>   (explicit schema-supported attributes, request source only). Mixed sources are rejected; a
+>   request may never simultaneously identify a brief and a job.
+> - **Behavior:** owner-scoped reads only (`loadBriefTask(ctx.userId, …)` for briefs;
+>   `conversation: { userId: ctx.userId }` for jobs); `detectArtDirection` over the source words —
+>   unresolved direction is honest, never fabricated; style recommendations are ONLY real
+>   `STYLE_PRESETS` slugs (public metadata, no `promptFragment`); typography via the existing
+>   `recommendBannerFontPairing` (explicit values only; user-selected typography authoritative);
+>   palette/composition/canvas/safe-area verbatim from the brief (absent palette stated, hex never
+>   invented); job review validates the ALREADY-RECORDED `metaJson.qualityReport` and returns actual
+>   findings + existing `refinementDirectives()` (RUNNING/FAILED never fabricated; absent/malformed
+>   evidence honestly unavailable; raw metaJson/provider internals never returned).
+> - **Revision preview:** existing `appendRevision` + `compileRevisionAddenda`, IN MEMORY only —
+>   `reviseBriefTask` is never called, nothing persists, the three-revision maximum is honoured,
+>   saving stays an explicit user action in the existing LAXII workflow.
+> - **Brand kit (optional):** existing `buildBrandKitProposal` over explicit attributes only;
+>   unknown ids remain rejections via `brandKitRejection` — never substitutions; never applied.
+> - **Zero effects:** no AI gateway call, no provider generation, no image spending, no persistence,
+>   no build/deploy, no task creation — proven on every path by
+>   `tests/riishe-m367-laxii-art-director.test.ts`.
 
 ```
-input: { request: string 1..2000, siteRef?: planner-step-ref (brand context) }
+input (original §5.9 sketch): { request: string 1..2000, siteRef?: planner-step-ref (brand context) }
 behavior: deterministic-first — detectArtDirection + findStylePreset/findBannerPreset +
           recommendBannerFontPairing + palette from own data; LLM narration labelled advisory.
 output: { compositionPlan, stylePresetSuggestion, typographySuggestion, colorDirection,
