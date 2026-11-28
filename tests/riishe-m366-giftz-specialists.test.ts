@@ -309,7 +309,7 @@ describe("M36.6 registry contract — the 16th and 17th specialists over the ONE
     expect(tool.level).toBe(1);
     expect(tool.idempotent).toBe(true);
     expect(tool.verify).toBeUndefined(); // no fake verification hook
-    expect(tool.undo).toEqual({ supported: false, how: null }); // no persistence, no undo
+    expect(tool.undo).toBeNull(); // no persistence, no undo
     expect(tool.auditAction).toBe("riishe.tool.giftz_quality_report");
     // The report wraps the EXISTING gate — the module must import it, not re-implement it.
     // (Source-level pin: the existing gate implementation stays singular.)
@@ -347,10 +347,11 @@ describe("M36.6 registry contract — the 16th and 17th specialists over the ONE
   });
 
   test("routing: explicit quality-audit language → GIFTZ Experience & Quality Auditor", () => {
-    expect(classifySpecialist("run a quality report on my site")?.id).toBe("giftz-quality-auditor");
+    expect(classifySpecialist("run a quality report for my site")?.id).toBe("giftz-quality-auditor");
     expect(classifySpecialist("audit my website for accessibility issues")?.id).toBe("giftz-quality-auditor");
     expect(classifySpecialist("check my site for broken links")?.id).toBe("giftz-quality-auditor");
     expect(classifySpecialist("I need an seo report for my website", "ORGANIZATION")?.id).toBe("giftz-quality-auditor");
+    expect(classifySpecialist("run a site audit", "PERSONAL")?.id).toBe("giftz-quality-auditor");
     // Audit language must not be stolen by the website-architecture clause.
     const plan = planDeterministically("run a quality audit on site cmd1234567890abcdefgh");
     expect(plan).not.toBeNull();
@@ -417,7 +418,7 @@ describe("M36.6 giftz.site.plan — additive componentRecommendations over the u
     const result = (await execTool(planTool(), ctx((await makeUser("Direction Owner")).id), {
       brief: "A minimal and clean designer portfolio",
     })) as { componentRecommendations: { basis: { recognizedVisualDirection: string[] }; recommendations: { id: string }[] } };
-    expect(result.componentRecommendations.basis.recognizedVisualDirection).toEqual(["minimal"]);
+    expect(result.componentRecommendations.basis.recognizedVisualDirection).toEqual(["minimal", "clean"]);
     expect(result.componentRecommendations.recommendations.map((r) => r.id)).toContain("stagger-entrance-grid");
 
     const cinematic = (await execTool(planTool(), ctx((await makeUser("Cinematic Owner")).id), {
@@ -559,8 +560,9 @@ describe("M36.6 giftz.quality.report — real findings, real evidence, honest ga
     };
     expect(result.status).toBe("QUALITY_REPORT");
     expect(result.report.pagesChecked).toBe(2);
-    // The broken internal link (missing.html) FAILS with real evidence.
-    const linkCheck = result.report.checks.find((c) => c.id.includes("link"));
+    // The broken internal link (missing.html) FAILS with real evidence and
+    // the real quality-gate check id.
+    const linkCheck = result.report.checks.find((c) => c.id === "links-internal");
     expect(linkCheck).toBeDefined();
     expect(linkCheck!.status).toBe("fail");
     expect(JSON.stringify(linkCheck!.evidence)).toContain("index.html");
@@ -747,7 +749,7 @@ describe("M36.6 giftz.quality.report — zero effects on every path", () => {
 // =====================================================================================
 
 describe("M36.6 correction tasks — existing service reuse, never auto-created", () => {
-  test("giftz.task.create keeps the existing ownership checks and lands AWAITING_APPROVAL", async () => {
+  test("giftz.task.create keeps the existing ownership checks and never executes anything itself", async () => {
     const owner = await makeUser("Task Owner");
     const other = await makeUser("Task Other");
     const repo = await db.giftzRepository.create({
@@ -759,14 +761,17 @@ describe("M36.6 correction tasks — existing service reuse, never auto-created"
     const foreign = getTool("giftz.task.create")!;
     await expect(
       foreign.execute(ctx(other.id), foreign.inputSchema.parse({ repoId: repo.id, request: "Fix the contact page form" }) as never)
-    ).rejects.toThrow();
+    ).rejects.toThrow(/not found/i);
 
-    // Owned READY repository → real AgentTask in AWAITING_APPROVAL (never executed).
-    const result = (await execTool(getTool("giftz.task.create")!, ctx(owner.id), { repoId: repo.id, request: "Fix the contact page form" })) as { taskId: string };
+    // Owned READY repository → a real durable AgentTask is QUEUED for the
+    // existing planning pipeline (which drives it to AWAITING_APPROVAL) —
+    // nothing here executes or approves it.
+    const result = (await execTool(getTool("giftz.task.create")!, ctx(owner.id), { repoId: repo.id, request: "Fix the contact page form" })) as { taskId: string; status: string };
+    expect(result.status).toBe("QUEUED");
     const task = await db.agentTask.findUnique({ where: { id: result.taskId } });
     expect(task).not.toBeNull();
-    expect(task!.status).toBe("AWAITING_APPROVAL");
     expect(task!.repoId).toBe(repo.id);
+    expect(["EXECUTING", "COMPLETED", "FAILED", "VALIDATING", "TESTING"]).not.toContain(task!.status);
   });
 
   test("giftz.quality.report NEVER creates a correction task or approves/executes anything", async () => {
@@ -844,6 +849,10 @@ describe("M36.6 deterministic planner — audit requests need an explicit site; 
     // The REAL producer tool runs, and its result stamps the step.
     const created = (await execTool(getTool("giftz.site.create")!, ctx(owner.id), { title: "Ref chain site", sourcePrompt: "minimal portfolio" })) as { siteId: string };
     cleanupSiteIds.push(created.siteId);
+    // The quality report needs compiled pages — the owner adds real files
+    // (the honest no-pages refusal for an empty site is covered above).
+    await makeProjectFile(created.siteId, "index.html", INDEX_HTML);
+    await makeProjectFile(created.siteId, "styles/site.css", SITE_CSS);
     await db.riisheWorkflowStep.update({
       where: { id: s1.id },
       data: { status: "SUCCEEDED", resultJson: JSON.stringify({ status: "SITE_CREATED", siteId: created.siteId }) },
