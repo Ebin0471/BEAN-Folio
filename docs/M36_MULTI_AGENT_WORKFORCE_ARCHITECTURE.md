@@ -1220,9 +1220,12 @@ authoritative for consequential actions; dashboard/tool counts derived from live
 
 Evaluation of the proposed sequence against the audit: the order is **dependency-correct** with two
 adjustments — (1) M36.5 was originally blocked by owner decisions OD-2/OD-4; both are now
-**APPROVED** (M36.5 Owner Decision Record — decision gate SATISFIED) and the detailed M36.5
+**APPROVED** (M36.5 Owner Decision Record — decision gate SATISFIED), the detailed M36.5
 implementation plan is prepared and clarified through the owner-review findings amendments
-(`docs/reports/M36.5_IMPLEMENTATION_PLAN.md`), while the remaining §9 owner decisions, the separate
+(`docs/reports/M36.5_IMPLEMENTATION_PLAN.md`), and the plan's final §9 owner decisions were
+**CONFIRMED by the owner on 2026-11-28** (`docs/reports/M36.5_FINAL_OWNER_DECISION_CONFIRMATION.md`
+— decisions #1–#6 and #8 approved as recommended; #7 approved with its metadata-scrubbing and
+retention-duration sub-decisions, and R1–R3 generally, remaining OPEN), while the separate
 M36.5 implementation authorization and the PostgreSQL concurrency runtime verification remain
 **PENDING** — M36.5 is officially positioned on the Opportunity Exchange roadmap as the employer-side
 workforce module (§18) but is NOT implementation-ready and must stay explicitly gated; and
@@ -1236,7 +1239,7 @@ M36.3/M36.4, which supports the proposed order otherwise.
 | **M36.2** | Workforce Strategist: `ox.opportunity.draft` (DRAFT-only) + requirement-elicitation; unexpressed-requirements honesty list | M36.1 (evidence vocabulary optional but recommended) | OD-3 (future requirement fields register); tool must wrap the EXACT opportunity schema boundary |
 | **M36.3** | Talent Intelligence: `ox.match.explain`; candidate-scope `portfolio.evidenceReport` (AI_PROCESSING enforced) | M36.2 (opportunity exists); O4 engine unchanged | Never touch matching.ts; masked-state rendering honesty |
 | **M36.4** | Candidate Relations: `ox.invitation.prepare`, `ox.interview.prepare`, `ox.room.brief`; new OX audit actions; deep links | M36.2, M36.3 | Send/invite/interview mutations stay human; `Inquiry` untouched |
-| **M36.5 — Opportunity Exchange: Workforce & Team Architect** | The employer-side workforce and team-management module inside the EXISTING Opportunity Exchange employer workspace (§18). Scope: employee workforce-analytics consent; employee skill declarations; employee role-coverage declarations; consent-authorized OWNER/ADMIN workforce declarations; employer workforce roster and analytics; durable audit records for workforce operations; consent-aware workforce access and employee self-inspection | OD-2 (workforce consent design) + OD-4 (additive storage) **APPROVED** — decision gate SATISFIED; positioned after the completed employer (O1), candidate-discovery (O2/O4) and candidate-relations (O5–O7) foundations without reopening any of them; detailed plan prepared and clarified (`docs/reports/M36.5_IMPLEMENTATION_PLAN.md`) | Remaining §9 owner decisions, separate implementation authorization and PostgreSQL concurrency runtime verification all **PENDING** — NOT implementation-ready; do not start without owner approval. Consent design stays distinct from candidate DISCOVERY consent; no role-16 registry activation in scope |
+| **M36.5 — Opportunity Exchange: Workforce & Team Architect** | The employer-side workforce and team-management module inside the EXISTING Opportunity Exchange employer workspace (§18). Scope: employee workforce-analytics consent; employee skill declarations; employee role-coverage declarations; consent-authorized OWNER/ADMIN workforce declarations; employer workforce roster and analytics; durable audit records for workforce operations; consent-aware workforce access and employee self-inspection | OD-2 (workforce consent design) + OD-4 (additive storage) **APPROVED** — decision gate SATISFIED; positioned after the completed employer (O1), candidate-discovery (O2/O4) and candidate-relations (O5–O7) foundations without reopening any of them; detailed plan prepared and clarified (`docs/reports/M36.5_IMPLEMENTATION_PLAN.md`) | Remaining gates after the 2026-11-28 §9 decision confirmation (`docs/reports/M36.5_FINAL_OWNER_DECISION_CONFIRMATION.md`): separate implementation authorization and PostgreSQL concurrency runtime verification remain **PENDING**; retention sub-decisions R1–R3 remain OPEN — NOT implementation-ready; do not start without owner approval. Consent design stays distinct from candidate DISCOVERY consent; no role-16 registry activation in scope |
 | **M36.6** | GIFTZ Product Architect + Experience & Quality Auditor: registrations + `giftz.quality.report` | Independent (can run any time after M36.1) | Report is response-only; correction tasks via existing services |
 | **M36.7** | LAXII Art Director: registration + `laxii.art.direction` | Independent (can run any time after M36.1) | Level-2 approvals preserved; no pipeline changes |
 | **M36.8** | Controlled cross-specialist collaboration + UI integration + end-to-end QA: multi-specialist workflows, per-step attribution (Option A or OD-1 Option B), new ref keys, full QA battery | All previous; OD-1 if true per-step attribution wanted | Attribution honesty rules; collaboration claims only when real |
@@ -1358,6 +1361,14 @@ implementation: no code, Prisma schema, migration, database, route, UI, registry
 change exists or is permitted under it. `docs/reports/M36.5_IMPLEMENTATION_PLAN.md` remains the
 authoritative detailed plan (PLAN ONLY — awaiting separate owner implementation authorization) and
 is referenced here rather than duplicated.
+
+**Current decision state (2026-11-28, final §9 confirmation):** the owner has confirmed the
+implementation plan's final §9 decisions — #1–#6 and #8 approved as recommended, #7 approved
+with its metadata-scrubbing and retention-duration sub-decisions left OPEN (retention sub-decisions
+R1–R3 remain OPEN; plan §A.4). Standalone record:
+`docs/reports/M36.5_FINAL_OWNER_DECISION_CONFIRMATION.md`. The implementation authorization is
+still pending and PostgreSQL concurrency runtime verification is still pending; this addendum
+continues to authorize no implementation.
 
 ### A. Product placement
 
@@ -1489,7 +1500,8 @@ contract is carried forward accurately:
   committed resolves to the truthful already-applied result without appending a duplicate audit
   row).
 
-M36.5 remains at implementation planning: the plan's §9 owner decisions are PENDING OWNER
-CONFIRMATION, separate implementation authorization is PENDING, and the PostgreSQL concurrency
-runtime verification is PENDING. Nothing in this addendum implies, grants or accelerates
-implementation.
+M36.5 remains at implementation planning: the plan's final §9 owner decisions were CONFIRMED by
+the owner on 2026-11-28, subject to the open retention sub-decisions R1–R3 (record:
+`docs/reports/M36.5_FINAL_OWNER_DECISION_CONFIRMATION.md`), while the separate implementation
+authorization remains PENDING and the PostgreSQL concurrency runtime verification remains PENDING.
+Nothing in this addendum implies, grants or accelerates implementation.
