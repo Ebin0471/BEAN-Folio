@@ -764,6 +764,25 @@ undo: null; verify: none; audit: riishe.tool.giftz_quality
 >   no build/deploy, no task creation — proven on every path by
 >   `tests/riishe-m367-laxii-art-director.test.ts`.
 
+> **M36.7.1 hardening addendum (2026-11-28).** Two targeted defensive fixes over the implemented
+> contract above — no redesign, no scope change, no new capability:
+> - **Fix A — allowlisted stored quality-report output.** `validateStoredQualityReport` now rebuilds
+>   the returned `QualityReport` from explicitly approved fields at EVERY nesting level (top-level,
+>   each finding, the optional `aiReview` block and its findings) instead of passing the validated
+>   raw object through. Unexpected properties stored alongside the report can no longer survive into
+>   the tool response; legitimate stored reports reconstruct field-for-field; the honest
+>   missing/malformed/RUNNING/FAILED handling and the existing `refinementDirectives()` mapping and
+>   advisory AI-review semantics are unchanged.
+> - **Fix B — assistant-generated jobs only.** The owner-scoped job lookup enforces the existing
+>   `role: "ASSISTANT"` constraint (the same one `src/lib/laxii/service.ts` `getJob`/`listJobs`
+>   enforce), so a user's own USER/SYSTEM message can never be interpreted as a completed generation
+>   job even if its metadata carries a plausible report. Ownership stays bound to the owning
+>   conversation; ineligible and inaccessible rows stay indistinguishable from missing (the ONE
+>   generic refusal); job-status semantics are unchanged.
+> Regression evidence: `tests/riishe-m3671-laxii-art-direction-hardening.test.ts` (red at the
+> M36.7 base for all six hostile-input tests, green at the fix tip); see
+> `docs/reports/M36.7.1_IMPLEMENTATION_REPORT.md`.
+
 ```
 input (original §5.9 sketch): { request: string 1..2000, siteRef?: planner-step-ref (brand context) }
 behavior: deterministic-first — detectArtDirection + findStylePreset/findBannerPreset +
