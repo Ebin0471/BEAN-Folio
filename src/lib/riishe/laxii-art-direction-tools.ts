@@ -269,15 +269,14 @@ function styleRecommendationsFor(directionId: ArtDirectionId | null): {
         "No art direction could be resolved from the source words, so no style preset is recommended — a confident match is never invented when the evidence does not support one.",
     };
   }
-  const recommendations = DIRECTION_STYLE_MAP[directionId]
-    .map((slug) => {
-      const preset = publicPreset(slug);
-      return preset
-        ? { ...preset, basis: `registered style preset mapped to the detected "${directionId}" art direction` }
-        : null;
-    })
-    .filter((r): r is Record<string, unknown> => r !== null)
-    .slice(0, 3);
+  const recommendations: Record<string, unknown>[] = [];
+  for (const slug of DIRECTION_STYLE_MAP[directionId]) {
+    if (recommendations.length >= 3) break;
+    const preset = publicPreset(slug);
+    // A slug that ever disappeared from STYLE_PRESETS is filtered out at
+    // runtime rather than recommended as a ghost (tests pin every current slug).
+    if (preset) recommendations.push({ ...preset, basis: `registered style preset mapped to the detected "${directionId}" art direction` });
+  }
   return { recommendations, limitation: null };
 }
 
